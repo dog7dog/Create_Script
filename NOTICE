@@ -1,0 +1,9 @@
+CreateScript
+Copyright 2026 dog7dog
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+The binary packages of CreateScript also contain third-party components under their own
+licenses: the Kotlin Standard Library, JetBrains Java Annotations, JLine and a Java runtime
+made from Eclipse Temurin 21. See createscript-cli/packaging/common/THIRD-PARTY-NOTICES.md
+(legal/THIRD-PARTY-NOTICES.md in a package).

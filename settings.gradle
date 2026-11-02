@@ -1,0 +1,18 @@
+pluginManagement {
+    repositories {
+        gradlePluginPortal()
+    }
+}
+
+plugins {
+    // Downloads a JDK 21 when none is installed (Gradle Java toolchains)
+    id 'org.gradle.toolchains.foojay-resolver-convention' version '0.8.0'
+}
+
+rootProject.name = 'createscript'
+
+// The CreateScript language implementation: lexer, parser, semantic analyzer, compiler and VM (a library)
+include 'createscript-core'
+
+// The createscript command: runs .cscr files and the interactive mode (REPL)
+include 'createscript-cli'

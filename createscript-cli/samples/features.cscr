@@ -1,0 +1,11 @@
+// 乱数・Vector・Matrix・isClose
+randomSeed(42)
+println(random())
+println(randomInt(1, 6))
+val v = vector(3.0, 4.0)
+println(length(v))
+println(normalize(v))
+val m = matrix(vector(1.0, 2.0), vector(3.0, 4.0))
+println(matmul(m, transpose(m)))
+println(isClose(0.1 + 0.2, 0.3))
+println(0.1 + 0.2 == 0.3)

@@ -1,0 +1,62 @@
+// CreateScript CLI：.cscr のソースファイルをターミナルから実行するアプリケーション（Minecraft・NeoForge・Create・Kotlin for Forge に依存しない）
+plugins {
+    id 'application'
+    // 版はルートの build.gradle で指定した 2.0.0 を使う（同じビルドの中で版を二重に指定できないため）
+    id 'org.jetbrains.kotlin.jvm'
+}
+
+repositories {
+    mavenCentral()
+}
+
+java.toolchain.languageVersion = JavaLanguageVersion.of(21)
+
+kotlin {
+    jvmToolchain(21)
+}
+
+dependencies {
+    implementation project(':createscript-core')
+
+    // 対話モードの行編集（S5.3。BSD 3-Clause）。端末の操作は stty を使う exec の方式だけを使う。jline-native は
+    // すべての OS・CPU 向けのネイティブライブラリを含むため、配布物に入れない（exec の方式では使わない）
+    implementation('org.jline:jline-reader:3.30.17') {
+        exclude group: 'org.jline', module: 'jline-native'
+    }
+    implementation('org.jline:jline-terminal:3.30.17') {
+        exclude group: 'org.jline', module: 'jline-native'
+    }
+
+    // JUnit（CLI の単体テスト用）
+    testImplementation(platform("org.junit:junit-bom:5.10.2"))
+    testImplementation("org.junit.jupiter:junit-jupiter")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+}
+
+application {
+    mainClass = 'com.creatrbypc.createanalytical.cli.MainKt'
+    // 起動スクリプトの名前（build/install/createscript/bin/createscript）
+    applicationName = 'createscript'
+}
+
+// --version で表示する版（ルートの gradle.properties の createscript_version）をソースとして生成する
+def cliVersion = providers.gradleProperty('createscript_version')
+def generateBuildInfo = tasks.register('generateBuildInfo') {
+    def output = layout.buildDirectory.dir('generated/buildinfo/kotlin')
+    inputs.property('version', cliVersion)
+    outputs.dir(output)
+    doLast {
+        def file = output.get().file('com/creatrbypc/createanalytical/cli/BuildInfo.kt').asFile
+        file.parentFile.mkdirs()
+        file.text = "package com.creatrbypc.createanalytical.cli\n\ninternal object BuildInfo {\n    const val VERSION = \"${cliVersion.get()}\"\n}\n"
+    }
+}
+kotlin.sourceSets.main.kotlin.srcDir(generateBuildInfo)
+
+// テストで、サンプルのディレクトリと、生成した起動スクリプトの場所を使う
+tasks.named('test', Test) {
+    useJUnitPlatform()
+    dependsOn tasks.named('startScripts')
+    systemProperty 'createscript.samples', file('samples').absolutePath
+    systemProperty 'createscript.scripts', layout.buildDirectory.dir('scripts').get().asFile.absolutePath
+}

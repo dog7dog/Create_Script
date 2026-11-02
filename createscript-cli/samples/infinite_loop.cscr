@@ -1,0 +1,5 @@
+// 終わらないプログラム（--max-ticks で止まる）
+var n = 0
+while (true) {
+  n = n + 1
+}

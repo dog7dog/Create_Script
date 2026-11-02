@@ -1,0 +1,45 @@
+# Gradle and Kotlin
+.gradle/
+.kotlin/
+build/
+out/
+
+# IDEs
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+.project
+.classpath
+.settings/
+bin/
+.fleet/
+
+# Operating systems
+.DS_Store
+Thumbs.db
+
+# Logs and temporary files
+*.log
+*.tmp
+*.swp
+*~
+
+# Local settings and secrets (never commit these)
+local.properties
+secrets.properties
+gradle-local.properties
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.jks
+*.keystore
+*.mobileprovision
+*.provisionprofile
+
+# Notes and settings of AI coding assistants
+.claude/
+CLAUDE.local.md

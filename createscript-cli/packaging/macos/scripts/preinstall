@@ -1,0 +1,56 @@
+#!/bin/sh
+# CreateScript macOS package: checks before the files are installed (Stage 3.12 S5.2).
+# Installer passes: $1 package path, $2 install location, $3 target volume.
+# Stops the installation (exit 1) without changing anything when
+#   - the CPU of this Mac is not the CPU of the package,
+#   - /usr/local/lib/createscript exists but was not installed by this package, or is a symbolic link,
+#   - /usr/local/bin/createscript exists and is not the link this package makes.
+# On a reinstall or an update, it removes the files of the previous installation that the receipt lists,
+# so that no file of an older version is left. Files that the receipt does not list are kept.
+
+ID=com.creatrbypc.createscript
+ARCH=@ARCH@
+LOCATION=usr/local/lib/createscript
+LINK_TARGET=../lib/createscript/bin/createscript
+
+volume=${3:-/}
+root=${volume%/}
+lib=$root/$LOCATION
+link=$root/usr/local/bin/createscript
+
+refuse() {
+    echo "CreateScript: $*" >&2
+    echo "CreateScript: the installation was stopped; nothing was changed" >&2
+    exit 1
+}
+
+host=$(uname -m)
+[ "$host" = "$ARCH" ] || refuse "this package is for $ARCH Macs, but this Mac is $host; use the $host package"
+
+if [ -e "$link" ] || [ -h "$link" ]; then
+    if [ ! -h "$link" ] || [ "$(readlink "$link")" != "$LINK_TARGET" ]; then
+        refuse "$link already exists and was not made by CreateScript; move it away first"
+    fi
+fi
+
+if [ -e "$lib" ] || [ -h "$lib" ]; then
+    [ -h "$lib" ] && refuse "$lib is a symbolic link; remove it first"
+    [ -d "$lib" ] || refuse "$lib is not a directory; move it away first"
+    location=$(pkgutil --volume "$volume" --pkg-info "$ID" 2>/dev/null | sed -n 's/^location: //p')
+    [ "$location" = "$LOCATION" ] || refuse "$lib exists but was not installed by this package; move it away first"
+    pkgutil --volume "$volume" --only-files --files "$ID" | while IFS= read -r path; do
+        path=${path#./}
+        case $path in
+            ""|/*|..|../*|*/..|*/../*) continue ;;
+        esac
+        if [ -f "$lib/$path" ] || [ -h "$lib/$path" ]; then rm -f "$lib/$path"; fi
+    done
+    pkgutil --volume "$volume" --only-dirs --files "$ID" | sort -r | while IFS= read -r path; do
+        path=${path#./}
+        case $path in
+            ""|.|/*|..|../*|*/..|*/../*) continue ;;
+        esac
+        if [ -d "$lib/$path" ] && [ ! -h "$lib/$path" ]; then rmdir "$lib/$path" 2>/dev/null || true; fi
+    done
+fi
+exit 0

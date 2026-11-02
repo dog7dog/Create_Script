@@ -1,0 +1,4 @@
+// waitTicks は論理 tick を数える（実時間では待たない）
+println("start")
+waitTicks(20000)
+println("after 20000 ticks")

@@ -1,0 +1,166 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# The workflow only reads the repository
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GITLEAKS_VERSION: 8.30.1
+  # SHA-256 of gitleaks_8.30.1_linux_x64.tar.gz (from gitleaks_8.30.1_checksums.txt of the release)
+  GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+
+jobs:
+  secret-scan:
+    name: Secret scan (gitleaks)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install gitleaks (checksum verified)
+        run: |
+          curl -sSfL -o "$RUNNER_TEMP/gitleaks.tar.gz" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_SHA256}  $RUNNER_TEMP/gitleaks.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/gitleaks.tar.gz" -C "$RUNNER_TEMP" gitleaks
+      - name: Scan the files
+        run: '"$RUNNER_TEMP/gitleaks" dir . --redact --no-banner --verbose'
+      - name: Scan the Git history
+        run: '"$RUNNER_TEMP/gitleaks" git . --redact --no-banner --verbose'
+
+  build:
+    name: Build and test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: '21'
+      # Also validates the checksum of gradle/wrapper/gradle-wrapper.jar
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+      - name: Build and run the Core and CLI tests
+        run: ./gradlew build
+      - name: Run the samples
+        run: |
+          ./gradlew :createscript-cli:installDist
+          cs=createscript-cli/build/install/createscript/bin/createscript
+          expect_exit() {
+            want=$1; shift
+            set +e; "$@"; got=$?; set -e
+            if [ "$got" != "$want" ]; then echo "::error::$* exited with $got, expected $want"; exit 1; fi
+          }
+          "$cs" --version
+          for f in hello features many_lines wait; do expect_exit 0 "$cs" run "createscript-cli/samples/$f.cscr"; done
+          expect_exit 2 "$cs" run createscript-cli/samples/type_error.cscr
+          expect_exit 3 "$cs" run createscript-cli/samples/infinite_loop.cscr --max-ticks 1000
+          out=$(printf '1 + 1\nval x = 10\nx * 2\nexit\n' | "$cs")
+          echo "$out"
+          echo "$out" | grep -qx '>>> 2' && echo "$out" | grep -qx '>>> >>> 20'
+
+  linux-package:
+    name: Linux package (${{ matrix.os }})
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+      - name: Build the archive
+        run: createscript-cli/packaging/linux/build-tarball.sh
+      - name: Install, run and uninstall
+        run: |
+          set -eu
+          cd createscript-cli/build/packages
+          sha256sum -c ./*.tar.gz.sha256
+          work=$RUNNER_TEMP/linux-test
+          mkdir -p "$work/extract" "$work/home"
+          tar -xzf ./*.tar.gz -C "$work/extract"
+          pkg=$work/extract/createscript
+          cat "$pkg/BUILD-INFO.txt" "$pkg/legal/JAVA-RUNTIME-SOURCE.txt"
+          # The package must run without Java on PATH and without JAVA_HOME
+          clean() { env -i HOME="$work/home" PATH=/usr/bin:/bin "$@"; }
+          clean "$pkg/install.sh"
+          cs=$work/home/.local/bin/createscript
+          clean "$cs" --version
+          [ "$(clean "$cs" run "$GITHUB_WORKSPACE/createscript-cli/samples/hello.cscr")" = "Hello, CreateScript!" ]
+          printf '1 + 1\nexit\n' | clean "$cs" | grep -qx '>>> 2'
+          # Installing again replaces the installation; a foreign file at the link is refused
+          clean "$pkg/install.sh"
+          clean "$work/home/.local/lib/createscript/uninstall.sh"
+          [ ! -e "$cs" ] && [ ! -e "$work/home/.local/lib/createscript" ]
+          [ -z "$(find "$work/home" -mindepth 1)" ] || { find "$work/home"; exit 1; }
+          mkdir -p "$work/home/.local/bin" && echo '#!/bin/sh' > "$cs"
+          if clean "$pkg/install.sh"; then echo "::error::install.sh replaced a foreign file"; exit 1; fi
+          [ "$(cat "$cs")" = '#!/bin/sh' ]
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: createscript-linux-${{ runner.arch }}
+          path: createscript-cli/build/packages/
+          retention-days: 7
+
+  macos-package:
+    name: macOS package (arm64, unsigned)
+    needs: build
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+      - name: Build the package
+        run: createscript-cli/packaging/macos/build-pkg.sh
+      # The runner is a temporary machine, so the package is installed into the system and removed again
+      - name: Install, run and uninstall
+        run: |
+          set -eu
+          cd createscript-cli/build/packages
+          shasum -a 256 -c ./*.pkg.sha256
+          pkg=$(ls ./*.pkg)
+          sudo installer -pkg "$pkg" -target /
+          env -i PATH=/usr/bin:/bin /usr/local/bin/createscript --version
+          [ "$(env -i PATH=/usr/bin:/bin /usr/local/bin/createscript run "$GITHUB_WORKSPACE/createscript-cli/samples/hello.cscr")" = "Hello, CreateScript!" ]
+          cat /usr/local/lib/createscript/legal/JAVA-RUNTIME-SOURCE.txt
+          /usr/local/lib/createscript/uninstall.sh --dry-run
+          sudo /usr/local/lib/createscript/uninstall.sh
+          [ ! -e /usr/local/bin/createscript ] && [ ! -e /usr/local/lib/createscript ]
+          if pkgutil --pkg-info com.creatrbypc.createscript; then exit 1; fi
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: createscript-macos-arm64-unsigned
+          path: createscript-cli/build/packages/
+          retention-days: 7

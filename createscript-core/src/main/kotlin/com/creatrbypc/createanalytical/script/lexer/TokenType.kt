@@ -1,0 +1,62 @@
+package com.creatrbypc.createanalytical.script.lexer
+
+// トークンの種類。symbol を持つものは演算子・記号で、Kotlin と同じ綴り。
+// Stage 3.5 で使えるかどうかは Lexer では判断せず、Parser 以降で判定する
+enum class TokenType(val symbol: String? = null) {
+    IDENTIFIER,
+    KEYWORD,
+    INT_LITERAL,
+
+    // 浮動小数点数のリテラル（第3.11a段階）。f / F の付いたものは Float、付かないものは Double
+    FLOAT_LITERAL,
+    DOUBLE_LITERAL,
+    STRING_LITERAL,
+    NEWLINE,
+    EOF,
+
+    IDENTITY_EQUALS("==="),
+    NOT_IDENTITY_EQUALS("!=="),
+    RANGE_UNTIL("..<"),
+
+    INCREMENT("++"),
+    DECREMENT("--"),
+    PLUS_ASSIGN("+="),
+    MINUS_ASSIGN("-="),
+    TIMES_ASSIGN("*="),
+    DIVIDE_ASSIGN("/="),
+    REMAINDER_ASSIGN("%="),
+    EQUALS("=="),
+    NOT_EQUALS("!="),
+    LESS_EQUAL("<="),
+    GREATER_EQUAL(">="),
+    AND_AND("&&"),
+    OR_OR("||"),
+    ELVIS("?:"),
+    SAFE_ACCESS("?."),
+    RANGE(".."),
+    DOUBLE_COLON("::"),
+    ARROW("->"),
+    NOT_NULL_ASSERTION("!!"),
+
+    PLUS("+"),
+    MINUS("-"),
+    TIMES("*"),
+    DIVIDE("/"),
+    REMAINDER("%"),
+    ASSIGN("="),
+    LESS("<"),
+    GREATER(">"),
+    NOT("!"),
+    QUESTION("?"),
+    COLON(":"),
+    DOT("."),
+    COMMA(","),
+    LEFT_PAREN("("),
+    RIGHT_PAREN(")"),
+    LEFT_BRACE("{"),
+    RIGHT_BRACE("}"),
+    LEFT_BRACKET("["),
+    RIGHT_BRACKET("]"),
+    AT("@"),
+    SEMICOLON(";"),
+}

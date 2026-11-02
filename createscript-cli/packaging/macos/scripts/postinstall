@@ -1,0 +1,27 @@
+#!/bin/sh
+# CreateScript macOS package: makes the command after the files are installed (Stage 3.12 S5.2).
+# Installer passes: $1 package path, $2 install location, $3 target volume.
+# Makes /usr/local/bin/createscript, a relative symbolic link to ../lib/createscript/bin/createscript.
+# An existing file at that path is never replaced (preinstall has already checked it).
+
+LINK_TARGET=../lib/createscript/bin/createscript
+
+volume=${3:-/}
+root=${volume%/}
+bindir=$root/usr/local/bin
+link=$bindir/createscript
+
+if [ ! -d "$bindir" ]; then
+    mkdir -p "$bindir" || exit 1
+    chmod 755 "$bindir"
+fi
+
+if [ -h "$link" ] && [ "$(readlink "$link")" = "$LINK_TARGET" ]; then
+    exit 0
+fi
+if [ -e "$link" ] || [ -h "$link" ]; then
+    echo "CreateScript: $link already exists and was not made by CreateScript; it was not replaced" >&2
+    echo "CreateScript: the files are in /usr/local/lib/createscript; run /usr/local/lib/createscript/bin/createscript" >&2
+    exit 1
+fi
+ln -s "$LINK_TARGET" "$link"
