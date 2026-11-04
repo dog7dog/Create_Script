@@ -82,12 +82,14 @@ while (!run.isFinished) run.tick()
 
 | Platform | Status |
 |---|---|
-| Build and tests on macOS (Apple Silicon, Temurin 21) | Verified locally |
-| `createscript` from `installDist` on macOS | Verified locally |
-| macOS `.pkg` (unsigned) | Built and inspected locally. Not signed or notarized, so it is not suitable for public distribution |
-| Build and tests on Linux | Configured in CI; not verified yet |
-| Linux `.tar.gz` and `install.sh` | Configured in CI; not verified on a Linux machine yet |
-| Windows | Not tested (`installDist` makes a `createscript.bat`, but it has never been run) |
+| Ubuntu x86_64 (`ubuntu-24.04`) | Verified in CI: build, all tests, samples, REPL, and the `.tar.gz` installed, run and uninstalled |
+| Ubuntu aarch64 (`ubuntu-24.04-arm`) | Verified in CI: the `.tar.gz` built, installed, run and uninstalled (the unit tests run on x86_64 and macOS only) |
+| macOS arm64 (Apple Silicon) | Verified in CI (`macos-15`): build, all tests, samples, REPL, and the `.pkg` installed, run and uninstalled. Locally, the build, the tests and the `.pkg` contents were also checked (the `.pkg` was not installed locally) |
+| macOS x86_64 (Intel) | Not verified (the packaging script supports it, but it has never been run) |
+| Windows | Not verified (`installDist` makes a `createscript.bat`, but it has never been run) |
+| macOS signing and notarization | Not done. The `.pkg` is unsigned, so it is not suitable for public distribution |
+
+All CI jobs use Temurin 21.
 
 ## Security
 

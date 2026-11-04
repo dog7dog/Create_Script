@@ -76,12 +76,14 @@ while (!run.isFinished) run.tick()
 
 | 環境 | 状態 |
 |---|---|
-| macOS（Apple Silicon、Temurin 21）でのビルドとテスト | ローカルで確認済み |
-| macOS での `installDist` の `createscript` | ローカルで確認済み |
-| macOS の `.pkg`（署名なし） | ローカルで作成し、中身を確認済み。署名・公証をしていないため、公開の配布には使えない |
-| Linux でのビルドとテスト | CI に設定済み。まだ確認していない |
-| Linux の `.tar.gz` と `install.sh` | CI に設定済み。Linux の機械では、まだ確認していない |
+| Ubuntu x86_64（`ubuntu-24.04`） | CI で確認済み：ビルド・すべてのテスト・サンプル・REPL、`.tar.gz` のインストール・実行・アンインストール |
+| Ubuntu aarch64（`ubuntu-24.04-arm`） | CI で確認済み：`.tar.gz` の作成・インストール・実行・アンインストール（単体テストは x86_64 と macOS だけで実行） |
+| macOS arm64（Apple Silicon） | CI（`macos-15`）で確認済み：ビルド・すべてのテスト・サンプル・REPL、`.pkg` のインストール・実行・アンインストール。ローカルでも、ビルド・テストと `.pkg` の中身を確認済み（ローカルではインストールしていない） |
+| macOS x86_64（Intel） | 未確認（パッケージのスクリプトは対応しているが、実行したことはない） |
 | Windows | 未確認（`installDist` が `createscript.bat` を作るが、実行したことはない） |
+| macOS の署名・公証 | 未実施。`.pkg` は署名していないため、公開の配布には使えない |
+
+CI では、どのジョブも Temurin 21 を使います。
 
 ## セキュリティ
 

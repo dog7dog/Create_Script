@@ -267,6 +267,7 @@ Java・Gradle・Kotlin を入れていない環境でも `createscript` を使�
 | Linux | `createscript-<版>-linux-<CPU>.tar.gz` | `~/.local/lib/createscript` | `~/.local/bin/createscript`（リンク） |
 
 - CPU は、macOS が `arm64`（Apple Silicon）または `x86_64`（Intel）、Linux が `x86_64` または `aarch64` です。CPU ごとに別のパッケージになり、1 つのパッケージには 1 つの CPU 用のランタイムだけが入ります。
+- CI で、Linux の `x86_64`・`aarch64` と macOS の `arm64` のパッケージのインストール・実行・アンインストールを確認しています。macOS の `x86_64` は未確認です。
 - それぞれの配布物の横に、SHA-256 のチェックサム（`.sha256`）を作ります。
 - 入るものは次のとおりです。
   - CLI（`createscript-cli.jar`）

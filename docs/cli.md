@@ -111,6 +111,8 @@ JAVA_HOME=/path/to/jdk-21 createscript-cli/packaging/macos/build-pkg.sh
 JAVA_HOME=/path/to/jdk-21 createscript-cli/packaging/linux/build-tarball.sh
 ```
 
+- Verified in CI: the Linux package on x86_64 and aarch64, and the macOS package on arm64 (installed, run and
+  uninstalled). The macOS x86_64 package has not been verified. See the platform status in the README.
 - The macOS package is **not signed or notarized**. It is meant for local tests; Gatekeeper blocks it when it
   is downloaded.
 - The runtime is built from the JDK in `JAVA_HOME`. The package records that JDK in `BUILD-INFO.txt`, and
