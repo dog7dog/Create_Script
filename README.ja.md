@@ -3,8 +3,8 @@
 [English](README.md)
 
 CreateScript は、Kotlin に似た書き方の、静的型付けの小さなスクリプト言語です。プログラムは、安全に区切られた仮想機械（VM）で、
-決まった量ずつ（tick ごとに）実行されます。もとは Minecraft の MOD「Create: Analytical」のプログラム可能なブロックのために作りました。
-このリポジトリは、言語の部分だけを Minecraft から切り離したものです。
+決まった量ずつ（tick ごとに）実行されます。信頼できないスクリプトを動かすアプリケーションに組み込むことを想定しています。
+このリポジトリには、次のものがあります。
 
 - **`createscript-core`**：字句解析・構文解析・意味解析・バイトコードへのコンパイル・VM。Kotlin/JVM のライブラリで、依存は Kotlin の標準ライブラリだけです。
 - **`createscript-cli`**：`createscript` コマンド。`.cscr` ファイルを実行します。行編集つきの対話モード（REPL）もあります。
@@ -63,7 +63,7 @@ createscript-cli/build/install/createscript/bin/createscript      # 対話モー
 ## Core をライブラリとして使う
 
 Core は、まだ Maven のリポジトリに公開していません。入口は `com.creatrbypc.createanalytical.script.api.CreateScript` です
-（パッケージ名は、CreateScript を作り始めた Minecraft の MOD に由来します）。
+（パッケージ名は、CreateScript を作り始めたプロジェクトに由来します）。
 
 ```kotlin
 val result = CreateScript.compile("println(6 * 7)")
@@ -92,8 +92,6 @@ while (!run.isFinished) run.tick()
 CreateScript は [Apache License 2.0](LICENSE) で公開しています。[NOTICE](NOTICE) も参照してください。配布用のパッケージには、
 それぞれのライセンスに従う他者の部品（Kotlin の標準ライブラリ・JetBrains の annotations・JLine・OpenJDK のランタイム）も入ります。
 [THIRD-PARTY-NOTICES.md](createscript-cli/packaging/common/THIRD-PARTY-NOTICES.md) を参照してください。
-
-Minecraft の MOD「Create: Analytical」は別のプロジェクトで、このリポジトリには含まれません。
 
 ## AI の利用
 

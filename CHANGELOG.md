@@ -8,8 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [0.1.0-alpha] - not released yet
 
-The first version of CreateScript as a project of its own, separated from the Minecraft mod
-*Create: Analytical*. The language, the VM and the CLI behave as they do in the mod.
+The first version of CreateScript as a project of its own.
 
 ### Added
 

@@ -2,10 +2,10 @@
 
 ## 1. 概要
 
-CreateScript CLI（コマンド名 `createscript`）は、CreateScript のプログラムを Minecraft や NeoForge を起動せずにターミナルで実行するツールです。
+CreateScript CLI（コマンド名 `createscript`）は、CreateScript のプログラムをターミナルで実行するツールです。
 
-- 言語処理系は `createscript-core` です。Minecraft の MOD「Create: Analytical」の Clockwork Computator も同じ Core を使うため、コンパイル・診断・実行の結果は、ゲームの中と同じになります。
-- Minecraft・NeoForge・Create・Kotlin for Forge には依存しません。
+- 言語処理系は `createscript-core` です。Core を組み込んだほかのアプリケーションと、コンパイル・診断・実行の結果は同じになります。
+- 依存するのは、Core・Kotlin の標準ライブラリ（と、それが使う JetBrains の annotations）・JLine だけです。
 
 ## 2. 正式な拡張子 `.cscr`
 
@@ -18,7 +18,7 @@ CreateScript のソースファイルの正式な拡張子は **`.cscr`** です
   - 例：`scripts.cs/ok.cscr` は実行できます。`scripts.cscr/ng.txt` は拒否します。
 - `.cs` は CreateScript の正式なファイル形式ではありません。C# などのファイルと混同しないためです。
 - 今後のファイルの関連付け、エディタの対応（構文の色分けなど）、サンプル、ドキュメントでも、`.cscr` を正式な拡張子として扱います。
-- ソースは UTF-8 で書きます。UTF-8 として正しくないファイルは拒否します。先頭に BOM があると、Core が `CS_LEX_BYTE_ORDER_MARK` を報告します（ゲームの中と同じ）。
+- ソースは UTF-8 で書きます。UTF-8 として正しくないファイルは拒否します。先頭に BOM があると、Core が `CS_LEX_BYTE_ORDER_MARK` を報告します。
 
 ## 3. Gradle でのビルド
 
@@ -57,8 +57,8 @@ createscript --version
 `run` は、ファイルを読む → コンパイルする → 成功したら実行する、の順に進みます。
 
 - **標準出力：** `println` の出力を、出力した順にすべて書きます。
-  - 行の数に上限はありません。Minecraft の画面は最新の 32 行だけを表示しますが、CLI は 32 行を超えた分も欠かさず書きます。
-  - 1 行の長さはゲームと同じく 64 UTF-16 単位までで、超えた分は「…」で切ります。
+  - 行の数に上限はありません。Core のコンソールの履歴は最新の 32 行だけを持ちますが、CLI は 32 行を超えた分も欠かさず書きます。
+  - 1 行の長さは、言語の上限と同じく 64 UTF-16 単位までで、超えた分は「…」で切ります。
 - **標準エラー出力：** コンパイルと実行の診断を書きます。
 - **`waitTicks(n)`：** 論理 tick を n 回数えるだけで、実時間では待ちません。
 
@@ -69,11 +69,11 @@ createscript --version
 | `--max-ticks <整数>` | 進める論理 tick の上限。これを超えても終わらなければ、異常終了する | `100000` | 1〜1000000 |
 
 **既定値と上限を決めた理由**
-- **`--instructions-per-tick` の既定値 128：** Minecraft の Clockwork Computator 1 台の最高速度（FAST）と同じです。
-- **`--instructions-per-tick` の上限 4096：** Minecraft のサーバー全体で 1 tick に実行できる命令の数と同じです。
-- **`--max-ticks` の上限 1,000,000：** Minecraft の 20 tick/秒で約 14 時間分です。2 つの上限の組み合わせでは、命令は最大で約 41 億になります。開発機の計測では、終わらないプログラムでも約 25 秒で止まります（既定値なら約 0.2 秒）。
-- **`--seed` の既定値 0：** 同じファイルは毎回同じ結果になります。ゲームの中では、実行するたびにホストが種を決めます。
-- 回収（GC）の予算は、ゲームの中の 1 台と同じです（Core の既定値。CLI からは変えられません）。
+- **`--instructions-per-tick` の既定値 128：** 1 tick あたり 128 命令です。Core の実行速度の最高段階（`PowerLevel.FAST`）と同じ値です。
+- **`--instructions-per-tick` の上限 4096：** 1 tick あたり最大 4096 命令です。`--max-ticks` の上限と合わせて、1 回の実行で進む命令の総数を抑えます。
+- **`--max-ticks` の上限 1,000,000：** 20 tick/秒なら約 14 時間分です。2 つの上限の組み合わせでは、命令は最大で約 41 億になります。開発機の計測では、終わらないプログラムでも約 25 秒で止まります（既定値なら約 0.2 秒）。
+- **`--seed` の既定値 0：** 同じファイルは毎回同じ結果になります。Core を組み込むアプリケーションでは、ホストが種を決めます。
+- 回収（GC）の予算は、Core の既定値です（CLI からは変えられません）。
 
 ## 5.1 対話モード（REPL）
 
@@ -112,14 +112,14 @@ Type "help" for help, "exit" to quit.
 
 1. それまでに受け付けた入力（セッション）の後ろに、新しい入力をつないでコンパイルします。
 2. 前の入力の終わりで取った VM の状態（スナップショット）から、続きだけを実行します。前の入力の `println` などの副作用は、くり返されません。
-3. スナップショットは、ゲームの保存・復元と同じ検証（`SnapshotVerifier`）を通してから再開します。
+3. スナップショットは、Core の保存・復元と同じ検証（`SnapshotVerifier`）を通してから再開します。
 
 そのため、REPL は区切りとして、各入力の後ろに `waitTicks(0)` を付けます。この区切りは REPL の中だけのもので、`.cscr` の実行には関係しません。
 
 **エラーと上限**
 - コンパイルエラー・実行時エラー・実行の上限（1 入力あたり 100,000 tick）に達した入力は、セッションに加えません。セッションは、その入力の前の状態のまま続きます。
   - 実行時エラーの入力では、エラーより前の変数の変更も取り消されます。ただし、エラーより前に表示した出力は残ります。
-- 1 tick の命令数は 128（ゲームの FAST と同じ）、乱数の種は 0 です。
+- 1 tick の命令数は 128（`run` の既定値と同じ）、乱数の種は 0 です。
 - **セッション全体が、1 つのプログラムとしての言語の上限に従います。** ソース 4096 文字、変数 64 個、命令 4096、定数 256 などです。
   - 1 入力につき、区切りの分として 14 文字が加わります。例えば `println(…)` だけの入力なら、約 160 個まで入ります。
   - 上限に達すると、それ以上は加えられません（`the session has reached a CreateScript limit` と表示します）。それまでの状態は使い続けられます。新しいセッションにするには、`createscript` を起動し直します。
@@ -217,8 +217,8 @@ createscript-cli/samples/infinite_loop.cscr: stopped after 1000 ticks (--max-tic
 ## 7. エラーと終了コード
 
 診断の形式は `ファイル:行:列: error|warning コード (引数)` です。
-- 行と列は 1 から数える UTF-16 単位で、ゲームの画面と同じです。
-- コードは `CS_SEM_TYPE_MISMATCH` などの診断コードです。CLI はコードと引数を表示します（文言の翻訳は MOD の言語ファイルにあり、このリポジトリには含まれません）。
+- 行と列は 1 から数える UTF-16 単位です。
+- コードは `CS_SEM_TYPE_MISMATCH` などの診断コードです。CLI はコードと引数を表示します（診断の文章や翻訳は、このリポジトリには含まれません）。
 - 使い方とファイルの誤りは `createscript: …` の形で表示します。
 
 | 終了コード | 意味 |
@@ -236,7 +236,7 @@ createscript-cli/samples/infinite_loop.cscr: stopped after 1000 ticks (--max-tic
 ## 8. 実行の制限と安全対策
 
 - **無限ループ：** `--max-ticks` で必ず止まります（上限 1,000,000）。1 tick の命令数も `--instructions-per-tick`（上限 4096）で制限するので、1 回の実行で進む命令の数には上限があります。
-- **VM の制限：** ゲームの中と同じ制限がすべてそのまま働きます。
+- **VM の制限：** Core の制限がすべてそのまま働きます。
   - ソース 4096 文字、命令 4096、スタック 64、呼び出しの深さ 16、オブジェクト 256、リストの要素など
   - 回収（GC）の予算
 - **出力のコールバック：**
@@ -268,7 +268,7 @@ Java・Gradle・Kotlin を入れていない環境でも `createscript` を使�
 
 - CPU は、macOS が `arm64`（Apple Silicon）または `x86_64`（Intel）、Linux が `x86_64` または `aarch64` です。CPU ごとに別のパッケージになり、1 つのパッケージには 1 つの CPU 用のランタイムだけが入ります。
 - それぞれの配布物の横に、SHA-256 のチェックサム（`.sha256`）を作ります。
-- Minecraft の MOD（NeoForge・Create・Kotlin for Forge を含む）は入りません。入るものは次のとおりです。
+- 入るものは次のとおりです。
   - CLI（`createscript-cli.jar`）
   - Core（`createscript-core.jar`）
   - `kotlin-stdlib-2.0.0.jar`
@@ -313,7 +313,7 @@ JAVA_HOME=/path/to/jdk-21 createscript-cli/packaging/linux/build-tarball.sh
 **記録とチェック**
 - 使った JDK の配布元・版・CPU、モジュール、コミットを、パッケージの中の `BUILD-INFO.txt` に書きます。
 - その JDK のソースコードの入手先（JDK の `release` に記録されたリポジトリとコミット、Temurin ならそのビルドのリリースのページ）を、`legal/JAVA-RUNTIME-SOURCE.txt` に書きます。
-- jar に Minecraft・NeoForge・Create・Kotlin for Forge のファイルがあったら、作るのをやめます。
+- jar に、ほかのアプリケーション向けのフレームワークやその設定ファイルがあったら、作るのをやめます。
 - jar に CreateScript の外のクラスがあったら、作るのをやめます。
 - ソース、Gradle の設定、秘密情報の形式のファイル、絶対パスのシンボリックリンクがあったら、作るのをやめます。
 

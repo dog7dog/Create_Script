@@ -3,9 +3,8 @@
 [日本語](README.ja.md)
 
 CreateScript is a small, statically typed scripting language with a Kotlin-like syntax, and a sandboxed
-virtual machine that runs it in bounded steps ("ticks"). It was first written for the programmable
-block of the Minecraft mod *Create: Analytical*. This repository contains the language on its own, without
-Minecraft:
+virtual machine that runs it in bounded steps ("ticks"). It is meant to be embedded in host applications
+that run untrusted scripts. This repository contains:
 
 - **`createscript-core`**: the lexer, parser, semantic analyzer, bytecode compiler and VM, as a Kotlin/JVM
   library with no dependency other than the Kotlin standard library.
@@ -69,8 +68,8 @@ createscript-cli/build/install/createscript/bin/createscript      # interactive 
 ## Using the Core library
 
 The Core is not published to a Maven repository yet. Its entry point is
-`com.creatrbypc.createanalytical.script.api.CreateScript` (the package name comes from the Minecraft mod
-where CreateScript started):
+`com.creatrbypc.createanalytical.script.api.CreateScript` (the package name comes from the project where
+CreateScript started):
 
 ```kotlin
 val result = CreateScript.compile("println(6 * 7)")
@@ -100,8 +99,6 @@ CreateScript is licensed under the [Apache License 2.0](LICENSE). See [NOTICE](N
 packages also contain third-party components under their own licenses (the Kotlin standard library,
 JetBrains annotations, JLine and an OpenJDK runtime); see
 [THIRD-PARTY-NOTICES.md](createscript-cli/packaging/common/THIRD-PARTY-NOTICES.md).
-
-The Minecraft mod *Create: Analytical* is a separate project and is not covered by this repository.
 
 ## Use of AI
 

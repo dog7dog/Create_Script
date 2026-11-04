@@ -1,9 +1,8 @@
 # The CreateScript language (basics)
 
 CreateScript is a small, statically typed language with a Kotlin-like syntax. Programs are compiled to
-bytecode and run on a sandboxed virtual machine that advances in logical **ticks**. The language was first
-made for the programmable block of the Minecraft mod *Create: Analytical*. This repository contains the
-language itself (`createscript-core`) and a command-line tool (`createscript-cli`); neither needs Minecraft.
+bytecode and run on a sandboxed virtual machine that advances in logical **ticks**. This repository contains
+the language itself (`createscript-core`) and a command-line tool (`createscript-cli`).
 
 This page covers the basic features. Every example below was run with `createscript run` and shows its
 actual output. Source files use the extension `.cscr` and the UTF-8 encoding.
