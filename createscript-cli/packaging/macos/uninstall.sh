@@ -47,7 +47,7 @@ elif [ -e "$link" ] || [ -h "$link" ]; then
     echo "uninstall: $link was not made by CreateScript; it is kept" >&2
 fi
 
-pkgutil --only-files --files "$ID" | while IFS= read -r path; do
+pkgutil --files "$ID" | while IFS= read -r path; do
     path=${path#./}
     case $path in
         ""|/*|..|../*|*/..|*/../*) continue ;;
