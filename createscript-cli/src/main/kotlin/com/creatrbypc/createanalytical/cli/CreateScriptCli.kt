@@ -192,7 +192,7 @@ class CreateScriptCli(private val out: PrintStream, private val err: PrintStream
             |  createscript --help
             |  createscript --version
             |
-            |Runs a CreateScript program ($EXTENSION) without Minecraft. println output goes to standard output;
+            |Runs a CreateScript program ($EXTENSION). println output goes to standard output;
             |diagnostics go to standard error. waitTicks counts logical ticks and does not sleep.
             |
             |Options for run:

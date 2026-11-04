@@ -38,7 +38,7 @@ if [ -e "$lib" ] || [ -h "$lib" ]; then
     [ -d "$lib" ] || refuse "$lib is not a directory; move it away first"
     location=$(pkgutil --volume "$volume" --pkg-info "$ID" 2>/dev/null | sed -n 's/^location: //p')
     [ "$location" = "$LOCATION" ] || refuse "$lib exists but was not installed by this package; move it away first"
-    pkgutil --volume "$volume" --only-files --files "$ID" | while IFS= read -r path; do
+    pkgutil --volume "$volume" --files "$ID" | while IFS= read -r path; do
         path=${path#./}
         case $path in
             ""|/*|..|../*|*/..|*/../*) continue ;;

@@ -97,7 +97,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
       - name: Build the archive
         run: createscript-cli/packaging/linux/build-tarball.sh
-      - name: Install, run and uninstall
+      - name: Install, reinstall, run and uninstall
         run: |
           set -eu
           cd createscript-cli/build/packages
@@ -145,19 +145,53 @@ jobs:
       - name: Build the package
         run: createscript-cli/packaging/macos/build-pkg.sh
       # The runner is a temporary machine, so the package is installed into the system and removed again
-      - name: Install, run and uninstall
+      - name: Install, reinstall, run and uninstall
         run: |
           set -eu
           cd createscript-cli/build/packages
           shasum -a 256 -c ./*.pkg.sha256
-          pkg=$(ls ./*.pkg)
+          pkg=$PWD/$(ls *.pkg)
+          lib=/usr/local/lib/createscript
+          cs=/usr/local/bin/createscript
+          works() {
+            env -i PATH=/usr/bin:/bin "$cs" --version
+            [ "$(env -i PATH=/usr/bin:/bin "$cs" run "$GITHUB_WORKSPACE/createscript-cli/samples/hello.cscr")" = "Hello, CreateScript!" ]
+            out=$(printf '1 + 1\nexit\n' | env -i PATH=/usr/bin:/bin "$cs")
+            grep -qx '>>> 2' <<<"$out"
+            # The runtime has symbolic links (made by jlink); the receipt lists them apart from the files
+            [ -h "$lib/runtime/legal/java.logging/LICENSE" ]
+          }
+          only_user_file() {
+            [ "$(cd "$lib" && find . ! -name .)" = "./user-note.txt" ] || { find "$lib"; exit 1; }
+          }
+          # New installation
           sudo installer -pkg "$pkg" -target /
-          env -i PATH=/usr/bin:/bin /usr/local/bin/createscript --version
-          [ "$(env -i PATH=/usr/bin:/bin /usr/local/bin/createscript run "$GITHUB_WORKSPACE/createscript-cli/samples/hello.cscr")" = "Hello, CreateScript!" ]
-          cat /usr/local/lib/createscript/legal/JAVA-RUNTIME-SOURCE.txt
-          /usr/local/lib/createscript/uninstall.sh --dry-run
-          sudo /usr/local/lib/createscript/uninstall.sh
-          [ ! -e /usr/local/bin/createscript ] && [ ! -e /usr/local/lib/createscript ]
+          works
+          cat "$lib/legal/JAVA-RUNTIME-SOURCE.txt"
+          # preinstall alone removes every file and link that the receipt lists, and keeps a file that the user added
+          echo note | sudo tee "$lib/user-note.txt" >/dev/null
+          pkgutil --expand "$pkg" "$RUNNER_TEMP/expanded"
+          sudo sh "$RUNNER_TEMP/expanded/createscript-component.pkg/Scripts/preinstall" "$pkg" / /
+          only_user_file
+          # Reinstalling the same version, after the step above and over a complete installation
+          sudo installer -pkg "$pkg" -target /
+          works
+          sudo installer -pkg "$pkg" -target /
+          works
+          [ "$(cat "$lib/user-note.txt")" = note ]
+          # Uninstalling keeps the user's file and removes everything else
+          "$lib/uninstall.sh" --dry-run
+          sudo "$lib/uninstall.sh"
+          [ ! -e "$cs" ] && [ ! -h "$cs" ]
+          only_user_file
+          if pkgutil --pkg-info com.creatrbypc.createscript; then exit 1; fi
+          sudo rm "$lib/user-note.txt"
+          sudo rmdir "$lib"
+          # A new installation and its uninstallation leave nothing behind
+          sudo installer -pkg "$pkg" -target /
+          works
+          sudo "$lib/uninstall.sh"
+          [ ! -e "$cs" ] && [ ! -h "$cs" ] && [ ! -e "$lib" ]
           if pkgutil --pkg-info com.creatrbypc.createscript; then exit 1; fi
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
