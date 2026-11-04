@@ -3,6 +3,9 @@ package com.creatrbypc.createanalytical.script.api
 import com.creatrbypc.createanalytical.script.compiler.CompileResult
 import com.creatrbypc.createanalytical.script.compiler.Compiler
 import com.creatrbypc.createanalytical.script.diagnostic.Diagnostic
+import com.creatrbypc.createanalytical.script.module.ModuleCompileResult
+import com.creatrbypc.createanalytical.script.module.ModuleCompiler
+import com.creatrbypc.createanalytical.script.module.ModuleResolver
 import com.creatrbypc.createanalytical.script.scheduler.Scheduler
 import com.creatrbypc.createanalytical.script.vm.CompiledProgram
 import com.creatrbypc.createanalytical.script.vm.CsVm
@@ -13,6 +16,12 @@ import com.creatrbypc.createanalytical.script.vm.VmState
 // コンパイルは Compiler.compileSource と同じ。実行は 1 台の VM を tick 単位で進める ScriptRun を返す
 object CreateScript {
     fun compile(source: String): CompileResult = Compiler.compileSource(source)
+
+    // import を含むプログラムのコンパイル（第8.0段階）。source はエントリーのファイル、resolver はホストがモジュールのソースを探す方法
+    // （Core はファイルを読まない）。entryModule はエントリーのファイル自身のモジュール名（分かれば。その名前の import は循環として報告する）。
+    // import の無いプログラムは compile(source) と同じ命令・診断になる
+    fun compile(source: String, resolver: ModuleResolver, entryModule: String? = null): ModuleCompileResult =
+        ModuleCompiler.compile(source, resolver, entryModule)
 
     // onPrint は println の出力を1行ずつ受け取る（履歴の 32 行を超えた分も含む）。tick の中の VM の処理が終わった後に呼ぶ
     fun start(program: CompiledProgram, options: RunOptions, onPrint: ((String) -> Unit)? = null): ScriptRun =

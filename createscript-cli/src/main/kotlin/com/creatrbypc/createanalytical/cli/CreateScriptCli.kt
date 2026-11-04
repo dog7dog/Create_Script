@@ -6,15 +6,12 @@ import com.creatrbypc.createanalytical.script.diagnostic.Diagnostic
 import com.creatrbypc.createanalytical.script.diagnostic.DiagnosticArgument
 import com.creatrbypc.createanalytical.script.diagnostic.DiagnosticSeverity
 import com.creatrbypc.createanalytical.script.lexer.LexerLimits
+import com.creatrbypc.createanalytical.script.module.ModuleDiagnostic
 import com.creatrbypc.createanalytical.script.vm.VmState
 import java.io.BufferedReader
 import java.io.IOException
 import java.io.InputStream
 import java.io.PrintStream
-import java.nio.ByteBuffer
-import java.nio.charset.CharacterCodingException
-import java.nio.charset.CodingErrorAction
-import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.InvalidPathException
 import java.nio.file.Path
@@ -56,7 +53,8 @@ class CreateScriptCli(private val out: PrintStream, private val err: PrintStream
     // 入力のファイルを読めない（code は終了コード）
     private class InputError(val code: Int, message: String) : Exception(message)
 
-    private class RunCommand(val file: String, val seed: Long, val instructionsPerTick: Int, val maxTicks: Int)
+    // projectRoot は --project-root の値（省略時は null。ファイルのあるディレクトリ: 第8.0段階）
+    private class RunCommand(val file: String, val seed: Long, val instructionsPerTick: Int, val maxTicks: Int, val projectRoot: String?)
 
     fun execute(args: List<String>): Int {
         try {
@@ -113,6 +111,7 @@ class CreateScriptCli(private val out: PrintStream, private val err: PrintStream
                 ?: CliLimits.DEFAULT_SEED,
             positive(values, "--instructions-per-tick", CliLimits.DEFAULT_INSTRUCTIONS_PER_TICK, CliLimits.MAX_INSTRUCTIONS_PER_TICK),
             positive(values, "--max-ticks", CliLimits.DEFAULT_MAX_TICKS, CliLimits.MAX_MAX_TICKS),
+            values["--project-root"],
         )
     }
 
@@ -123,10 +122,14 @@ class CreateScriptCli(private val out: PrintStream, private val err: PrintStream
         return value
     }
 
+    // import（第8.0段階）のモジュールは、プロジェクトのルートの直下の モジュール名.cscr から読む（ProjectModules）。
+    // import の無いプログラムの命令・診断は CreateScript.compile(source) と同じ
     private fun run(command: RunCommand): Int {
         val source = readSource(command.file)
-        val compiled = CreateScript.compile(source)
-        compiled.diagnostics.forEach { err.println(format(command.file, it)) }
+        val project = openProject(command)
+        val compiled = CreateScript.compile(source, project, project.entryModule)
+        fun show(located: ModuleDiagnostic) = format(located.module?.let(project::displayName) ?: command.file, located.diagnostic)
+        compiled.diagnostics.forEach { err.println(show(it)) }
         if (compiled.diagnosticsTruncated) err.println("${command.file}: more diagnostics were omitted")
         val program = compiled.program ?: return ExitCode.COMPILE_ERROR
 
@@ -142,7 +145,7 @@ class CreateScriptCli(private val out: PrintStream, private val err: PrintStream
             return ExitCode.MAX_TICKS_EXCEEDED
         }
         if (run.state == VmState.ERROR) {
-            run.error?.let { err.println(format(command.file, it)) }
+            run.error?.let { err.println(show(compiled.locate(it))) }
             return ExitCode.RUNTIME_ERROR
         }
         return ExitCode.OK
@@ -162,28 +165,39 @@ class CreateScriptCli(private val out: PrintStream, private val err: PrintStream
         }
         if (!Files.exists(path)) return fail(ExitCode.NO_INPUT, "file not found: $file")
         if (!Files.isRegularFile(path)) return fail(ExitCode.NO_INPUT, "not a regular file: $file")
-        val bytes = try {
-            Files.newInputStream(path).use { it.readNBytes(CliLimits.MAX_SOURCE_BYTES + 1) }
+        return when (val read = SourceFiles.read(path)) {
+            is SourceFiles.Read.Text -> read.text
+            SourceFiles.Read.TooLarge -> fail(ExitCode.INVALID_INPUT, "file too large: $file (at most ${LexerLimits.MAX_SOURCE_LENGTH} characters)")
+            SourceFiles.Read.NotUtf8 -> fail(ExitCode.INVALID_INPUT, "file is not valid UTF-8: $file")
+            SourceFiles.Read.Failed -> fail(ExitCode.NO_INPUT, "cannot read file: $file")
+        }
+    }
+
+    // プロジェクトのルート（第8.0段階）。--project-root か、省略時はファイルのあるディレクトリ。ファイルはルートの中になければならない
+    private fun openProject(command: RunCommand): ProjectModules {
+        val file = Paths.get(command.file)
+        val shown = command.projectRoot ?: file.parent?.toString()
+        val root = try {
+            (command.projectRoot?.let { Paths.get(it) } ?: file.toAbsolutePath().parent).toRealPath()
+        } catch (error: InvalidPathException) {
+            throw InputError(ExitCode.USAGE, "invalid project root: ${command.projectRoot}")
         } catch (error: IOException) {
-            return fail(ExitCode.NO_INPUT, "cannot read file: $file")
+            throw InputError(ExitCode.NO_INPUT, "project root not found: ${command.projectRoot}")
         }
-        if (bytes.size > CliLimits.MAX_SOURCE_BYTES) {
-            return fail(ExitCode.INVALID_INPUT, "file too large: $file (at most ${LexerLimits.MAX_SOURCE_LENGTH} characters)")
+        if (!Files.isDirectory(root)) throw InputError(ExitCode.NO_INPUT, "project root is not a directory: ${command.projectRoot}")
+        // ファイルのあるディレクトリ（ファイル自身がシンボリックリンクでも、リンクの置き場所）。--project-root を指定したときは、その中でなければならない
+        val directory = try {
+            file.toAbsolutePath().parent.toRealPath()
+        } catch (error: IOException) {
+            throw InputError(ExitCode.NO_INPUT, "cannot read file: ${command.file}")
         }
-        return try {
-            StandardCharsets.UTF_8.newDecoder()
-                .onMalformedInput(CodingErrorAction.REPORT)
-                .onUnmappableCharacter(CodingErrorAction.REPORT)
-                .decode(ByteBuffer.wrap(bytes))
-                .toString()
-        } catch (error: CharacterCodingException) {
-            fail(ExitCode.INVALID_INPUT, "file is not valid UTF-8: $file")
-        }
+        if (!directory.startsWith(root)) throw InputError(ExitCode.USAGE, "${command.file} is not inside the project root ${command.projectRoot}")
+        return ProjectModules(root, shown, if (directory == root) file.fileName.toString().removeSuffix(EXTENSION) else null)
     }
 
     companion object {
         private const val EXTENSION = CliLimits.EXTENSION
-        private val OPTIONS = setOf("--seed", "--instructions-per-tick", "--max-ticks")
+        private val OPTIONS = setOf("--seed", "--instructions-per-tick", "--max-ticks", "--project-root")
 
         private val USAGE = """
             |Usage:
@@ -199,6 +213,7 @@ class CreateScriptCli(private val out: PrintStream, private val err: PrintStream
             |  --seed <integer>                  initial random seed (default ${CliLimits.DEFAULT_SEED})
             |  --instructions-per-tick <1-${CliLimits.MAX_INSTRUCTIONS_PER_TICK}>  instructions per logical tick (default ${CliLimits.DEFAULT_INSTRUCTIONS_PER_TICK})
             |  --max-ticks <1-${CliLimits.MAX_MAX_TICKS}>           stop with an error after this many ticks (default ${CliLimits.DEFAULT_MAX_TICKS})
+            |  --project-root <directory>        where "import name" finds name$EXTENSION (default: the directory of the file)
             |
             |Exit codes:
             |  0 finished, 1 runtime error, 2 compile error, 3 --max-ticks reached,

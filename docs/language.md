@@ -114,6 +114,86 @@ there
 Functions can be called before their definition and can be recursive (up to the call-depth limit below).
 Parameters and return values can use the other types too, for example `Double`, `List<Int>` or a class.
 
+## Modules (local `import`)
+
+A program can use functions from other `.cscr` files of the same project. This is a first, local-only
+version: the files must already be on your disk. There is no package manager, no download and no
+`createscript install` yet.
+
+```text
+my-project/
+  main.cscr
+  geometry.cscr
+```
+
+`geometry.cscr`:
+
+```kotlin
+fun square(x: Int): Int {
+  return x * x
+}
+```
+
+`main.cscr`:
+
+```kotlin
+import geometry
+
+println(geometry.square(5))
+```
+
+```text
+$ createscript run my-project/main.cscr
+25
+```
+
+Rules:
+
+- `import name` loads the module `name` from the file `name.cscr` directly in the project root. With the
+  `createscript` command the project root is the directory of the file you run, or `--project-root <dir>`
+  (see [cli.md](cli.md)). The name is one identifier; the file name must match exactly, including upper and
+  lower case.
+- `import` lines come first in a file, before any other statement or declaration.
+- Call a module's functions with the module name: `geometry.square(5)`. Imported functions are not added to
+  your own names, so a `square` of your own and `geometry.square` are different functions.
+- Arguments and return values are type-checked across files, in the same way as for your own functions.
+- A module file contains only `import` lines and `fun` declarations. Inside a module, a call without a module
+  name (`helper()`) calls a function of the same module, and `other.f()` calls a module that this module
+  imports. A module cannot see the variables, functions or classes of the file that imports it.
+- Each module is loaded once, even if several files import it. Importing a module twice in the same file
+  only gives a warning.
+- All files together make one program, so the limits below (instructions, constants, call depth, …) apply
+  to the whole program, and each file has its own source length and token limits. At most 16 modules can be
+  imported (not counting the file you run).
+- `import` is not a reserved word: a variable called `import` still works.
+
+Not supported yet: `import a.b`, `import a.*`, `import a as b`, paths (`import "../a"`), classes, top-level
+statements or variables in modules, using a module name as a value (`println(geometry)`), imports in the
+interactive mode, and imports of Java/Kotlin classes. Imports are resolved when the program is compiled;
+there is no dynamic import.
+
+Errors (shown with the file, line and column):
+
+| Code | Example |
+|---|---|
+| `CS_MODULE_NOT_FOUND` | `import geometry` without a `geometry.cscr` in the project root |
+| `CS_MODULE_CYCLE` | `a.cscr` imports `b`, and `b.cscr` imports `a` (the argument shows `a -> b -> a`) |
+| `CS_MODULE_AMBIGUOUS` | both `Geometry.cscr` and `geometry.cscr` exist |
+| `CS_MODULE_OUTSIDE_PROJECT` | `geometry.cscr` is a symbolic link to a file outside the project root |
+| `CS_MODULE_UNREADABLE` | the module file is not valid UTF-8, too large, a directory or a broken link |
+| `CS_MODULE_TOO_MANY` | more than 16 modules |
+| `CS_MODULE_BUILTIN_NAME` | `import println` |
+| `CS_MODULE_TOP_LEVEL_STATEMENT` / `CS_MODULE_CLASS_UNSUPPORTED` | a module with `println(1)` or `class Point` at the top level |
+| `CS_MODULE_IMPORT_UNAVAILABLE` | `import` where modules cannot be loaded (the interactive mode, `CreateScript.compile(source)`) |
+| `CS_PARSE_INVALID_IMPORT` | `import geometry.square`, `import geometry as g`, `import "../geometry"` |
+| `CS_PARSE_MISPLACED_IMPORT` | `import` after another statement, or inside a block |
+| `CS_PARSE_DUPLICATE_IMPORT` (warning) | the same `import` twice in one file |
+| `CS_PARSE_IMPORT_NAME_CONFLICT` | `import geometry` and `val geometry = 1` in the same file |
+| `CS_PARSE_INVALID_MODULE_REFERENCE` | `println(geometry)`, `geometry.PI` |
+
+Type errors in calls use the usual codes, for example `geometry.square("5")` gives
+`CS_SEM_ARGUMENT_TYPE_MISMATCH` and `geometry.cube(2)` gives `CS_SEM_UNKNOWN_FUNCTION`.
+
 ## Classes
 
 ```kotlin
@@ -245,6 +325,9 @@ Every program runs inside fixed limits, so a script can never take unbounded mem
 | Elements per list / in all lists | 256 / 4096 |
 | Vector size / matrix size | 16 / 8 × 8 |
 | `println` line length | 64 UTF-16 units (longer lines are cut with "…") |
+| Imported modules | 16 (source length and tokens are per file; the other limits are for the whole program) |
 
 The language has no access to files, the network, the operating system, Java/Kotlin code or reflection.
+For `import`, the host (for example the `createscript` command) reads the module files and gives their text
+to the compiler; programs cannot open files themselves.
 Errors are reported as diagnostic codes such as `CS_SEM_TYPE_MISMATCH` with a line and column.

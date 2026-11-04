@@ -4,8 +4,17 @@ import com.creatrbypc.createanalytical.script.diagnostic.SourcePosition
 
 // CreateScript の抽象構文木。型や Int32 範囲の検証は Semantic 段階で行うため、ここでは構文の形だけを表す
 // functions はトップレベルの関数定義（定義の順。第3.8c段階）、classes はトップレベルのクラス宣言（宣言の順。第3.9a段階）。
-// どちらも statements からは除き、定義そのものは実行しない
-data class Program(val statements: List<Statement>, val functions: List<FunctionDeclaration> = emptyList(), val classes: List<ClassDeclaration> = emptyList())
+// どちらも statements からは除き、定義そのものは実行しない。imports はファイルの先頭の import（宣言の順。重複は除く。第8.0段階）
+data class Program(
+    val statements: List<Statement>,
+    val functions: List<FunctionDeclaration> = emptyList(),
+    val classes: List<ClassDeclaration> = emptyList(),
+    val imports: List<ImportDeclaration> = emptyList(),
+)
+
+// import モジュール名（第8.0段階）。ファイルの先頭（他の文・宣言より前）にだけ書ける。モジュール名は識別子 1 つ。
+// position は import の位置、namePosition はモジュール名の位置
+data class ImportDeclaration(val name: String, val namePosition: SourcePosition, val position: SourcePosition)
 
 // 呼び出しフレームを作って実行する単位（第3.9b段階）。関数・メソッドと、プロパティを持つクラスのコンストラクタ（クラスの宣言で表す）
 sealed interface CallableDeclaration

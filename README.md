@@ -39,6 +39,9 @@ println(fib(10))   // 55
 - `val` / `var`, `if` / `else`, `while`, `for` over integer ranges, `break` / `continue`, functions with
   recursion, classes with properties and methods, nested lists.
 - Math functions as in `kotlin.math`, deterministic random numbers, small vectors and matrices.
+- Local modules: `import geometry` uses the functions of `geometry.cscr` in the same project, as
+  `geometry.square(5)`, with type checks across files. Modules are only read from your project directory;
+  there is no package manager or download yet (see [Modules](docs/language.md#modules-local-import)).
 - A safe execution model: fixed limits on source size, instructions, stack, call depth, objects and list
   elements; an instruction budget per tick; no access to files, the network, the operating system or the JVM.
 - Diagnostics with stable codes (`CS_SEM_TYPE_MISMATCH`, …) and line/column positions.
@@ -77,6 +80,22 @@ val program = result.program ?: error(result.diagnostics)
 val run = CreateScript.start(program, RunOptions(instructionsPerTick = 128, randomSeed = 0)) { line -> println(line) }
 while (!run.isFinished) run.tick()
 ```
+
+For programs with `import`, the host gives the module sources to the compiler; the Core never reads files
+itself. `ModuleResolver` receives a module name (one identifier) and returns its source, or the reason it
+cannot be used:
+
+```kotlin
+val modules = mapOf("geometry" to "fun square(x: Int): Int {\n  return x * x\n}\n")
+val result = CreateScript.compile("import geometry\nprintln(geometry.square(5))", { name ->
+    modules[name]?.let { ModuleLookup.Found(it) } ?: ModuleLookup.NotFound
+})
+result.diagnostics.forEach { println("${it.module ?: "main"}: ${it.diagnostic.code.id}") }
+val program = result.program ?: error("compile failed")
+```
+
+`CreateScript.compile(source)` works as before; it reports `CS_MODULE_IMPORT_UNAVAILABLE` for a program with
+`import`. `result.locate(run.error!!)` tells in which file a runtime error happened.
 
 ## Platform status
 

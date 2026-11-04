@@ -17,6 +17,7 @@ import com.creatrbypc.createanalytical.script.ast.ForStatement
 import com.creatrbypc.createanalytical.script.ast.FunctionDeclaration
 import com.creatrbypc.createanalytical.script.ast.IfBranch
 import com.creatrbypc.createanalytical.script.ast.IfStatement
+import com.creatrbypc.createanalytical.script.ast.ImportDeclaration
 import com.creatrbypc.createanalytical.script.ast.IndexExpression
 import com.creatrbypc.createanalytical.script.ast.IntLiteral
 import com.creatrbypc.createanalytical.script.ast.LogicalExpression
@@ -78,6 +79,11 @@ class Parser private constructor(private val tokens: List<Token>, private val di
     private val functions = ArrayList<FunctionDeclaration>()
     private val classes = ArrayList<ClassDeclaration>()
 
+    // ファイルの先頭の import（第8.0段階。宣言の順、重複は除く）と、その名前。importsAllowed は、まだ import 以外の文・宣言が無いか
+    private val imports = ArrayList<ImportDeclaration>()
+    private val importNames = HashSet<String>()
+    private var importsAllowed = true
+
     // 構文エラー。その文を読み飛ばして次の文から解析を続ける
     private class ParseFailure : RuntimeException(null, null, false, false)
 
@@ -123,7 +129,7 @@ class Parser private constructor(private val tokens: List<Token>, private val di
         } catch (abort: ParseAbort) {
             // 上限超過は報告済み。これ以上は解析しない
         }
-        return Program(statements, functions.toList(), classes.toList())
+        return Program(statements, functions.toList(), classes.toList(), imports.toList())
     }
 
     // 文の並び。ブロックの中（blockDepth > 0）では、ブロックを閉じる "}" の手前で止まる。EOF でも止まる（閉じていないブロックは parseBlock が報告する）
@@ -146,6 +152,12 @@ class Parser private constructor(private val tokens: List<Token>, private val di
                 continue
             }
             try {
+                if (isImport(token)) {
+                    parseImport()
+                    parseStatementEnd()
+                    continue
+                }
+                importsAllowed = false
                 when {
                     token.type == TokenType.KEYWORD && token.lexeme == "fun" -> functions.add(parseFunction())
                     token.type == TokenType.KEYWORD && token.lexeme == "class" -> classes.add(parseClass())
@@ -156,6 +168,54 @@ class Parser private constructor(private val tokens: List<Token>, private val di
                 synchronize()
             }
         }
+    }
+
+    // ---- import（第8.0段階） ----
+
+    // 文の先頭の識別子 import の後に、同じ行で識別子か文字列が続くもの。import は予約語ではないため、変数名などとしての import
+    // （import + 1 など）はこれまでどおり式になる。この形はこれまで構文エラー（CS_PARSE_EXPECTED_STATEMENT_END）だったため、動くプログラムは変わらない
+    private fun isImport(token: Token): Boolean {
+        if (token.type != TokenType.IDENTIFIER || token.lexeme != "import") return false
+        val next = tokens[index + 1].type
+        return next == TokenType.IDENTIFIER || next == TokenType.STRING_LITERAL
+    }
+
+    // import モジュール名。ファイルの先頭（他の文・宣言より前のトップレベル）にだけ書ける。モジュール名は識別子 1 つで、
+    // 後に "." / as / "*" などが続くもの（import a.b・import a as b・import a.*）と文字列のパス（import "../a"）は未対応。
+    // 同じファイルでの同じ import は警告にして 1 つにまとめる
+    private fun parseImport() {
+        val keyword = advance()
+        if (blockDepth > 0 || !importsAllowed) fail(DiagnosticCode.PARSE_MISPLACED_IMPORT, keyword.position)
+        val name = advance()
+        if (name.type != TokenType.IDENTIFIER) fail(DiagnosticCode.PARSE_INVALID_IMPORT, name.position)
+        val next = peek()
+        if (next.type !in STATEMENT_BOUNDARIES) fail(DiagnosticCode.PARSE_INVALID_IMPORT, next.position)
+        if (!importNames.add(name.lexeme)) {
+            report(DiagnosticCode.PARSE_DUPLICATE_IMPORT, name.position, DiagnosticArgument.StringArgument.truncated(name.lexeme), severity = DiagnosticSeverity.WARNING)
+            return
+        }
+        imports.add(countNode(ImportDeclaration(name.lexeme, name.position, keyword.position)))
+    }
+
+    // import したモジュールと同じ名前は、このファイルの中で宣言できない（モジュール名.関数名(…) と区別できなくなるため）。解析は続ける
+    private fun checkNotImported(name: Token) {
+        if (name.type == TokenType.IDENTIFIER && name.lexeme in importNames) {
+            report(DiagnosticCode.PARSE_IMPORT_NAME_CONFLICT, name.position, DiagnosticArgument.StringArgument.truncated(name.lexeme))
+        }
+    }
+
+    // モジュール名.関数名(…)（第8.0段階）。呼び出し先を "モジュール名.関数名" という名前の NameReference にする（"." を含む名前はソースには書けないため、
+    // このファイルの宣言・他のモジュールの関数と重ならない）。位置はモジュール名の位置。"." の前の改行は可（D18）。
+    // モジュール名を値として使う・関数以外のメンバー（geometry.PI）・型引数（geometry.f<Int>()）は未対応
+    private fun parseModuleCall(module: NameReference): Parsed {
+        if (nextNonNewline().type != TokenType.DOT) fail(DiagnosticCode.PARSE_INVALID_MODULE_REFERENCE, module.position, DiagnosticArgument.StringArgument.truncated(module.name))
+        skipNewlines()
+        advance()
+        skipNewlines()
+        val member = advance()
+        if (member.type != TokenType.IDENTIFIER) fail(DiagnosticCode.PARSE_EXPECTED_MEMBER_NAME, member.position)
+        if (peek().type != TokenType.LEFT_PAREN) fail(DiagnosticCode.PARSE_INVALID_MODULE_REFERENCE, module.position, DiagnosticArgument.StringArgument.truncated(module.name))
+        return parseCall(build(NameReference("${module.name}.${member.lexeme}", module.position), 1), emptyList())
     }
 
     // 文の終わりは改行・";"・EOF のいずれか。ブロックの中では、ブロックを閉じる "}" の直前でもよい（"}" は読み進めない）
@@ -228,6 +288,7 @@ class Parser private constructor(private val tokens: List<Token>, private val di
         val keyword = advance()
         val name = advance()
         if (name.type != TokenType.IDENTIFIER) fail(DiagnosticCode.PARSE_EXPECTED_IDENTIFIER, name.position)
+        checkNotImported(name)
         val type = if (peek().type == TokenType.COLON) parseTypeAnnotation() else null
         // 宣言時の初期化は必須（D19）
         val assign = peek()
@@ -284,6 +345,7 @@ class Parser private constructor(private val tokens: List<Token>, private val di
         parenDepth++
         val variable = advance()
         if (variable.type != TokenType.IDENTIFIER) fail(DiagnosticCode.PARSE_EXPECTED_LOOP_VARIABLE, variable.position)
+        checkNotImported(variable)
         val inKeyword = peek()
         if (inKeyword.type != TokenType.KEYWORD || inKeyword.lexeme != "in") fail(DiagnosticCode.PARSE_EXPECTED_IN, inKeyword.position)
         advance()
@@ -316,6 +378,7 @@ class Parser private constructor(private val tokens: List<Token>, private val di
         if (blockDepth > (if (method) 1 else 0)) fail(DiagnosticCode.PARSE_NESTED_FUNCTION_UNSUPPORTED, keyword.position)
         val name = advance()
         if (name.type != TokenType.IDENTIFIER) fail(DiagnosticCode.PARSE_EXPECTED_IDENTIFIER, name.position)
+        checkNotImported(name)
         val open = peek()
         if (open.type != TokenType.LEFT_PAREN) fail(DiagnosticCode.PARSE_EXPECTED_LEFT_PAREN, open.position)
         advance()
@@ -325,6 +388,7 @@ class Parser private constructor(private val tokens: List<Token>, private val di
             while (true) {
                 val parameter = advance()
                 if (parameter.type != TokenType.IDENTIFIER) fail(DiagnosticCode.PARSE_EXPECTED_IDENTIFIER, parameter.position)
+                checkNotImported(parameter)
                 parameters.add(countNode(Parameter(parameter.lexeme, parseTypeAnnotation(), parameter.position)))
                 if (peek().type != TokenType.COMMA) break
                 advance()
@@ -346,6 +410,7 @@ class Parser private constructor(private val tokens: List<Token>, private val di
         if (blockDepth > 0) fail(DiagnosticCode.PARSE_NESTED_CLASS_UNSUPPORTED, keyword.position)
         val name = advance()
         if (name.type != TokenType.IDENTIFIER) fail(DiagnosticCode.PARSE_EXPECTED_IDENTIFIER, name.position)
+        checkNotImported(name)
         val header = peek()
         if (header.type == TokenType.LEFT_PAREN || header.type == TokenType.COLON || header.type == TokenType.LESS) fail(DiagnosticCode.PARSE_CLASS_HEADER_UNSUPPORTED, header.position)
         val properties = ArrayList<VariableDeclaration>()
@@ -612,6 +677,9 @@ class Parser private constructor(private val tokens: List<Token>, private val di
 
     private fun parsePostfix(): Parsed {
         var current = parsePrimary()
+        // import したモジュールの関数の呼び出し（第8.0段階）
+        val primary = current.expression
+        if (primary is NameReference && primary.name in importNames) current = parseModuleCall(primary)
         while (true) {
             val token = peek()
             current = when {
@@ -798,7 +866,7 @@ class Parser private constructor(private val tokens: List<Token>, private val di
         throw ParseAbort()
     }
 
-    private fun report(code: DiagnosticCode, position: SourcePosition, vararg arguments: DiagnosticArgument) {
-        diagnostics.report(Diagnostic(code, DiagnosticSeverity.ERROR, DiagnosticPhase.PARSER, position, arguments.toList()))
+    private fun report(code: DiagnosticCode, position: SourcePosition, vararg arguments: DiagnosticArgument, severity: DiagnosticSeverity = DiagnosticSeverity.ERROR) {
+        diagnostics.report(Diagnostic(code, severity, DiagnosticPhase.PARSER, position, arguments.toList()))
     }
 }

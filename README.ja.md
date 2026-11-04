@@ -35,6 +35,9 @@ println(fib(10))   // 55
 - 型：`Int`（32 ビット）・`Float`・`Double`・`Boolean`・`String`・リスト・`Vector`・`Matrix`・クラス。型はコンパイルのときに検査します。
 - `val` / `var`、`if` / `else`、`while`、整数の範囲の `for`、`break` / `continue`、関数（再帰を含む）、プロパティとメソッドを持つクラス、入れ子のリスト。
 - `kotlin.math` と同じ結果の数学関数、種を決めると同じ列になる乱数、小さなベクトルと行列。
+- ローカルのモジュール：`import geometry` と書くと、同じプロジェクトの `geometry.cscr` の関数を `geometry.square(5)` の形で使えます。
+  ファイルをまたいで型を検査します。モジュールは自分のプロジェクトのディレクトリからだけ読みます。パッケージ管理やダウンロードの機能は、
+  まだありません（[Modules](docs/language.md#modules-local-import)）。
 - 安全な実行：ソースの長さ・命令・スタック・呼び出しの深さ・オブジェクト・リストの要素に固定の上限があり、1 tick の命令の数も決まっています。
   ファイル・ネットワーク・OS・JVM には触れられません。
 - 診断は、決まったコード（`CS_SEM_TYPE_MISMATCH` など）と行・列で報告します。
@@ -71,6 +74,21 @@ val program = result.program ?: error(result.diagnostics)
 val run = CreateScript.start(program, RunOptions(instructionsPerTick = 128, randomSeed = 0)) { line -> println(line) }
 while (!run.isFinished) run.tick()
 ```
+
+`import` のあるプログラムでは、モジュールのソースをホストがコンパイラーに渡します。Core 自身はファイルを読みません。
+`ModuleResolver` はモジュール名（識別子 1 つ）を受け取り、そのソースか、使えない理由を返します。
+
+```kotlin
+val modules = mapOf("geometry" to "fun square(x: Int): Int {\n  return x * x\n}\n")
+val result = CreateScript.compile("import geometry\nprintln(geometry.square(5))", { name ->
+    modules[name]?.let { ModuleLookup.Found(it) } ?: ModuleLookup.NotFound
+})
+result.diagnostics.forEach { println("${it.module ?: "main"}: ${it.diagnostic.code.id}") }
+val program = result.program ?: error("compile failed")
+```
+
+`CreateScript.compile(source)` は、これまでと同じです。`import` のあるプログラムには `CS_MODULE_IMPORT_UNAVAILABLE` を報告します。
+実行時エラーがどのファイルで起きたかは、`result.locate(run.error!!)` で分かります。
 
 ## 対応環境
 

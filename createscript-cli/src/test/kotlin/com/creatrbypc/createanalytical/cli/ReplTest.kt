@@ -169,4 +169,16 @@ class ReplTest {
         assertEquals(listOf("1"), session.results)
         assertTrue(session.err.startsWith("<input>:1:5: error CS_SEM_"), session.err)
     }
+
+    // 第8.0段階: 対話モードでは import を使えない（明確な診断を出し、入力をセッションに加えない）。最初の入力でも、後の入力でも同じ
+    @Test
+    fun rejectsImport() {
+        val session = repl("import geometry", "val x = 1", "import geometry", "x", "exit")
+        assertEquals(listOf("1"), session.results)
+        val expected = "<input>:1:8: error CS_MODULE_IMPORT_UNAVAILABLE (\"geometry\")\n" +
+            "(import works only in files: createscript run <file.cscr>; this input was not added to the session)\n"
+        assertEquals(expected + expected, session.err)
+        // 変数名としての import はこれまでどおり使える
+        assertEquals(listOf("4"), repl("val import = 2", "import * 2", "exit").results)
+    }
 }

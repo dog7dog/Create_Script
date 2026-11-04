@@ -24,6 +24,7 @@ The detailed Japanese manual is [createscript-cli/README.md](../createscript-cli
 | `--seed <integer>` | Initial state of the random number generator (`randomSeed(...)` in the program replaces it) | `0` | any 64-bit signed integer |
 | `--instructions-per-tick <integer>` | Instructions run per logical tick | `128` | 1–4096 |
 | `--max-ticks <integer>` | Stop with exit code 3 if the program has not finished after this many ticks | `100000` | 1–1000000 |
+| `--project-root <directory>` | Where `import name` looks for `name.cscr` | the directory of the file | an existing directory that contains the file |
 
 | Exit code | Meaning |
 |---|---|
@@ -33,8 +34,41 @@ The detailed Japanese manual is [createscript-cli/README.md](../createscript-cli
 | 3 | `--max-ticks` reached |
 | 64 | Usage error (unknown command or option, bad value, not a `.cscr` file) |
 | 65 | The file cannot be used (not UTF-8, too large) |
-| 66 | The file does not exist, is not a regular file or cannot be read |
+| 66 | The file does not exist, is not a regular file or cannot be read; the project root does not exist or is not a directory |
 | 130 | Interrupted with Ctrl+C while running |
+
+### Files with `import`
+
+A file can import other `.cscr` files of the same project (see
+[Modules in the language guide](language.md#modules-local-import)):
+
+```text
+$ ls my-project
+geometry.cscr  main.cscr
+$ createscript run my-project/main.cscr
+25
+$ createscript run my-project/apps/tool.cscr --project-root my-project
+```
+
+- `import name` reads `name.cscr` directly in the project root and nothing else: no subdirectories, no
+  search path, no network. The project root is the directory of the file you run, or `--project-root`.
+  With `--project-root`, the file you run must be inside that directory (exit code 64 otherwise).
+- The file name must match the module name exactly, including upper and lower case. If several files differ
+  only in case (`Geometry.cscr` and `geometry.cscr`), the import is ambiguous (`CS_MODULE_AMBIGUOUS`).
+- A module file may be a symbolic link only if it leads to a regular file inside the project root.
+  A link that leads outside gives `CS_MODULE_OUTSIDE_PROJECT`; a broken link, a directory, a file that is not
+  UTF-8 or larger than 12288 bytes gives `CS_MODULE_UNREADABLE`. Module names cannot contain `/`, `..` or an
+  absolute path, because a module name is one identifier.
+- Diagnostics inside a module name the module's file, for example
+  `my-project/geometry.cscr:2:12: error CS_SEM_TYPE_MISMATCH ("Int", "String")`. Runtime errors inside a
+  module function also show the module's file, line and column.
+- Errors in resolving imports are compile errors (exit code 2), for example
+  `my-project/main.cscr:1:8: error CS_MODULE_NOT_FOUND ("geometry")`.
+- All files are compiled into one program and run in one virtual machine, so `--instructions-per-tick`,
+  `--max-ticks` and the language limits apply to the whole program.
+- A file without `import` is compiled exactly as before.
+
+There is no package manager yet: `createscript` does not download modules and has no `install` command.
 
 ## Interactive mode (REPL)
 
@@ -64,6 +98,8 @@ Type "help" for help, "exit" to quit.
 - An input with a compile error, a runtime error, or more than 100,000 ticks is not added to the session.
 - The whole session is one program, so it is subject to the language limits (for example 4096 characters of
   source). When a limit is reached, the REPL says so and keeps the earlier state.
+- `import` is not available in the interactive mode. An input with `import` gives
+  `<input>:1:8: error CS_MODULE_IMPORT_UNAVAILABLE ("geometry")` and is not added to the session.
 
 ### Line editing
 
@@ -89,7 +125,8 @@ When both standard input and standard output are a terminal, the REPL reads line
 
 ## Safety
 
-The CLI reads only the one file that it is given. A CreateScript program cannot access files, the network,
+The CLI reads the file that it is given and, for `import`, only `name.cscr` files directly in the project
+root (after checking that they stay inside it). A CreateScript program cannot access files, the network,
 the operating system or Java/Kotlin code. `--max-ticks` and `--instructions-per-tick` bound the work of every
 run, and the language limits bound its memory.
 

@@ -6,6 +6,9 @@ import com.creatrbypc.createanalytical.script.api.ScriptRun
 import com.creatrbypc.createanalytical.script.ast.ExpressionStatement
 import com.creatrbypc.createanalytical.script.compiler.CompileResult
 import com.creatrbypc.createanalytical.script.diagnostic.Diagnostic
+import com.creatrbypc.createanalytical.script.diagnostic.DiagnosticArgument
+import com.creatrbypc.createanalytical.script.diagnostic.DiagnosticCode
+import com.creatrbypc.createanalytical.script.diagnostic.DiagnosticPhase
 import com.creatrbypc.createanalytical.script.diagnostic.DiagnosticSeverity
 import com.creatrbypc.createanalytical.script.diagnostic.SourcePosition
 import com.creatrbypc.createanalytical.script.lexer.Lexer
@@ -95,6 +98,7 @@ class Repl(private val input: LineInput, private val out: PrintStream, private v
     }
 
     private fun evaluate(text: String) {
+        if (rejectImports(text)) return
         val raw = Candidate(text, "", "", session)
         // 1 つの式だけの入力は、値を表示する（Unit の式は println できないため、コンパイルできなければそのまま実行する）
         val candidates = if (isSingleExpression(text)) listOf(Candidate(text, "println(\n", "\n)", session), raw) else listOf(raw)
@@ -148,6 +152,22 @@ class Repl(private val input: LineInput, private val out: PrintStream, private v
             !run.isFinished -> err.println("<input>: stopped after ${CliLimits.DEFAULT_MAX_TICKS} ticks; the input did not finish")
         }
         err.println("(this input was not added to the session)")
+    }
+
+    // 対話モードでは import を使えない（第8.0段階。モジュールを探すプロジェクトのルートが無いため）。入力の中の import を
+    // CS_MODULE_IMPORT_UNAVAILABLE として報告し、入力を実行しない（セッションの後ろにつなぐと、ファイルの先頭以外の import の診断になるため先に確かめる）
+    private fun rejectImports(text: String): Boolean {
+        val imports = Parser.parse(Lexer.tokenize(text)).program?.imports.orEmpty()
+        if (imports.isEmpty()) return false
+        for (declaration in imports) {
+            val diagnostic = Diagnostic(
+                DiagnosticCode.MODULE_IMPORT_UNAVAILABLE, DiagnosticSeverity.ERROR, DiagnosticPhase.MODULE, declaration.namePosition,
+                listOf(DiagnosticArgument.StringArgument.truncated(declaration.name)),
+            )
+            err.println(CreateScriptCli.format("<input>", diagnostic))
+        }
+        err.println("(import works only in files: createscript run <file${CliLimits.EXTENSION}>; this input was not added to the session)")
+        return true
     }
 
     private fun isSingleExpression(text: String): Boolean {
@@ -216,6 +236,7 @@ class Repl(private val input: LineInput, private val out: PrintStream, private v
             |  Variables, functions, classes, and objects are kept for later inputs.
             |  An input continues on "..." lines until its brackets { ( [ are closed.
             |  An input with an error, or that does not finish within ${CliLimits.DEFAULT_MAX_TICKS} ticks, is not kept.
+            |  import is not available here; use it in files run with "createscript run".
             |Commands
             |  help   show this help
             |  exit   quit (also: quit, Ctrl+D)

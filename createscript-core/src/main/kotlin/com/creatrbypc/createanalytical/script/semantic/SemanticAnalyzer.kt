@@ -384,6 +384,11 @@ class SemanticAnalyzer private constructor(private val diagnostics: DiagnosticCo
     // ユーザー定義関数（第3.8c段階）。名前 → 宣言（組み込み関数名・重複した定義は含まない）
     private val functions = HashMap<String, FunctionDeclaration>()
 
+    // いま本体・引数の型を解析している関数が属するモジュール（第8.0段階。エントリーのファイルでは null）。モジュールの関数は名前が
+    // "モジュール名.関数名" の関数（ModuleCompiler が名前を付け替えたもの）で、その中からはエントリーのファイルの変数・関数・クラスは見えない。
+    // 名前だけの呼び出しは同じモジュールの関数、"他のモジュール名.関数名" はそのモジュールが import したモジュールの関数（Parser が作る）
+    private var currentModule: String? = null
+
     // いま本体を解析している関数・メソッド（トップレベルの文・初期化式では null）
     private var currentFunction: FunctionDeclaration? = null
 
@@ -469,6 +474,16 @@ class SemanticAnalyzer private constructor(private val diagnostics: DiagnosticCo
         fun analyze(parseResult: ParseResult): SemanticResult {
             val diagnostics = DiagnosticCollector()
             diagnostics.merge(parseResult.diagnostics, parseResult.diagnosticsTruncated, parseResult.hasErrors)
+            // モジュールの解決（ModuleCompiler）を通らないコンパイルでは import を使えない（第8.0段階。ModuleCompiler は import を除いた AST を渡す）
+            val imports = parseResult.program?.imports.orEmpty()
+            if (imports.isNotEmpty()) {
+                imports.forEach {
+                    diagnostics.report(
+                        Diagnostic(DiagnosticCode.MODULE_IMPORT_UNAVAILABLE, DiagnosticSeverity.ERROR, DiagnosticPhase.MODULE, it.namePosition, listOf(DiagnosticArgument.StringArgument.truncated(it.name)))
+                    )
+                }
+                return SemanticResult(null, diagnostics.diagnostics, diagnostics.isTruncated, diagnostics.hasErrors)
+            }
             // 構文エラーがあれば AST が無いため、意味解析しない（A8）
             val analyzed = parseResult.program?.let { SemanticAnalyzer(diagnostics).run(it) }
             return SemanticResult(
@@ -554,15 +569,33 @@ class SemanticAnalyzer private constructor(private val diagnostics: DiagnosticCo
 
     // 組み込み関数と同じ名前・クラスと同じ名前・2つ目以降の同名の定義は登録しない（本体は解析する）。引数・戻り値の型は呼び出しより先に決める。
     // 引数の型は Int・Boolean・String（Unit は値として使えない）、戻り値の型はそれに Unit を加えたもの。省略した戻り値の型は Unit
+    // モジュールの関数（第8.0段階）は、"." の後の関数名で組み込み関数と比べ、エントリーのファイルのクラスとは比べない
     private fun declareFunction(function: FunctionDeclaration) {
+        currentModule = moduleOf(function)
         declareSignature(function)
-        when (function.name) {
-            in BuiltinFunctions.NAMES -> reportError(DiagnosticCode.SEM_BUILTIN_REDECLARATION, function.namePosition, function.name)
-            in classes -> reportError(DiagnosticCode.SEM_CLASS_NAME_CONFLICT, function.namePosition, function.name)
-            in functions -> reportError(DiagnosticCode.SEM_DUPLICATE_FUNCTION, function.namePosition, function.name)
+        currentModule = null
+        val module = moduleOf(function)
+        when {
+            function.name.substringAfterLast('.') in BuiltinFunctions.NAMES -> reportError(DiagnosticCode.SEM_BUILTIN_REDECLARATION, function.namePosition, function.name)
+            module == null && function.name in classes -> reportError(DiagnosticCode.SEM_CLASS_NAME_CONFLICT, function.namePosition, function.name)
+            function.name in functions -> reportError(DiagnosticCode.SEM_DUPLICATE_FUNCTION, function.namePosition, function.name)
             else -> functions[function.name] = function
         }
     }
+
+    // ---- モジュール（第8.0段階） ----
+
+    // 関数が属するモジュールの名前（エントリーのファイル・クラスのメソッドでは null）
+    private fun moduleOf(function: FunctionDeclaration): String? = function.name.substringBeforeLast('.', "").ifEmpty { null }
+
+    // 呼び出せるユーザー定義関数。"." を含む名前は import したモジュールの関数（Parser が作る）、含まない名前はモジュールの中では同じモジュールの関数
+    private fun userFunction(name: String): FunctionDeclaration? {
+        val module = currentModule
+        return if (module == null || '.' in name) functions[name] else functions["$module.$name"]
+    }
+
+    // クラス（モジュールの中からは、エントリーのファイルのクラスは見えない。モジュールにはクラスを書けない）
+    private fun userClass(name: String): ClassDeclaration? = if (currentModule == null) classes[name] else null
 
     // 引数の型は Int・Boolean・String・クラス（Unit は値として使えない）、戻り値の型はそれに Unit を加えたもの。省略した戻り値の型は Unit
     private fun declareSignature(function: FunctionDeclaration) {
@@ -670,6 +703,7 @@ class SemanticAnalyzer private constructor(private val diagnostics: DiagnosticCo
     private fun analyzeFunction(function: FunctionDeclaration) {
         currentFunction = function
         currentRoutine = function
+        currentModule = moduleOf(function)
         val signature = signatures.getValue(function)
         scopes.add(HashMap())
         val symbols = ArrayList<VariableSymbol>()
@@ -689,6 +723,7 @@ class SemanticAnalyzer private constructor(private val diagnostics: DiagnosticCo
         scopes.removeAt(scopes.lastIndex)
         currentFunction = null
         currentRoutine = null
+        currentModule = null
         val returnType = signature.returnType
         if (returnType != null && returnType != ScriptType.UNIT && !alwaysReturns(function.body.statements)) {
             reportError(DiagnosticCode.SEM_MISSING_RETURN, function.namePosition, function.name, returnType.displayName)
@@ -847,8 +882,8 @@ class SemanticAnalyzer private constructor(private val diagnostics: DiagnosticCo
     // クラスの中（第3.9b段階）では、そのクラスのメソッドと同じ名前も使えない（名前だけの参照が関数を値として使うことと区別できないため）
     private fun declarationConflict(name: String): DiagnosticCode? = when {
         name in BuiltinFunctions.NAMES -> DiagnosticCode.SEM_BUILTIN_REDECLARATION
-        name in functions || name in currentMethods() -> DiagnosticCode.SEM_FUNCTION_NAME_CONFLICT
-        name in classes -> DiagnosticCode.SEM_CLASS_NAME_CONFLICT
+        userFunction(name) != null || name in currentMethods() -> DiagnosticCode.SEM_FUNCTION_NAME_CONFLICT
+        userClass(name) != null -> DiagnosticCode.SEM_CLASS_NAME_CONFLICT
         else -> null
     }
 
@@ -940,7 +975,7 @@ class SemanticAnalyzer private constructor(private val diagnostics: DiagnosticCo
             reportError(DiagnosticCode.SEM_UNIT_VALUE_NOT_ALLOWED, type.position)
             null
         }
-        else -> classes[type.name]?.let { ScriptType.ClassType(it) } ?: run {
+        else -> userClass(type.name)?.let { ScriptType.ClassType(it) } ?: run {
             // Vector・Matrix（第3.11e段階）は、同じ名前のクラスが無いときだけ組み込みの型
             if (type.name == ScriptType.VECTOR_NAME) return ScriptType.VECTOR
             if (type.name == ScriptType.MATRIX_NAME) return ScriptType.MATRIX
@@ -1150,8 +1185,8 @@ class SemanticAnalyzer private constructor(private val diagnostics: DiagnosticCo
             callee.name == BuiltinFunctions.PRINTLN -> analyzePrintln(call, callee)
             callee.name == BuiltinFunctions.WAIT_TICKS -> analyzeWaitTicks(call, callee)
             method != null -> analyzeInvocation(call, callee.name, callee.position, method)
-            callee.name in functions -> analyzeInvocation(call, callee.name, callee.position, functions.getValue(callee.name))
-            callee.name in classes -> analyzeConstruction(call, callee, classes.getValue(callee.name))
+            userFunction(callee.name) != null -> analyzeInvocation(call, callee.name, callee.position, userFunction(callee.name)!!)
+            userClass(callee.name) != null -> analyzeConstruction(call, callee, userClass(callee.name)!!)
             callee.name in MathOperation.FUNCTIONS -> analyzeMathFunction(call, callee, MathOperation.FUNCTIONS.getValue(callee.name))
             callee.name in RandomOperation.NAMES -> analyzeRandom(call, callee)
             callee.name in LinalgOperation.FUNCTIONS -> analyzeLinalgCall(call, callee)
@@ -1631,11 +1666,11 @@ class SemanticAnalyzer private constructor(private val diagnostics: DiagnosticCo
     // 手続きの本体で使ったトップレベルの変数を記録する
     private fun resolveName(reference: NameReference): NameTarget? {
         val name = reference.name
-        if (name in BuiltinFunctions.NAMES || name in functions || name in currentMethods()) {
+        if (name in BuiltinFunctions.NAMES || userFunction(name) != null || name in currentMethods()) {
             reportError(DiagnosticCode.SEM_FUNCTION_AS_VALUE, reference.position, name)
             return null
         }
-        if (name in classes) {
+        if (userClass(name) != null) {
             reportError(DiagnosticCode.SEM_CLASS_AS_VALUE, reference.position, name)
             return null
         }
@@ -1668,7 +1703,9 @@ class SemanticAnalyzer private constructor(private val diagnostics: DiagnosticCo
         return NameTarget.Variable(symbol)
     }
 
-    private fun lookup(name: String): VariableSymbol? = scopes.asReversed().firstNotNullOfOrNull { it[name] }
+    // モジュールの関数の中（第8.0段階）では、トップレベルのスコープ（エントリーのファイルの変数）を探さない
+    private fun lookup(name: String): VariableSymbol? =
+        (if (currentModule == null) scopes else scopes.subList(1, scopes.size)).asReversed().firstNotNullOfOrNull { it[name] }
 
     // ---- 診断 ----
 

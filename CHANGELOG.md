@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- Local modules: `import name` at the top of a file uses the functions of `name.cscr` as `name.f(...)`,
+  with type checks across files, one resolution per module, and diagnostics for missing, ambiguous,
+  cyclic and out-of-project modules. Modules contain only `import` lines and functions.
+- Core: `CreateScript.compile(source, resolver, entryModule)` with the `ModuleResolver` interface; the host
+  gives the module sources, and the Core does not read files. `CreateScript.compile(source)` is unchanged
+  and reports `CS_MODULE_IMPORT_UNAVAILABLE` for `import`.
+- `createscript run`: `--project-root <directory>` (default: the directory of the file). The interactive
+  mode reports `CS_MODULE_IMPORT_UNAVAILABLE` for `import`.
+
 ## [0.1.0-alpha] - not released yet
 
 The first version of CreateScript as a project of its own.

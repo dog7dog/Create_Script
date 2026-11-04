@@ -67,6 +67,7 @@ createscript --version
 | `--seed <整数>` | 乱数の最初の状態（`random()` などの列が決まる。プログラムの `randomSeed(…)` で置き換えられる） | `0` | 64 ビットの符号付き整数（-9223372036854775808〜9223372036854775807） |
 | `--instructions-per-tick <整数>` | 1 論理 tick に実行する命令の数（命令の予算） | `128` | 1〜4096 |
 | `--max-ticks <整数>` | 進める論理 tick の上限。これを超えても終わらなければ、異常終了する | `100000` | 1〜1000000 |
+| `--project-root <ディレクトリ>` | `import 名前` が `名前.cscr` を探すディレクトリ（第8.0段階） | 実行するファイルのあるディレクトリ | 実行するファイルを含む、存在するディレクトリ |
 
 **既定値と上限を決めた理由**
 - **`--instructions-per-tick` の既定値 128：** 1 tick あたり 128 命令です。Core の実行速度の最高段階（`PowerLevel.FAST`）と同じ値です。
@@ -74,6 +75,15 @@ createscript --version
 - **`--max-ticks` の上限 1,000,000：** 20 tick/秒なら約 14 時間分です。2 つの上限の組み合わせでは、命令は最大で約 41 億になります。開発機の計測では、終わらないプログラムでも約 25 秒で止まります（既定値なら約 0.2 秒）。
 - **`--seed` の既定値 0：** 同じファイルは毎回同じ結果になります。Core を組み込むアプリケーションでは、ホストが種を決めます。
 - 回収（GC）の予算は、Core の既定値です（CLI からは変えられません）。
+
+**`import` のあるファイル（第8.0段階）**
+- `import 名前` は、プロジェクトのルートの直下の `名前.cscr` だけを読みます。サブディレクトリ・検索パス・ネットワークは使いません。
+- ファイル名は、大文字・小文字まで一致するものだけを使います。大文字・小文字だけが違うファイルが複数あれば、曖昧のエラー（`CS_MODULE_AMBIGUOUS`）です。
+- シンボリックリンクは、たどった先がルートの中の通常のファイルのときだけ使います。ルートの外を指すものは `CS_MODULE_OUTSIDE_PROJECT` です。
+- モジュールの中の診断と実行時エラーは、そのモジュールのファイルの名前・行・列で表示します。
+- すべてのファイルを 1 つのプログラムにまとめて 1 台の VM で実行するので、`--instructions-per-tick`・`--max-ticks`・言語の上限は、プログラム全体に働きます。
+- 対話モードでは `import` を使えません（`CS_MODULE_IMPORT_UNAVAILABLE`）。
+- パッケージ管理・ダウンロード・`createscript install` は、まだありません。言語の規則は [docs/language.md](../docs/language.md#modules-local-import)（英語）にあります。
 
 ## 5.1 対話モード（REPL）
 
@@ -242,7 +252,7 @@ createscript-cli/samples/infinite_loop.cscr: stopped after 1000 ticks (--max-tic
 - **出力のコールバック：**
   - VM の 1 tick の処理が終わった後に呼ばれます。命令の途中には入りません。
   - コールバックの中から実行を進めることはできません（Core の `ScriptRun` が拒否します）。
-- **できないこと：** CLI は、指定された 1 つの `.cscr` ファイルを読むだけです。CreateScript から Java・Kotlin のコード、OS のコマンド、ファイル、ネットワークを使う機能はありません。言語に、そのための命令もありません。
+- **できないこと：** CLI が読むのは、指定された `.cscr` ファイルと、`import` のための、プロジェクトのルートの直下の `名前.cscr` だけです（ルートの外に出ないことを確かめてから読みます）。CreateScript から Java・Kotlin のコード、OS のコマンド、ファイル、ネットワークを使う機能はありません。言語に、そのための命令もありません。
 
 ## 9. Core API との関係
 
@@ -250,7 +260,7 @@ CLI は Core の公開 API だけを使います。
 
 | CLI がすること | 使う Core API | 書く先 |
 |---|---|---|
-| コンパイル | `CreateScript.compile(source)` | 診断は標準エラー出力 |
+| コンパイル | `CreateScript.compile(source, resolver, entryModule)`（第8.0段階。`import` の無いファイルでは `CreateScript.compile(source)` と同じ結果） | 診断は標準エラー出力 |
 | 実行の開始 | `CreateScript.start(program, RunOptions(instructionsPerTick, randomSeed)) { line -> … }` | `println` の行は標準出力 |
 | 実行を進める | `ScriptRun.tick()` を `--max-ticks` 回まで呼ぶ | — |
 | 結果 | `ScriptRun.state` と `error` | 実行時エラーは標準エラー出力 |
