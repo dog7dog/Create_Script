@@ -1,6 +1,7 @@
 package com.creatrbypc.createanalytical.cli
 
 import com.creatrbypc.createanalytical.script.api.CreateScript
+import com.creatrbypc.createanalytical.script.compiler.CompileOptions
 import com.creatrbypc.createanalytical.script.module.ModuleLookup
 import com.creatrbypc.createanalytical.script.vm.ProgramFingerprint
 import org.junit.jupiter.api.Assertions.assertArrayEquals
@@ -214,7 +215,7 @@ class ModuleCliTest {
         assertEquals("$main: stopped after 50 ticks (--max-ticks); the program did not finish\n", result.err)
     }
 
-    // import の無いファイル（すべてのサンプル）は、これまでの CreateScript.compile(source) と同じ命令・ハッシュ・診断になる
+    // import の無いファイル（すべてのサンプル）は、CLI の設定（STANDALONE）でも、これまでの CreateScript.compile(source) と同じ命令・ハッシュ・診断になる
     @Test
     fun samplesCompileAsBefore() {
         val samples = Files.list(Paths.get(System.getProperty("createscript.samples"))).use { files -> files.filter { it.toString().endsWith(".cscr") }.sorted().toList() }
@@ -222,12 +223,31 @@ class ModuleCliTest {
         for (sample in samples) {
             val source = Files.readString(sample)
             val before = CreateScript.compile(source)
-            val now = CreateScript.compile(source, { ModuleLookup.NotFound }, "main")
+            val now = CreateScript.compile(source, { ModuleLookup.NotFound }, "main", CompileOptions.STANDALONE)
             assertEquals(before.program, now.program, sample.toString())
             before.program?.let { assertArrayEquals(ProgramFingerprint.ofProgram(it), ProgramFingerprint.ofProgram(now.program!!)) }
             assertEquals(before.diagnostics, now.diagnostics.map { it.diagnostic }, sample.toString())
             assertTrue(now.diagnostics.all { it.module == null })
         }
+    }
+
+    // 独立版のコマンドは、プログラムの命令の数に 4096 の上限を設けない（第8.0.1段階。CompileOptions.STANDALONE）
+    @Test
+    fun runsProgramsLargerThan4096Instructions() {
+        val root = project()
+        val body = "fun f(): Int {\n    var x = 0\n" + "    x = x + 1\n".repeat(280) + "    return x\n}\n"
+        (1..4).forEach { write(root.resolve("m$it.cscr"), body) }
+        val main = write(root.resolve("main.cscr"), "import m1\nimport m2\nimport m3\nimport m4\nprintln(m1.f() + m2.f() + m3.f() + m4.f())\n")
+        val result = cli("run", main.toString())
+        assertEquals("", result.err)
+        assertEquals(ExitCode.OK, result.code)
+        assertEquals(listOf("1120"), result.lines)
+        // 同じプログラムは、既定（埋め込み先と同じ 4096 命令）の Core の API では拒否される
+        val embedded = CreateScript.compile(Files.readString(main), ProjectModules(root.toRealPath(), null, "main"), "main")
+        assertEquals(listOf("CS_COMP_TOO_MANY_INSTRUCTIONS"), embedded.diagnostics.map { it.diagnostic.code.id })
+        // 実行時の上限はそのまま（1 tick 4 命令・50 tick では終わらない）
+        val limited = cli("run", main.toString(), "--instructions-per-tick", "4", "--max-ticks", "50")
+        assertEquals(ExitCode.MAX_TICKS_EXCEEDED, limited.code)
     }
 
     @Test

@@ -4,6 +4,8 @@ import com.creatrbypc.createanalytical.script.diagnostic.SourcePosition
 
 // 命令数・定数・変数・スタックの上限（定数 256 は A10 で確定、それ以外は暫定値）
 object VmLimits {
+    // コンパイルしたプログラムの命令の数の上限の既定値（CompileOptions.DEFAULT・EMBEDDED。第8.0.1段階からは CompileOptions で指定し、
+    // 独立版の createscript コマンドでは使わない）。コンパイル時の上限で、VM は実行中に確かめない
     const val MAX_INSTRUCTIONS = 4096
     const val MAX_CONSTANTS = 256
     const val MAX_VARIABLES = 64

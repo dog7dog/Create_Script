@@ -4,6 +4,7 @@ import com.creatrbypc.createanalytical.script.api.CreateScript
 import com.creatrbypc.createanalytical.script.api.RunOptions
 import com.creatrbypc.createanalytical.script.api.ScriptRun
 import com.creatrbypc.createanalytical.script.ast.ExpressionStatement
+import com.creatrbypc.createanalytical.script.compiler.CompileOptions
 import com.creatrbypc.createanalytical.script.compiler.CompileResult
 import com.creatrbypc.createanalytical.script.diagnostic.Diagnostic
 import com.creatrbypc.createanalytical.script.diagnostic.DiagnosticArgument
@@ -105,7 +106,8 @@ class Repl(private val input: LineInput, private val out: PrintStream, private v
         var chosen: Candidate? = null
         var compiled: CompileResult? = null
         for (candidate in candidates) {
-            val result = CreateScript.compile(candidate.source)
+            // 独立版のコマンドなので、プログラムの命令の数に上限を設けない（第8.0.1段階。セッションのソースの長さなどの上限はそのまま）
+            val result = CreateScript.compile(candidate.source, CompileOptions.STANDALONE)
             if (result.program != null) {
                 chosen = candidate
                 compiled = result

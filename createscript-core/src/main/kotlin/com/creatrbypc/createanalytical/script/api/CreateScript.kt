@@ -1,5 +1,6 @@
 package com.creatrbypc.createanalytical.script.api
 
+import com.creatrbypc.createanalytical.script.compiler.CompileOptions
 import com.creatrbypc.createanalytical.script.compiler.CompileResult
 import com.creatrbypc.createanalytical.script.compiler.Compiler
 import com.creatrbypc.createanalytical.script.diagnostic.Diagnostic
@@ -17,11 +18,14 @@ import com.creatrbypc.createanalytical.script.vm.VmState
 object CreateScript {
     fun compile(source: String): CompileResult = Compiler.compileSource(source)
 
+    // コンパイルの設定（第8.0.1段階）を指定する。CompileOptions.EMBEDDED は 4096 命令（compile(source) と同じ）、STANDALONE は命令数の上限なし
+    fun compile(source: String, options: CompileOptions): CompileResult = Compiler.compileSource(source, options)
+
     // import を含むプログラムのコンパイル（第8.0段階）。source はエントリーのファイル、resolver はホストがモジュールのソースを探す方法
     // （Core はファイルを読まない）。entryModule はエントリーのファイル自身のモジュール名（分かれば。その名前の import は循環として報告する）。
-    // import の無いプログラムは compile(source) と同じ命令・診断になる
-    fun compile(source: String, resolver: ModuleResolver, entryModule: String? = null): ModuleCompileResult =
-        ModuleCompiler.compile(source, resolver, entryModule)
+    // import の無いプログラムは compile(source, options) と同じ命令・診断になる。options の既定は compile(source) と同じ 4096 命令
+    fun compile(source: String, resolver: ModuleResolver, entryModule: String? = null, options: CompileOptions = CompileOptions.DEFAULT): ModuleCompileResult =
+        ModuleCompiler.compile(source, resolver, entryModule, options)
 
     // onPrint は println の出力を1行ずつ受け取る（履歴の 32 行を超えた分も含む）。tick の中の VM の処理が終わった後に呼ぶ
     fun start(program: CompiledProgram, options: RunOptions, onPrint: ((String) -> Unit)? = null): ScriptRun =

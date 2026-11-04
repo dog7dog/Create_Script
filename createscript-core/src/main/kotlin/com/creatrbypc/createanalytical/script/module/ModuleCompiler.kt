@@ -2,6 +2,7 @@ package com.creatrbypc.createanalytical.script.module
 
 import com.creatrbypc.createanalytical.script.ast.ImportDeclaration
 import com.creatrbypc.createanalytical.script.ast.Program
+import com.creatrbypc.createanalytical.script.compiler.CompileOptions
 import com.creatrbypc.createanalytical.script.compiler.Compiler
 import com.creatrbypc.createanalytical.script.diagnostic.Diagnostic
 import com.creatrbypc.createanalytical.script.diagnostic.DiagnosticArgument
@@ -87,7 +88,7 @@ class ModuleCompileResult internal constructor(
 // - 各ファイルの位置の offset に、ファイルごとの始まり（前のファイルの長さ + 1 の合計）を足し、診断・命令の位置からファイルを決める。
 //   エントリーのファイルの始まりは 0 のため、import の無いプログラムは CreateScript.compile(source) と同じ命令になる
 // - 同じモジュールは 1 回だけ解決する。import の循環・見つからないモジュールなどは診断にする（解決できない import があれば意味解析しない）
-internal class ModuleCompiler private constructor(private val resolver: ModuleResolver, private val entryModule: String?) {
+internal class ModuleCompiler private constructor(private val resolver: ModuleResolver, private val entryModule: String?, private val options: CompileOptions) {
     private class SourceUnit(val module: String?, val base: Int, val program: Program?)
 
     private enum class State { RESOLVING, DONE, FAILED }
@@ -100,8 +101,8 @@ internal class ModuleCompiler private constructor(private val resolver: ModuleRe
     private var nextBase = 0
 
     companion object {
-        fun compile(source: String, resolver: ModuleResolver, entryModule: String?): ModuleCompileResult =
-            ModuleCompiler(resolver, entryModule).run(source)
+        fun compile(source: String, resolver: ModuleResolver, entryModule: String?, options: CompileOptions): ModuleCompileResult =
+            ModuleCompiler(resolver, entryModule, options).run(source)
     }
 
     private fun run(source: String): ModuleCompileResult {
@@ -113,7 +114,7 @@ internal class ModuleCompiler private constructor(private val resolver: ModuleRe
         } else {
             val functions = main.functions + resolved.flatMap { unit -> unit.program!!.functions.map { it.copy(name = "${unit.module}.${it.name}") } }
             val merged = Program(main.statements, functions, main.classes)
-            Compiler.compile(SemanticAnalyzer.analyze(ParseResult(merged, diagnostics.diagnostics, diagnostics.isTruncated, diagnostics.hasErrors)))
+            Compiler.compile(SemanticAnalyzer.analyze(ParseResult(merged, diagnostics.diagnostics, diagnostics.isTruncated, diagnostics.hasErrors)), options)
         }
         val all = compiled?.diagnostics ?: diagnostics.diagnostics
         return ModuleCompileResult(

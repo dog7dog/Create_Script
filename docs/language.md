@@ -162,7 +162,7 @@ Rules:
   imports. A module cannot see the variables, functions or classes of the file that imports it.
 - Each module is loaded once, even if several files import it. Importing a module twice in the same file
   only gives a warning.
-- All files together make one program, so the limits below (instructions, constants, call depth, …) apply
+- All files together make one program, so the limits below (constants, variables, call depth, …) apply
   to the whole program, and each file has its own source length and token limits. At most 16 modules can be
   imported (not counting the file you run).
 - `import` is not a reserved word: a variable called `import` still works.
@@ -304,8 +304,8 @@ println("tick 20")
 ```
 
 A program runs a limited number of instructions per tick (the CLI's default is 128, at most 4096 with
-`--instructions-per-tick`). This budget is separate from the limit of 4096 bytecode instructions in a program:
-a loop can run many more instructions than the program has, over many ticks. `waitTicks(n)` pauses
+`--instructions-per-tick`). This budget is separate from the size of the program (the number of bytecode
+instructions, see below): a loop can run many more instructions than the program has, over many ticks. `waitTicks(n)` pauses
 the program for `n` ticks. The CLI counts ticks logically and does not wait in real time.
 
 ## Limits and safety
@@ -316,7 +316,7 @@ Every program runs inside fixed limits, so a script can never take unbounded mem
 |---|---|
 | Source length | 4096 characters |
 | Tokens | 2048 |
-| Bytecode instructions | 4096 (the size of the compiled program, checked when compiling; functions that are never called count too) |
+| Bytecode instructions (program size) | No limit in the `createscript` command (in development, not in v0.1.0-alpha, which has 4096); 4096 for hosts that use the default, such as Create: Analytical. See below |
 | Constants | 256 |
 | Variables | 64 |
 | Operand stack depth | 64 |
@@ -328,6 +328,28 @@ Every program runs inside fixed limits, so a script can never take unbounded mem
 | Vector size / matrix size | 16 / 8 × 8 |
 | `println` line length | 64 UTF-16 units (longer lines are cut with "…") |
 | Imported modules | 16 (source length and tokens are per file; the other limits are for the whole program) |
+
+### Program size
+
+The number of bytecode instructions in a compiled program is a compile-time limit, set by the host with
+`CompileOptions`. The virtual machine does not check it while running; the per-tick budget, `--max-ticks`,
+the stack, the call depth and the object and list limits work in the same way with any setting.
+
+- `CompileOptions.DEFAULT` and `CompileOptions.EMBEDDED`: at most 4096 instructions. `CreateScript.compile(source)`
+  uses this, as before. Hosts that run many scripts inside another application (such as the Minecraft mod
+  Create: Analytical) should keep it.
+- `CompileOptions.STANDALONE`: no limit on the number of instructions. The `createscript` command uses it for
+  `run` and the interactive mode.
+- Functions that are never called are compiled too and count towards the program size.
+
+No limit does not mean that compiling may use unbounded time or memory. The size of a program is still
+bounded by the input limits: 4096 characters, 2048 tokens and 2048 syntax tree nodes per file, and 16 modules.
+With these limits a program has at most about 65,000 instructions (a single file stays near 4,000). On a
+development machine, compiling such a program, including the bytecode verification, took about 30 ms and
+30 MiB; a synthetic program shaped to be slow to verify took about 2.4 s and 180 MiB at 65,535 instructions.
+The time and memory of the verification grow about linearly with the number of instructions. If the input
+limits are raised in the future (more modules, longer files, packages), limits on compile time and memory
+must be designed again.
 
 The language has no access to files, the network, the operating system, Java/Kotlin code or reflection.
 For `import`, the host (for example the `createscript` command) reads the module files and gives their text

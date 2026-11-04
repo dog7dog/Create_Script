@@ -18,6 +18,9 @@ The detailed Japanese manual is [createscript-cli/README.md](../createscript-cli
 - Standard output receives every `println` line in order. Standard error receives the diagnostics, in the
   form `file:line:column: error|warning CODE (arguments)`. Lines and columns count UTF-16 units from 1.
 - `waitTicks(n)` counts logical ticks; the CLI does not sleep.
+- The command does not limit the size of the compiled program (in development; v0.1.0-alpha limits it to
+  4096 instructions). The input limits and the runtime limits stay; see
+  [Program size](language.md#program-size).
 
 | Option | Meaning | Default | Allowed values |
 |---|---|---|---|

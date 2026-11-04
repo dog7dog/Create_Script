@@ -2,6 +2,7 @@ package com.creatrbypc.createanalytical.cli
 
 import com.creatrbypc.createanalytical.script.api.CreateScript
 import com.creatrbypc.createanalytical.script.api.RunOptions
+import com.creatrbypc.createanalytical.script.compiler.CompileOptions
 import com.creatrbypc.createanalytical.script.diagnostic.Diagnostic
 import com.creatrbypc.createanalytical.script.diagnostic.DiagnosticArgument
 import com.creatrbypc.createanalytical.script.diagnostic.DiagnosticSeverity
@@ -123,11 +124,12 @@ class CreateScriptCli(private val out: PrintStream, private val err: PrintStream
     }
 
     // import（第8.0段階）のモジュールは、プロジェクトのルートの直下の モジュール名.cscr から読む（ProjectModules）。
-    // import の無いプログラムの命令・診断は CreateScript.compile(source) と同じ
+    // import の無いプログラムの命令・診断は CreateScript.compile(source, CompileOptions.STANDALONE) と同じ。
+    // 独立版のコマンドなので、プログラムの命令の数に上限を設けない（第8.0.1段階。入力の上限・実行時の上限はそのまま）
     private fun run(command: RunCommand): Int {
         val source = readSource(command.file)
         val project = openProject(command)
-        val compiled = CreateScript.compile(source, project, project.entryModule)
+        val compiled = CreateScript.compile(source, project, project.entryModule, CompileOptions.STANDALONE)
         fun show(located: ModuleDiagnostic) = format(located.module?.let(project::displayName) ?: command.file, located.diagnostic)
         compiled.diagnostics.forEach { err.println(show(it)) }
         if (compiled.diagnosticsTruncated) err.println("${command.file}: more diagnostics were omitted")

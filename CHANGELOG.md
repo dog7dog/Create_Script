@@ -16,6 +16,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   and reports `CS_MODULE_IMPORT_UNAVAILABLE` for `import`.
 - Core: `ModuleCompileResult.sourceFingerprint` and `ProgramFingerprint.ofModules`, a hash of the entry
   file and all modules for hosts that save and restore runs (the same value as `ofSource` without `import`).
+- Core: `CompileOptions` sets the compile-time program size limit. `CompileOptions.DEFAULT` and `EMBEDDED`
+  keep 4096 instructions (`CreateScript.compile(source)` is unchanged); `STANDALONE` has no instruction
+  limit. The input limits and the runtime limits are unchanged.
+- `createscript run` and the interactive mode compile with `CompileOptions.STANDALONE`.
 - `createscript run`: `--project-root <directory>` (default: the directory of the file). The interactive
   mode reports `CS_MODULE_IMPORT_UNAVAILABLE` for `import`.
 

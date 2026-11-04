@@ -75,8 +75,38 @@ data class CompileResult(
     val hasErrors: Boolean,
 )
 
+// コンパイルの設定（第8.0.1段階）。maxInstructions はコンパイルしたプログラムの大きさ（バイトコードの命令の数）の上限で、null なら上限なし。
+// これはコンパイル時の上限で、VM は実行中に確かめない。実行時の予算（1 tick の命令数: RunOptions.instructionsPerTick）・スタック・呼び出しの深さ・
+// オブジェクト・リストなどの上限とは別で、どの設定でもそれらは変わらない。定数・変数・引数・プロパティの数の上限も、VM と検証の前提のため変わらない。
+// 設定はプログラムを受け付けるかどうかだけを決め、受け付けたプログラムの命令・ハッシュ（ProgramFingerprint）は設定によらず同じ。
+//
+// null（上限なし）でも、コンパイルが際限なく資源を使ってよいという意味ではない。プログラムの大きさは、入力の上限（1 つのソースの文字数・トークン数・
+// AST のノード数: LexerLimits・ParserLimits、モジュールの数: ModuleLimits）で抑えられている。コンパイルのたびに行う検証（SnapshotVerifier.framesOf）の
+// 時間とメモリーは命令数にほぼ比例する（開発機の計測で、検証に不利な形の 65,535 命令で約 2.4 秒・約 180 MiB）。
+// 入力の上限を広げるときは、コンパイルの時間とメモリーの上限を設計し直すこと
+data class CompileOptions(val maxInstructions: Int? = VmLimits.MAX_INSTRUCTIONS) {
+    init {
+        require(maxInstructions == null || maxInstructions > 0) { "maxInstructions must be positive or null: $maxInstructions" }
+    }
+
+    companion object {
+        // CreateScript.compile(source)・Compiler.compileSource(source) の既定（これまでと同じ 4096 命令）
+        val DEFAULT = CompileOptions()
+
+        // 埋め込み先（Create: Analytical などのホスト）向け。4096 命令を明示して指定する
+        val EMBEDDED = CompileOptions(VmLimits.MAX_INSTRUCTIONS)
+
+        // 独立版の createscript コマンド向け。命令数の上限なし（入力の上限・実行時の上限はそのまま）
+        val STANDALONE = CompileOptions(null)
+    }
+}
+
 // 意味解析済みの AST をスタック型 VM のバイトコードへ変換する。Minecraft に依存しない純粋な Kotlin
-class Compiler private constructor(private val analyzed: AnalyzedProgram, private val diagnostics: DiagnosticCollector) {
+class Compiler private constructor(
+    private val analyzed: AnalyzedProgram,
+    private val diagnostics: DiagnosticCollector,
+    private val options: CompileOptions,
+) {
     private val instructions = ArrayList<Instruction>()
     private val constants = ArrayList<Constant>()
 
@@ -130,17 +160,22 @@ class Compiler private constructor(private val analyzed: AnalyzedProgram, privat
     private class CompileAbort : RuntimeException(null, null, false, false)
 
     companion object {
-        fun compile(semanticResult: SemanticResult): CompileResult {
+        // 引数 1 つのものは CompileOptions.DEFAULT（4096 命令）。これまでの呼び出し（コンパイル済みのものを含む）のため、既定値付きの引数ではなく別の関数にする
+        fun compile(semanticResult: SemanticResult): CompileResult = compile(semanticResult, CompileOptions.DEFAULT)
+
+        fun compile(semanticResult: SemanticResult, options: CompileOptions): CompileResult {
             val diagnostics = DiagnosticCollector()
             diagnostics.merge(semanticResult.diagnostics, semanticResult.diagnosticsTruncated, semanticResult.hasErrors)
             // 前の段階でエラーがあれば変換しない（A8）
-            val program = semanticResult.program?.let { Compiler(it, diagnostics).run() }?.let { verified(it, diagnostics) }
+            val program = semanticResult.program?.let { Compiler(it, diagnostics, options).run() }?.let { verified(it, diagnostics) }
             return CompileResult(program.takeUnless { diagnostics.hasErrors }, diagnostics.diagnostics, diagnostics.isTruncated, diagnostics.hasErrors)
         }
 
         // ソースから Lexer → Parser → Semantic → Compiler を順に実行する
-        fun compileSource(source: String): CompileResult =
-            compile(SemanticAnalyzer.analyze(Parser.parse(Lexer.tokenize(source))))
+        fun compileSource(source: String): CompileResult = compileSource(source, CompileOptions.DEFAULT)
+
+        fun compileSource(source: String, options: CompileOptions): CompileResult =
+            compile(SemanticAnalyzer.analyze(Parser.parse(Lexer.tokenize(source))), options)
 
         // 出力したバイトコードを SnapshotVerifier で検証する（第3.7b段階）。分岐先・合流点のスタックの深さと型・変数の初期化を確かめ、
         // スタックの深さが maxStackDepth を超えないことも確かめる。通らなければ Compiler の内部エラーとして報告し、プログラムを返さない
@@ -822,7 +857,9 @@ class Compiler private constructor(private val analyzed: AnalyzedProgram, privat
 
     // stackEffect は命令の実行によるスタックの増減。最大の深さを記録し、上限を超えたらエラーにする
     private fun emit(opcode: Opcode, operand: Int, position: SourcePosition, stackEffect: Int) {
-        if (instructions.size >= VmLimits.MAX_INSTRUCTIONS) abort(DiagnosticCode.COMP_TOO_MANY_INSTRUCTIONS, position, VmLimits.MAX_INSTRUCTIONS)
+        // プログラムの大きさの上限（CompileOptions。null なら上限なし）。引数は設定した上限
+        val limit = options.maxInstructions
+        if (limit != null && instructions.size >= limit) abort(DiagnosticCode.COMP_TOO_MANY_INSTRUCTIONS, position, limit)
         stackDepth += stackEffect
         if (stackDepth > VmLimits.MAX_STACK_DEPTH) abort(DiagnosticCode.COMP_STACK_TOO_DEEP, position, VmLimits.MAX_STACK_DEPTH)
         maxStackDepth = maxOf(maxStackDepth, stackDepth)

@@ -44,8 +44,9 @@ println(fib(10))   // 55
 - Local modules (in development, not in v0.1.0-alpha): `import geometry` uses the functions of
   `geometry.cscr` in the same project, as `geometry.square(5)`, with type checks across files. Modules are only read from your project directory;
   there is no package manager or download yet (see [Modules](docs/language.md#modules-local-import)).
-- A safe execution model: fixed limits on source size, instructions, stack, call depth, objects and list
-  elements; an instruction budget per tick; no access to files, the network, the operating system or the JVM.
+- A safe execution model: fixed limits on source size, stack, call depth, objects and list elements; an
+  instruction budget per tick; a program size limit of 4096 instructions for embedding hosts (the
+  `createscript` command has none; in development, see [Program size](docs/language.md#program-size)); no access to files, the network, the operating system or the JVM.
 - Diagnostics with stable codes (`CS_SEM_TYPE_MISMATCH`, …) and line/column positions.
 
 ## Documentation
@@ -95,6 +96,10 @@ val result = CreateScript.compile("import geometry\nprintln(geometry.square(5))"
 result.diagnostics.forEach { println("${it.module ?: "main"}: ${it.diagnostic.code.id}") }
 val program = result.program ?: error("compile failed")
 ```
+
+`CreateScript.compile(source, CompileOptions.STANDALONE)` compiles without the limit of 4096 instructions
+(in development, not in v0.1.0-alpha); `CreateScript.compile(source)` keeps the limit, as does
+`CompileOptions.EMBEDDED`. The runtime limits do not change.
 
 `CreateScript.compile(source)` works as before; it reports `CS_MODULE_IMPORT_UNAVAILABLE` for a program with
 `import`. `result.locate(run.error!!)` tells in which file a runtime error happened.
