@@ -9,8 +9,9 @@ CreateScript は、Kotlin に似た書き方の、静的型付けの小さなス
 - **`createscript-core`**：字句解析・構文解析・意味解析・バイトコードへのコンパイル・VM。Kotlin/JVM のライブラリで、依存は Kotlin の標準ライブラリだけです。
 - **`createscript-cli`**：`createscript` コマンド。`.cscr` ファイルを実行します。行編集つきの対話モード（REPL）もあります。
 
-> **状態：0.1.0-alpha。** 言語と API は、まだ変わることがあります。配布用のパッケージは、まだ公開していません。
-> [対応環境](#対応環境)を参照してください。
+> **状態：0.1.0-alpha。** 言語と API は、まだ変わることがあります。
+> [v0.1.0-alpha](https://github.com/dog7dog/Create_Script/releases/tag/v0.1.0-alpha) を、GitHub Releases にプレリリースとして公開しています（2026-11-04）。
+> Linux x86_64・aarch64 用の `.tar.gz`、署名なしの macOS arm64 用の `.pkg`、`SHA256SUMS` があります。[対応環境](#対応環境)を参照してください。
 
 ```kotlin
 class Counter {
@@ -35,7 +36,7 @@ println(fib(10))   // 55
 - 型：`Int`（32 ビット）・`Float`・`Double`・`Boolean`・`String`・リスト・`Vector`・`Matrix`・クラス。型はコンパイルのときに検査します。
 - `val` / `var`、`if` / `else`、`while`、整数の範囲の `for`、`break` / `continue`、関数（再帰を含む）、プロパティとメソッドを持つクラス、入れ子のリスト。
 - `kotlin.math` と同じ結果の数学関数、種を決めると同じ列になる乱数、小さなベクトルと行列。
-- ローカルのモジュール：`import geometry` と書くと、同じプロジェクトの `geometry.cscr` の関数を `geometry.square(5)` の形で使えます。
+- ローカルのモジュール（開発中。v0.1.0-alpha には入っていません）：`import geometry` と書くと、同じプロジェクトの `geometry.cscr` の関数を `geometry.square(5)` の形で使えます。
   ファイルをまたいで型を検査します。モジュールは自分のプロジェクトのディレクトリからだけ読みます。パッケージ管理やダウンロードの機能は、
   まだありません（[Modules](docs/language.md#modules-local-import)）。
 - 安全な実行：ソースの長さ・命令・スタック・呼び出しの深さ・オブジェクト・リストの要素に固定の上限があり、1 tick の命令の数も決まっています。
@@ -75,7 +76,7 @@ val run = CreateScript.start(program, RunOptions(instructionsPerTick = 128, rand
 while (!run.isFinished) run.tick()
 ```
 
-`import` のあるプログラムでは、モジュールのソースをホストがコンパイラーに渡します。Core 自身はファイルを読みません。
+`import` のあるプログラム（開発中。v0.1.0-alpha には入っていません）では、モジュールのソースをホストがコンパイラーに渡します。Core 自身はファイルを読みません。
 `ModuleResolver` はモジュール名（識別子 1 つ）を受け取り、そのソースか、使えない理由を返します。
 
 ```kotlin
@@ -89,6 +90,11 @@ val program = result.program ?: error("compile failed")
 
 `CreateScript.compile(source)` は、これまでと同じです。`import` のあるプログラムには `CS_MODULE_IMPORT_UNAVAILABLE` を報告します。
 実行時エラーがどのファイルで起きたかは、`result.locate(run.error!!)` で分かります。
+
+`CreateScript.resume` は、保存した状態の形だけを確かめ、どのプログラムの状態かは確かめません。実行を保存・復元するホストは、
+再開の前に 2 つのハッシュを比べてください。`result.sourceFingerprint`（すべてのソースのハッシュ。`import` の無いプログラムでは
+`ProgramFingerprint.ofSource(source)` と同じ値）と、`ProgramFingerprint.ofProgram(program)` です。こうすると、import したファイルだけを
+変えたときも、前の状態を復元しません。
 
 ## 対応環境
 

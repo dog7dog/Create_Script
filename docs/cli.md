@@ -39,7 +39,7 @@ The detailed Japanese manual is [createscript-cli/README.md](../createscript-cli
 
 ### Files with `import`
 
-A file can import other `.cscr` files of the same project (see
+A file can import other `.cscr` files of the same project (in development, not in v0.1.0-alpha; see
 [Modules in the language guide](language.md#modules-local-import)):
 
 ```text

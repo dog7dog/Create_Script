@@ -17,6 +17,7 @@ import com.creatrbypc.createanalytical.script.parser.Parser
 import com.creatrbypc.createanalytical.script.semantic.BuiltinFunctions
 import com.creatrbypc.createanalytical.script.semantic.SemanticAnalyzer
 import com.creatrbypc.createanalytical.script.vm.CompiledProgram
+import com.creatrbypc.createanalytical.script.vm.ProgramFingerprint
 
 // ローカル import（第8.0段階）。Core はファイル・ネットワークを読まない。モジュールのソースは、ホスト（CLI など）が ModuleResolver で渡す
 object ModuleLimits {
@@ -56,7 +57,16 @@ class ModuleCompileResult internal constructor(
     val hasErrors: Boolean,
     val modules: List<String>,
     private val files: List<SourceFile>,
+    private val sources: SourceSet,
 ) {
+    // コンパイルに使ったソース（エントリーと、読めたモジュール）
+    internal class SourceSet(val entry: String, val modules: Map<String, String>)
+
+    // エントリーと読めたすべてのモジュールのソースのハッシュ（ProgramFingerprint.ofModules。第8.0.1段階）。保存した実行状態を復元するホストは、
+    // エントリーのソースのハッシュの代わりにこれを比べる（import の無いプログラムでは ProgramFingerprint.ofSource(source) と同じ値）。
+    // プログラムのハッシュ（ProgramFingerprint.ofProgram）と合わせて比べれば、モジュールだけを変えたプログラムの状態も復元しない
+    val sourceFingerprint: ByteArray get() = ProgramFingerprint.ofModules(sources.entry, sources.modules)
+
     // ファイルの名前と、プログラム全体での位置（offset）の始まり
     internal class SourceFile(val module: String?, val base: Int)
 
@@ -86,6 +96,7 @@ internal class ModuleCompiler private constructor(private val resolver: ModuleRe
     private val files = ArrayList<ModuleCompileResult.SourceFile>()
     private val states = HashMap<String, State>()
     private val resolved = ArrayList<SourceUnit>()
+    private val moduleSources = HashMap<String, String>()
     private var nextBase = 0
 
     companion object {
@@ -112,6 +123,7 @@ internal class ModuleCompiler private constructor(private val resolver: ModuleRe
             compiled?.hasErrors ?: diagnostics.hasErrors,
             resolved.map { it.module!! },
             files.toList(),
+            ModuleCompileResult.SourceSet(source, moduleSources.toMap()),
         )
     }
 
@@ -164,6 +176,7 @@ internal class ModuleCompiler private constructor(private val resolver: ModuleRe
                 continue
             }
             states[name] = State.RESOLVING
+            moduleSources[name] = source
             val unit = load(name, source)
             val program = unit.program
             if (program != null) {

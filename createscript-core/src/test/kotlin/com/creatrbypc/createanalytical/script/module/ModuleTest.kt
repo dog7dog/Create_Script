@@ -175,6 +175,74 @@ class ModuleTest {
         assertEquals("bad", errors("import bad\nprintln(bad.f())\n", syntax).single().first)
     }
 
+    // ---- 名前解決とモジュールの分離（第8.0.1段階） ----
+
+    // import していないモジュールの関数は、名前付きでも名前だけでも呼べない（エントリーが両方を import していても）
+    @Test
+    fun modulesSeeOnlyWhatTheyImport() {
+        val b = "fun g(): Int {\n    return 2\n}\n"
+        val main = "import a\nimport b\nprintln(a.f())\nprintln(b.g())\n"
+        assertEquals(listOf("a" to Triple(DiagnosticCode.SEM_UNDECLARED_VARIABLE, 2, 12)), errors(main, mapOf("a" to "fun f(): Int {\n    return b.g()\n}\n", "b" to b)))
+        assertEquals(listOf("a" to Triple(DiagnosticCode.SEM_UNKNOWN_FUNCTION, 2, 12)), errors(main, mapOf("a" to "fun f(): Int {\n    return g()\n}\n", "b" to b)))
+        // エントリーは、モジュールが import したモジュールを使えない
+        assertEquals(listOf(null to Triple(DiagnosticCode.SEM_UNDECLARED_VARIABLE, 2, 9)), errors("import a\nprintln(b.g())\n", mapOf("a" to "import b\nfun f(): Int {\n    return b.g()\n}\n", "b" to b)))
+    }
+
+    // 同じ名前の関数が、エントリー・2 つのモジュールにあっても、それぞれが呼ぶのは自分の（または名前で指定した）関数
+    @Test
+    fun sameNamesCallTheRightFunction() {
+        val modules = mapOf(
+            "a" to "import b\nfun f(): Int {\n    return 10\n}\nfun viaB(): Int {\n    return b.f()\n}\nfun own(): Int {\n    return f()\n}\n",
+            "b" to "fun f(): Int {\n    return 20\n}\n",
+        )
+        val main = "import a\nimport b\nfun f(): Int {\n    return 30\n}\nprintln(a.f())\nprintln(b.f())\nprintln(f())\nprintln(a.viaB())\nprintln(a.own())\n"
+        assertEquals(listOf("10", "20", "30", "20", "10"), output(main, modules))
+        // モジュールの中では、エントリーの関数と同じ名前の変数を宣言できる（エントリーの関数は見えないため衝突しない）
+        assertEquals(listOf("3"), output("import m\nfun helper(): Int {\n    return 2\n}\nprintln(m.f())\n", mapOf("m" to "fun f(): Int {\n    val helper = 3\n    return helper\n}\n")))
+        // メソッドの中からもモジュールの関数を呼べる
+        assertEquals(listOf("4"), output("import geometry\nclass C {\n    fun m(): Int {\n        return geometry.square(2)\n    }\n}\nprintln(C().m())\n", mapOf("geometry" to geometry)))
+    }
+
+    // 重複した import・複数のモジュールからの import でも、モジュールの関数は 1 回だけプログラムに入る
+    @Test
+    fun duplicateImportsDoNotDuplicateCode() {
+        val modules = mapOf(
+            "a" to "import shared\nfun f(): Int {\n    return shared.one()\n}\n",
+            "b" to "import shared\nfun g(): Int {\n    return shared.one()\n}\n",
+            "shared" to "fun one(): Int {\n    return 1\n}\nfun two(): Int {\n    return 2\n}\n",
+        )
+        val once = compile("import a\nprintln(a.f())\n", modules).program!!
+        val twice = compile("import a\nimport a\nprintln(a.f())\n", modules).program!!
+        assertEquals(once.functions.size, twice.functions.size)
+        assertEquals(once.instructions.map { it.opcode to it.operand }, twice.instructions.map { it.opcode to it.operand })
+        // a（1）と b（1）と shared（2）の 4 つ
+        assertEquals(4, compile("import a\nimport b\nimport b\nprintln(a.f() + b.g())\n", modules).program!!.functions.size)
+    }
+
+    // 長い循環も、循環を含まない共有（菱形）と区別して検出する
+    @Test
+    fun detectsLongCycles() {
+        val modules = mapOf(
+            "a" to "import b\nfun f() {\n}\n",
+            "b" to "import shared\nimport c\nfun f() {\n}\n",
+            "c" to "import shared\nimport a\nfun f() {\n}\n",
+            "shared" to "fun f() {\n}\n",
+        )
+        val result = compile("import shared\nimport a\n", modules)
+        val cycle = result.diagnostics.single()
+        assertEquals(DiagnosticCode.MODULE_CYCLE, cycle.diagnostic.code)
+        assertEquals("c" to listOf(DiagnosticArgument.StringArgument("a -> b -> c -> a")), cycle.module to cycle.diagnostic.arguments)
+    }
+
+    // モジュールどうしの呼び出しも型を検査する。リストなどの型も渡せる
+    @Test
+    fun checksTypesBetweenModules() {
+        val b = "fun half(x: Double): Double {\n    return x / 2.0\n}\nfun items(): List<Int> {\n    return listOf(1, 2, 3)\n}\n"
+        assertEquals(listOf("a" to Triple(DiagnosticCode.SEM_ARGUMENT_TYPE_MISMATCH, 3, 19)), errors("import a\n", mapOf("a" to "import b\nfun f(): Double {\n    return b.half(1)\n}\n", "b" to b)))
+        assertEquals(listOf("a" to Triple(DiagnosticCode.SEM_TYPE_MISMATCH, 3, 12)), errors("import a\n", mapOf("a" to "import b\nfun f(): Int {\n    return b.half(1.0)\n}\n", "b" to b)))
+        assertEquals(listOf("2", "0.5"), output("import b\nprintln(b.items()[1])\nprintln(b.half(1.0))\n", mapOf("b" to b)))
+    }
+
     // ---- 異常系 ----
 
     @Test
@@ -300,6 +368,18 @@ class ModuleTest {
         val result = compile("import m1\nimport m2\nimport m3\nimport m4\nprintln(m1.f() + m2.f() + m3.f() + m4.f())\n", modules)
         assertNull(result.program)
         assertEquals(listOf(DiagnosticCode.COMP_TOO_MANY_INSTRUCTIONS), result.diagnostics.map { it.diagnostic.code })
+    }
+
+    // 使わない関数も命令に入り、4096 命令（コンパイル時のプログラムの大きさの上限）に数える（第8.0.1段階の確認。不要な関数の除去は未実装）
+    @Test
+    fun unusedFunctionsCountTowardsTheProgramSize() {
+        val small = "fun used(): Int {\n    return 1\n}\n"
+        val withUnused = small + "fun unused(): Int {\n    var x = 0\n" + "    x = x + 1\n".repeat(100) + "    return x\n}\n"
+        val main = "import m\nprintln(m.used())\n"
+        val before = compile(main, mapOf("m" to small)).program!!
+        val after = compile(main, mapOf("m" to withUnused)).program!!
+        assertTrue(after.instructions.size >= before.instructions.size + 400, "${before.instructions.size} -> ${after.instructions.size}")
+        assertEquals(before.functions.size + 1, after.functions.size)
     }
 
     // モジュールの関数も 1 tick の命令数の上限・呼び出しの深さの上限・整数の範囲の検査を受ける。実行時エラーはモジュールのファイルの位置に直せる

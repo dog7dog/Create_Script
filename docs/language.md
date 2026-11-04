@@ -116,8 +116,8 @@ Parameters and return values can use the other types too, for example `Double`, 
 
 ## Modules (local `import`)
 
-A program can use functions from other `.cscr` files of the same project. This is a first, local-only
-version: the files must already be on your disk. There is no package manager, no download and no
+A program can use functions from other `.cscr` files of the same project. This feature is in development
+and is not in v0.1.0-alpha. This is a first, local-only version: the files must already be on your disk. There is no package manager, no download and no
 `createscript install` yet.
 
 ```text
@@ -303,7 +303,9 @@ waitTicks(20)
 println("tick 20")
 ```
 
-A program runs a limited number of instructions per tick (the CLI's default is 128). `waitTicks(n)` pauses
+A program runs a limited number of instructions per tick (the CLI's default is 128, at most 4096 with
+`--instructions-per-tick`). This budget is separate from the limit of 4096 bytecode instructions in a program:
+a loop can run many more instructions than the program has, over many ticks. `waitTicks(n)` pauses
 the program for `n` ticks. The CLI counts ticks logically and does not wait in real time.
 
 ## Limits and safety
@@ -314,7 +316,7 @@ Every program runs inside fixed limits, so a script can never take unbounded mem
 |---|---|
 | Source length | 4096 characters |
 | Tokens | 2048 |
-| Bytecode instructions | 4096 |
+| Bytecode instructions | 4096 (the size of the compiled program, checked when compiling; functions that are never called count too) |
 | Constants | 256 |
 | Variables | 64 |
 | Operand stack depth | 64 |

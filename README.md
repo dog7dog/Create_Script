@@ -11,8 +11,10 @@ that run untrusted scripts. This repository contains:
 - **`createscript-cli`**: the `createscript` command, which runs `.cscr` files and has an interactive mode
   (REPL) with line editing.
 
-> **Status: 0.1.0-alpha.** The language and the APIs can still change. No release packages are published
-> yet. See [Platform status](#platform-status).
+> **Status: 0.1.0-alpha.** The language and the APIs can still change.
+> [v0.1.0-alpha](https://github.com/dog7dog/Create_Script/releases/tag/v0.1.0-alpha) is published as a
+> pre-release on GitHub Releases (2026-11-04), with packages for Linux x86_64 and aarch64 (`.tar.gz`), an
+> unsigned macOS arm64 `.pkg` and `SHA256SUMS`. See [Platform status](#platform-status).
 
 ```kotlin
 class Counter {
@@ -39,8 +41,8 @@ println(fib(10))   // 55
 - `val` / `var`, `if` / `else`, `while`, `for` over integer ranges, `break` / `continue`, functions with
   recursion, classes with properties and methods, nested lists.
 - Math functions as in `kotlin.math`, deterministic random numbers, small vectors and matrices.
-- Local modules: `import geometry` uses the functions of `geometry.cscr` in the same project, as
-  `geometry.square(5)`, with type checks across files. Modules are only read from your project directory;
+- Local modules (in development, not in v0.1.0-alpha): `import geometry` uses the functions of
+  `geometry.cscr` in the same project, as `geometry.square(5)`, with type checks across files. Modules are only read from your project directory;
   there is no package manager or download yet (see [Modules](docs/language.md#modules-local-import)).
 - A safe execution model: fixed limits on source size, instructions, stack, call depth, objects and list
   elements; an instruction budget per tick; no access to files, the network, the operating system or the JVM.
@@ -81,7 +83,7 @@ val run = CreateScript.start(program, RunOptions(instructionsPerTick = 128, rand
 while (!run.isFinished) run.tick()
 ```
 
-For programs with `import`, the host gives the module sources to the compiler; the Core never reads files
+For programs with `import` (in development, not in v0.1.0-alpha), the host gives the module sources to the compiler; the Core never reads files
 itself. `ModuleResolver` receives a module name (one identifier) and returns its source, or the reason it
 cannot be used:
 
@@ -96,6 +98,11 @@ val program = result.program ?: error("compile failed")
 
 `CreateScript.compile(source)` works as before; it reports `CS_MODULE_IMPORT_UNAVAILABLE` for a program with
 `import`. `result.locate(run.error!!)` tells in which file a runtime error happened.
+
+`CreateScript.resume` checks only the shape of a saved state, not which program it came from. A host that
+saves and restores runs must compare two fingerprints before resuming: `result.sourceFingerprint` (all
+source files; for a program without `import` it equals `ProgramFingerprint.ofSource(source)`) and
+`ProgramFingerprint.ofProgram(program)`. Then a state is not restored after only an imported file changed.
 
 ## Platform status
 
