@@ -19,7 +19,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Core: `CompileOptions` sets the compile-time program size limit. `CompileOptions.DEFAULT` and `EMBEDDED`
   keep 4096 instructions (`CreateScript.compile(source)` is unchanged); `STANDALONE` has no instruction
   limit. The input limits and the runtime limits are unchanged.
-- `createscript run` and the interactive mode compile with `CompileOptions.STANDALONE`.
+- `CompileOptions.STANDALONE` raises the input limits: 1,000,000 characters, 250,000 tokens and 250,000
+  syntax tree nodes per file, 1024 modules, and 8,000,000 characters and 1,000,000 tokens in all files.
+  Its bytecode verification keeps state only at basic blocks and stops after 100,000,000 steps
+  (`CS_COMP_PROGRAM_TOO_COMPLEX`); chains of properties without type annotations are limited to 128
+  (`CS_SEM_PROPERTY_TYPE_CHAIN_TOO_DEEP`); too large programs give `CS_MODULE_PROGRAM_TOO_LARGE`.
+- The compiler no longer recurses deeply or takes quadratic time on long call chains, recursion, import
+  chains, construction cycles and comparisons that look like type arguments.
+- `createscript run` and the interactive mode compile with `CompileOptions.STANDALONE`; the command reads
+  files up to 3,000,000 bytes.
 - `createscript run`: `--project-root <directory>` (default: the directory of the file). The interactive
   mode reports `CS_MODULE_IMPORT_UNAVAILABLE` for `import`.
 

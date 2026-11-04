@@ -151,15 +151,24 @@ class ReplTest {
         assertEquals(listOf("1", "2"), repl("println(1)", "waitTicks(500)", "println(2)", "exit").results)
     }
 
-    // セッションの上限（ソース 4096 文字・変数 64 個など）に達すると、それ以上は加えられないが、それまでの状態は使える
+    // セッションの上限（ソース 1,000,000 文字: 第8.0.1段階。それまでは 4096 文字）に達すると、それ以上は加えられないが、それまでの状態は使える
     @Test
     fun sessionLimitIsReported() {
-        val inputs = (0 until 300).map { "println($it)" }
-        val session = repl(*(inputs + listOf("val kept = 1", "exit")).toTypedArray())
+        val inputs = (0 until 12).map { "println($it) //" + "x".repeat(99_980) }
+        val session = repl(*(inputs + listOf("exit")).toTypedArray())
         val accepted = session.results
         assertEquals(accepted.indices.map { "$it" }, accepted)
-        assertTrue(accepted.size in 100 until 300, "${accepted.size}")
+        assertTrue(accepted.size in 8 until 11, "${accepted.size}")
         assertTrue(session.err.contains("error CS_LEX_SOURCE_TOO_LONG") && session.err.contains("the session has reached a CreateScript limit"), session.err.take(300))
+    }
+
+    // VM の上限（変数 64 個など）は、独立版の対話モードでも変わらない。上限に達した入力は加えず、それまでの状態は使える
+    @Test
+    fun vmLimitsStayInTheSession() {
+        val inputs = (1..70).map { "val v$it = $it" }
+        val session = repl(*(inputs + listOf("v1 + v64", "exit")).toTypedArray())
+        assertEquals(listOf("65"), session.results)
+        assertTrue(session.err.contains("error CS_COMP_TOO_MANY_VARIABLES (64)"), session.err.take(300))
     }
 
     // 同じ名前の再宣言はエラーになり、前の宣言が残る

@@ -239,6 +239,17 @@ enum class DiagnosticCode(val id: String) {
     MODULE_BUILTIN_NAME("CS_MODULE_BUILTIN_NAME"),
     MODULE_IMPORT_UNAVAILABLE("CS_MODULE_IMPORT_UNAVAILABLE"),
 
+    // すべてのファイルの長さ・トークン数の合計が CompileOptions.maxTotalSourceLength・maxTotalTokens を超える
+    // （第8.0.1段階。位置は超えたモジュールの import。引数: モジュール名、"characters" か "tokens"、上限）
+    MODULE_PROGRAM_TOO_LARGE("CS_MODULE_PROGRAM_TOO_LARGE"),
+
+    // 型の注釈の無いプロパティの型を決めるための、別のプロパティの初期化式の解析の入れ子が CompileOptions.maxPropertyTypeChain を超える
+    // （第8.0.1段階。独立版だけ。位置はプロパティ名、引数: プロパティ名、上限。型の注釈を書けば解消する）
+    SEM_PROPERTY_TYPE_CHAIN_TOO_DEEP("CS_SEM_PROPERTY_TYPE_CHAIN_TOO_DEEP"),
+
+    // バイトコードの検証の処理回数が CompileOptions.maxVerificationSteps を超える（第8.0.1段階。独立版だけ。位置は 1 行 1 列、引数: 上限）
+    COMP_PROGRAM_TOO_COMPLEX("CS_COMP_PROGRAM_TOO_COMPLEX"),
+
     // モジュールのファイルに書けないもの（第8.0段階。モジュールに書けるのは import と関数だけ）。トップレベルの文（位置は文の先頭）・クラス（位置は class）
     MODULE_TOP_LEVEL_STATEMENT("CS_MODULE_TOP_LEVEL_STATEMENT"),
     MODULE_CLASS_UNSUPPORTED("CS_MODULE_CLASS_UNSUPPORTED"),

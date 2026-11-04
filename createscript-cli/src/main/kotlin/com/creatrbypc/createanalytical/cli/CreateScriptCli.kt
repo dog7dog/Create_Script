@@ -6,7 +6,6 @@ import com.creatrbypc.createanalytical.script.compiler.CompileOptions
 import com.creatrbypc.createanalytical.script.diagnostic.Diagnostic
 import com.creatrbypc.createanalytical.script.diagnostic.DiagnosticArgument
 import com.creatrbypc.createanalytical.script.diagnostic.DiagnosticSeverity
-import com.creatrbypc.createanalytical.script.lexer.LexerLimits
 import com.creatrbypc.createanalytical.script.module.ModuleDiagnostic
 import com.creatrbypc.createanalytical.script.vm.VmState
 import java.io.BufferedReader
@@ -43,8 +42,12 @@ object CliLimits {
 
     const val DEFAULT_SEED = 0L
 
-    // ソースは最大 4096 UTF-16 単位（Core の LexerLimits）。UTF-8 では 1 単位あたり最大 3 バイトなので、それを超えるファイルは読まずに拒否する
-    const val MAX_SOURCE_BYTES = LexerLimits.MAX_SOURCE_LENGTH * 3
+    // コンパイルの設定（第8.0.1段階）。独立版のコマンドなので、Core の CompileOptions.STANDALONE（命令数の上限なし・広い入力の上限）を使う
+    val COMPILE_OPTIONS = CompileOptions.STANDALONE
+
+    // 1 つのファイルのソースは最大 COMPILE_OPTIONS.maxSourceLength UTF-16 単位。UTF-8 では 1 単位あたり最大 3 バイトなので、それを超えるファイルは読まずに拒否する
+    val MAX_SOURCE_LENGTH = COMPILE_OPTIONS.maxSourceLength
+    val MAX_SOURCE_BYTES = MAX_SOURCE_LENGTH * 3
 }
 
 // input は対話モード（引数なし）で読む標準入力
@@ -129,7 +132,7 @@ class CreateScriptCli(private val out: PrintStream, private val err: PrintStream
     private fun run(command: RunCommand): Int {
         val source = readSource(command.file)
         val project = openProject(command)
-        val compiled = CreateScript.compile(source, project, project.entryModule, CompileOptions.STANDALONE)
+        val compiled = CreateScript.compile(source, project, project.entryModule, CliLimits.COMPILE_OPTIONS)
         fun show(located: ModuleDiagnostic) = format(located.module?.let(project::displayName) ?: command.file, located.diagnostic)
         compiled.diagnostics.forEach { err.println(show(it)) }
         if (compiled.diagnosticsTruncated) err.println("${command.file}: more diagnostics were omitted")
@@ -169,7 +172,7 @@ class CreateScriptCli(private val out: PrintStream, private val err: PrintStream
         if (!Files.isRegularFile(path)) return fail(ExitCode.NO_INPUT, "not a regular file: $file")
         return when (val read = SourceFiles.read(path)) {
             is SourceFiles.Read.Text -> read.text
-            SourceFiles.Read.TooLarge -> fail(ExitCode.INVALID_INPUT, "file too large: $file (at most ${LexerLimits.MAX_SOURCE_LENGTH} characters)")
+            SourceFiles.Read.TooLarge -> fail(ExitCode.INVALID_INPUT, "file too large: $file (at most ${CliLimits.MAX_SOURCE_LENGTH} characters)")
             SourceFiles.Read.NotUtf8 -> fail(ExitCode.INVALID_INPUT, "file is not valid UTF-8: $file")
             SourceFiles.Read.Failed -> fail(ExitCode.NO_INPUT, "cannot read file: $file")
         }

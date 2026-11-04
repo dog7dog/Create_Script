@@ -196,7 +196,7 @@ class ModuleCliTest {
         write(main, "import binary\n")
         assertEquals("$main:1:8: error CS_MODULE_UNREADABLE (\"binary\", \"not valid UTF-8\")\n", cli("run", main.toString()).err)
         write(main, "import large\n")
-        assertEquals("$main:1:8: error CS_MODULE_UNREADABLE (\"large\", \"file too large (at most 4096 characters)\")\n", cli("run", main.toString()).err)
+        assertEquals("$main:1:8: error CS_MODULE_UNREADABLE (\"large\", \"file too large (at most ${CliLimits.MAX_SOURCE_LENGTH} characters)\")\n", cli("run", main.toString()).err)
         // モジュールに書けるのは import と関数だけ
         val statement = write(root.resolve("statement.cscr"), "println(1)\n")
         write(main, "import statement\n")

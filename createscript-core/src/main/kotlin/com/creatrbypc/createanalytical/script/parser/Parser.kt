@@ -44,10 +44,13 @@ import com.creatrbypc.createanalytical.script.diagnostic.DiagnosticPhase
 import com.creatrbypc.createanalytical.script.diagnostic.DiagnosticSeverity
 import com.creatrbypc.createanalytical.script.diagnostic.SourcePosition
 import com.creatrbypc.createanalytical.script.lexer.LexResult
+import com.creatrbypc.createanalytical.script.lexer.LexerLimits
 import com.creatrbypc.createanalytical.script.lexer.Token
 import com.creatrbypc.createanalytical.script.lexer.TokenType
 
 // 入れ子の深さと AST ノード数の上限（暫定値。第3.3段階の検証で確定する）。入れ子の深さはブロックの深さと式の深さの合計（11.9-9）
+// MAX_NODES は既定（埋め込み先）の値で、独立版（CompileOptions.STANDALONE: 第8.0.1段階）は parse の引数で広げる。
+// MAX_NESTING_DEPTH は再帰の深さ（Parser・意味解析・Compiler のスタック）を抑える言語の仕様で、どの設定でも同じ
 object ParserLimits {
     const val MAX_NESTING_DEPTH = 32
     const val MAX_NODES = 2048
@@ -62,7 +65,7 @@ data class ParseResult(
 )
 
 // CreateScript の構文解析器（再帰下降）。Minecraft に依存しない純粋な Kotlin で、1回の parse ごとに新しいインスタンスを使う
-class Parser private constructor(private val tokens: List<Token>, private val diagnostics: DiagnosticCollector) {
+class Parser private constructor(private val tokens: List<Token>, private val diagnostics: DiagnosticCollector, private val maxNodes: Int) {
     private var index = 0
 
     // 括弧の中にいる間は改行トークンを読み飛ばす（D18）
@@ -108,11 +111,15 @@ class Parser private constructor(private val tokens: List<Token>, private val di
 
         private val STATEMENT_BOUNDARIES = setOf(TokenType.NEWLINE, TokenType.SEMICOLON, TokenType.EOF)
 
-        fun parse(lexResult: LexResult): ParseResult {
+        fun parse(lexResult: LexResult): ParseResult = parse(lexResult, ParserLimits.MAX_NODES)
+
+        // AST のノード数の上限を指定する（第8.0.1段階。CompileOptions から使う）
+        fun parse(lexResult: LexResult, maxNodes: Int): ParseResult {
+            require(maxNodes > 0) { "maxNodes must be positive: $maxNodes" }
             val diagnostics = DiagnosticCollector()
             diagnostics.merge(lexResult.diagnostics, lexResult.diagnosticsTruncated, lexResult.hasErrors)
             // 字句エラーがあるとトークン列が欠けており、誤った構文エラーを出しうるため構文解析しない（A8）
-            val program = if (lexResult.hasErrors) null else Parser(lexResult.tokens, diagnostics).parseProgram()
+            val program = if (lexResult.hasErrors) null else Parser(lexResult.tokens, diagnostics, maxNodes).parseProgram()
             return ParseResult(
                 program.takeUnless { diagnostics.hasErrors },
                 diagnostics.diagnostics,
@@ -500,14 +507,18 @@ class Parser private constructor(private val tokens: List<Token>, private val di
         }
     }
 
-    // 名前の直後の "<" が型引数の始まり（"<" 型の名前 … ">" "("）か。トークンを読み進めずに確かめる（a < b のような比較と区別する）
+    // 名前の直後の "<" が型引数の始まり（"<" 型の名前 … ">" "("）か。トークンを読み進めずに確かめる（a < b のような比較と区別する）。
+    // 先読みは LexerLimits.MAX_TOKENS 個までで打ち切り、型引数ではないとする（第8.0.1段階。a < b, c < d, … の並びで "<" ごとに末尾まで読むと
+    // トークン数の 2 乗の手間になるため。既定のトークン数の上限のファイルでは、先読みがこの長さに達することはなく、結果は変わらない）
     private fun typeArgumentsAhead(): Boolean {
         var i = index
         if (tokens[i].type != TokenType.LESS) return false
+        val end = index + LexerLimits.MAX_TOKENS
         i++
         var depth = 1
         var expectName = true
         while (true) {
+            if (i >= end) return false
             val token = tokens[i]
             if (expectName) {
                 if (token.type != TokenType.IDENTIFIER) return false
@@ -811,7 +822,7 @@ class Parser private constructor(private val tokens: List<Token>, private val di
 
     private fun <T> countNode(node: T): T {
         nodeCount++
-        if (nodeCount > ParserLimits.MAX_NODES) abort(DiagnosticCode.PARSE_TOO_MANY_NODES, peek().position, ParserLimits.MAX_NODES)
+        if (nodeCount > maxNodes) abort(DiagnosticCode.PARSE_TOO_MANY_NODES, peek().position, maxNodes)
         return node
     }
 

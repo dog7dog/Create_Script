@@ -14,13 +14,17 @@ The detailed Japanese manual is [createscript-cli/README.md](../createscript-cli
 `createscript run` reads one `.cscr` file, compiles it and, if there are no errors, runs it.
 
 - Only file names ending in `.cscr` (lower case) are accepted. The file must be valid UTF-8 and at most
-  12288 bytes (the language allows 4096 characters).
+  3,000,000 bytes (the command allows 1,000,000 characters per file; in development, v0.1.0-alpha allows 4096
+  characters and 12288 bytes).
 - Standard output receives every `println` line in order. Standard error receives the diagnostics, in the
   form `file:line:column: error|warning CODE (arguments)`. Lines and columns count UTF-16 units from 1.
 - `waitTicks(n)` counts logical ticks; the CLI does not sleep.
-- The command does not limit the size of the compiled program (in development; v0.1.0-alpha limits it to
-  4096 instructions). The input limits and the runtime limits stay; see
-  [Program size](language.md#program-size).
+- The command compiles with the standalone limits: 1,000,000 characters, 250,000 tokens and 250,000 syntax
+  tree nodes per file, up to 1024 modules, 8,000,000 characters and 1,000,000 tokens in all files, and no
+  fixed limit on the number of instructions (in development; v0.1.0-alpha uses 4096 characters and 4096
+  instructions). The runtime limits stay; see [Limits and safety](language.md#limits-and-safety).
+- Large programs need memory (about 600 MiB for a program near the limits). Set the Java heap with
+  `JAVA_OPTS`, for example `JAVA_OPTS=-Xmx2g`.
 
 | Option | Meaning | Default | Allowed values |
 |---|---|---|---|
@@ -60,7 +64,7 @@ $ createscript run my-project/apps/tool.cscr --project-root my-project
   only in case (`Geometry.cscr` and `geometry.cscr`), the import is ambiguous (`CS_MODULE_AMBIGUOUS`).
 - A module file may be a symbolic link only if it leads to a regular file inside the project root.
   A link that leads outside gives `CS_MODULE_OUTSIDE_PROJECT`; a broken link, a directory, a file that is not
-  UTF-8 or larger than 12288 bytes gives `CS_MODULE_UNREADABLE`. Module names cannot contain `/`, `..` or an
+  UTF-8 or larger than 3,000,000 bytes gives `CS_MODULE_UNREADABLE`. Module names cannot contain `/`, `..` or an
   absolute path, because a module name is one identifier.
 - Diagnostics inside a module name the module's file, for example
   `my-project/geometry.cscr:2:12: error CS_SEM_TYPE_MISMATCH ("Int", "String")`. Runtime errors inside a
@@ -99,8 +103,9 @@ Type "help" for help, "exit" to quit.
 - `{`, `(` and `[` continue the input on `...` lines until they are closed. Write `} else {` on one line.
 - `help` shows help. `exit`, `quit` and end of input (Ctrl+D) leave with exit code 0.
 - An input with a compile error, a runtime error, or more than 100,000 ticks is not added to the session.
-- The whole session is one program, so it is subject to the language limits (for example 4096 characters of
-  source). When a limit is reached, the REPL says so and keeps the earlier state.
+- The whole session is one program, so it is subject to the language limits (for example 1,000,000 characters
+  of source, 64 variables and 256 constants). When a limit is reached, the REPL says so and keeps the earlier
+  state.
 - `import` is not available in the interactive mode. An input with `import` gives
   `<input>:1:8: error CS_MODULE_IMPORT_UNAVAILABLE ("geometry")` and is not added to the session.
 

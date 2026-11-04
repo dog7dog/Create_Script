@@ -1,6 +1,5 @@
 package com.creatrbypc.createanalytical.cli
 
-import com.creatrbypc.createanalytical.script.lexer.LexerLimits
 import com.creatrbypc.createanalytical.script.module.ModuleLookup
 import com.creatrbypc.createanalytical.script.module.ModuleResolver
 import java.io.IOException
@@ -78,7 +77,7 @@ internal class ProjectModules(private val root: Path, private val shownRoot: Str
         if (!Files.isRegularFile(real)) return ModuleLookup.Unreadable("not a regular file")
         return when (val read = SourceFiles.read(real)) {
             is SourceFiles.Read.Text -> ModuleLookup.Found(read.text)
-            SourceFiles.Read.TooLarge -> ModuleLookup.Unreadable("file too large (at most ${LexerLimits.MAX_SOURCE_LENGTH} characters)")
+            SourceFiles.Read.TooLarge -> ModuleLookup.Unreadable("file too large (at most ${CliLimits.MAX_SOURCE_LENGTH} characters)")
             SourceFiles.Read.NotUtf8 -> ModuleLookup.Unreadable("not valid UTF-8")
             SourceFiles.Read.Failed -> ModuleLookup.Unreadable("cannot read the file")
         }

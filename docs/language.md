@@ -164,7 +164,8 @@ Rules:
   only gives a warning.
 - All files together make one program, so the limits below (constants, variables, call depth, …) apply
   to the whole program, and each file has its own source length and token limits. At most 16 modules can be
-  imported (not counting the file you run).
+  imported with the embedded limits, and 1024 with the `createscript` command (see
+  [Limits and safety](#limits-and-safety)).
 - `import` is not a reserved word: a variable called `import` still works.
 
 Not supported yet: `import a.b`, `import a.*`, `import a as b`, paths (`import "../a"`), classes, top-level
@@ -181,7 +182,8 @@ Errors (shown with the file, line and column):
 | `CS_MODULE_AMBIGUOUS` | both `Geometry.cscr` and `geometry.cscr` exist |
 | `CS_MODULE_OUTSIDE_PROJECT` | `geometry.cscr` is a symbolic link to a file outside the project root |
 | `CS_MODULE_UNREADABLE` | the module file is not valid UTF-8, too large, a directory or a broken link |
-| `CS_MODULE_TOO_MANY` | more than 16 modules |
+| `CS_MODULE_TOO_MANY` | more than 16 modules (1024 with the `createscript` command) |
+| `CS_MODULE_PROGRAM_TOO_LARGE` | all files together have more than 8,000,000 characters or 1,000,000 tokens (`createscript` command) |
 | `CS_MODULE_BUILTIN_NAME` | `import println` |
 | `CS_MODULE_TOP_LEVEL_STATEMENT` / `CS_MODULE_CLASS_UNSUPPORTED` | a module with `println(1)` or `class Point` at the top level |
 | `CS_MODULE_IMPORT_UNAVAILABLE` | `import` where modules cannot be loaded (the interactive mode, `CreateScript.compile(source)`) |
@@ -310,15 +312,32 @@ the program for `n` ticks. The CLI counts ticks logically and does not wait in r
 
 ## Limits and safety
 
-Every program runs inside fixed limits, so a script can never take unbounded memory or time:
+Every program runs inside fixed limits, so a script can never take unbounded memory or time. There are two
+sets of compile-time limits, chosen by the host with `CompileOptions`: **embedded** (`CompileOptions.EMBEDDED`,
+the default of `CreateScript.compile(source)`, used by hosts such as the Minecraft mod Create: Analytical) and
+**standalone** (`CompileOptions.STANDALONE`, used by the `createscript` command for `run` and the interactive
+mode). The standalone limits are in development and not in v0.1.0-alpha, which uses the embedded limits.
+
+| Limit | Embedded | Standalone |
+|---|---|---|
+| Source length per file | 4096 characters | 1,000,000 characters |
+| Tokens per file | 2048 | 250,000 |
+| Syntax tree nodes per file | 2048 | 250,000 |
+| Imported modules (not counting the file you run) | 16 | 1024 |
+| Source length of all files together | 69,632 characters (not a real limit) | 8,000,000 characters |
+| Tokens of all files together | 34,816 (not a real limit) | 1,000,000 |
+| Bytecode instructions (program size) | 4096 | no fixed limit (see below) |
+| Work of the bytecode verification | no extra limit | 100,000,000 steps |
+| Chain of properties without a type annotation whose types depend on each other | no extra limit | 128 |
+
+These limits are the same in both settings:
 
 | Limit | Value |
 |---|---|
-| Source length | 4096 characters |
-| Tokens | 2048 |
-| Bytecode instructions (program size) | No limit in the `createscript` command (in development, not in v0.1.0-alpha, which has 4096); 4096 for hosts that use the default, such as Create: Analytical. See below |
+| Nesting of blocks and expressions | 32 |
+| Identifier / string literal / integer literal | 32 characters / 256 characters / 10 digits |
 | Constants | 256 |
-| Variables | 64 |
+| Variables (top-level, and locals per function) | 64 |
 | Operand stack depth | 64 |
 | Call depth | 16 |
 | Parameters per function | 16 |
@@ -327,29 +346,43 @@ Every program runs inside fixed limits, so a script can never take unbounded mem
 | Elements per list / in all lists | 256 / 4096 |
 | Vector size / matrix size | 16 / 8 × 8 |
 | `println` line length | 64 UTF-16 units (longer lines are cut with "…") |
-| Imported modules | 16 (source length and tokens are per file; the other limits are for the whole program) |
+
+The constants, variables, stack, call depth, parameters, objects, properties and list limits belong to the
+virtual machine: the bytecode verifier and the saved-state format of embedded hosts rely on them, so they are
+not raised for standalone programs. A large standalone program therefore still uses at most 256 different
+constant values and 64 top-level variables.
 
 ### Program size
 
-The number of bytecode instructions in a compiled program is a compile-time limit, set by the host with
-`CompileOptions`. The virtual machine does not check it while running; the per-tick budget, `--max-ticks`,
-the stack, the call depth and the object and list limits work in the same way with any setting.
+The number of bytecode instructions in a compiled program is a compile-time limit, not a runtime one: the
+virtual machine does not check it while running, and the per-tick budget, `--max-ticks`, the stack, the call
+depth and the object and list limits work in the same way with any setting. Functions that are never called
+are compiled too and count towards the program size.
 
-- `CompileOptions.DEFAULT` and `CompileOptions.EMBEDDED`: at most 4096 instructions. `CreateScript.compile(source)`
-  uses this, as before. Hosts that run many scripts inside another application (such as the Minecraft mod
-  Create: Analytical) should keep it.
-- `CompileOptions.STANDALONE`: no limit on the number of instructions. The `createscript` command uses it for
-  `run` and the interactive mode.
-- Functions that are never called are compiled too and count towards the program size.
+No fixed limit does not mean that compiling may use unbounded time or memory. In the standalone setting the
+program size is bounded by the input limits above, mainly the total of 1,000,000 tokens (the densest code we
+found compiles to about 2 instructions per token, so about 2,000,000 instructions). The compiler keeps the syntax tree and the
+analysis results of all files until the end, about 330 bytes per token at most. Measured on a development
+machine with the `createscript` command:
 
-No limit does not mean that compiling may use unbounded time or memory. The size of a program is still
-bounded by the input limits: 4096 characters, 2048 tokens and 2048 syntax tree nodes per file, and 16 modules.
-With these limits a program has at most about 65,000 instructions (a single file stays near 4,000). On a
-development machine, compiling such a program, including the bytecode verification, took about 30 ms and
-30 MiB; a synthetic program shaped to be slow to verify took about 2.4 s and 180 MiB at 65,535 instructions.
-The time and memory of the verification grow about linearly with the number of instructions. If the input
-limits are raised in the future (more modules, longer files, packages), limits on compile time and memory
-must be designed again.
+| Program | Instructions | Time | Memory (resident) |
+|---|---|---|---|
+| One file of 1,000,000 characters (mostly a comment) | few | 0.07 s | 62 MiB |
+| 1024 small modules | a few thousand | 0.6 s | 290 MiB |
+| 160 modules of 1000 lines | about 640,000 | 0.4 s | 300 MiB |
+| 4 files near the token limits (about 960,000 tokens) | about 1,890,000 | 0.6 s | 530–590 MiB |
+
+These ran with a Java heap of 512 MiB. Larger programs within the limits can need more memory; the Java heap
+can be set with `JAVA_OPTS`, for example `JAVA_OPTS=-Xmx2g createscript run main.cscr`.
+
+The bytecode verification checks every compiled program. In the standalone setting it keeps the state only at
+the start of each basic block, and it stops with `CS_COMP_PROGRAM_TOO_COMPLEX` after 100,000,000 steps. Normal
+programs need a few steps per instruction; a synthetic program shaped to be as slow as possible to verify reaches
+the limit at about 2,000,000 instructions after about 2.3 s. Long chains of calls, recursion, imports and
+class constructions are handled without deep recursion in the compiler.
+
+If the input limits are raised in the future (longer files, more modules, packages), the limits on compile time
+and memory must be designed again together with them.
 
 The language has no access to files, the network, the operating system, Java/Kotlin code or reflection.
 For `import`, the host (for example the `createscript` command) reads the module files and gives their text

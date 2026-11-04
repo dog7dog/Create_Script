@@ -38,8 +38,12 @@ import com.creatrbypc.createanalytical.script.diagnostic.DiagnosticCollector
 import com.creatrbypc.createanalytical.script.diagnostic.DiagnosticPhase
 import com.creatrbypc.createanalytical.script.diagnostic.DiagnosticSeverity
 import com.creatrbypc.createanalytical.script.diagnostic.SourcePosition
+import com.creatrbypc.createanalytical.script.graph.Graphs
 import com.creatrbypc.createanalytical.script.lexer.Lexer
+import com.creatrbypc.createanalytical.script.lexer.LexerLimits
+import com.creatrbypc.createanalytical.script.module.ModuleLimits
 import com.creatrbypc.createanalytical.script.parser.Parser
+import com.creatrbypc.createanalytical.script.parser.ParserLimits
 import com.creatrbypc.createanalytical.script.semantic.AnalyzedProgram
 import com.creatrbypc.createanalytical.script.semantic.BuiltinFunctions
 import com.creatrbypc.createanalytical.script.semantic.LinalgOperation
@@ -84,9 +88,33 @@ data class CompileResult(
 // AST のノード数: LexerLimits・ParserLimits、モジュールの数: ModuleLimits）で抑えられている。コンパイルのたびに行う検証（SnapshotVerifier.framesOf）の
 // 時間とメモリーは命令数にほぼ比例する（開発機の計測で、検証に不利な形の 65,535 命令で約 2.4 秒・約 180 MiB）。
 // 入力の上限を広げるときは、コンパイルの時間とメモリーの上限を設計し直すこと
-data class CompileOptions(val maxInstructions: Int? = VmLimits.MAX_INSTRUCTIONS) {
+//
+// 入力の上限（第8.0.1段階）: maxSourceLength・maxTokens・maxNodes は 1 つのファイルごと、maxModules はエントリーを除くモジュールの数、
+// maxTotalSourceLength はエントリーとすべてのモジュールの長さの合計。既定（DEFAULT・EMBEDDED）はこれまでの値（合計はファイルごとの上限 × ファイルの数で、
+// これまでと同じく実質的な制限にならない）
+data class CompileOptions(
+    val maxInstructions: Int? = VmLimits.MAX_INSTRUCTIONS,
+    val maxSourceLength: Int = LexerLimits.MAX_SOURCE_LENGTH,
+    val maxTokens: Int = LexerLimits.MAX_TOKENS,
+    val maxNodes: Int = ParserLimits.MAX_NODES,
+    val maxModules: Int = ModuleLimits.MAX_MODULES,
+    val maxTotalSourceLength: Int = LexerLimits.MAX_SOURCE_LENGTH * (ModuleLimits.MAX_MODULES + 1),
+    // 型の注釈の無いプロパティの型の連鎖（C1 の初期化式が C2 のプロパティの型を使い、C2 が C3 の…）の上限。null なら上限なし（既定。ノード数 2048 で連鎖は短い）
+    val maxPropertyTypeChain: Int? = null,
+    // エントリーとすべてのモジュールのトークン数の合計の上限。コンパイル中に保持する AST などのメモリーはトークン数にほぼ比例する（開発機の計測で 1 トークンあたり最大約 330 バイト）
+    val maxTotalTokens: Int = LexerLimits.MAX_TOKENS * (ModuleLimits.MAX_MODULES + 1),
+    // コンパイルの最後に行うバイトコードの検証（SnapshotVerifier）の処理回数の上限。null なら理論上の上限（SnapshotVerifier.maxSteps。既定）。
+    // 正しいプログラムの処理回数は、ふつう命令数の数倍で済むが、変数の初期化の状態が少しずつ伝わる形では命令数 ×（変数の数 + 1）まで増える
+    val maxVerificationSteps: Long? = null,
+) {
     init {
         require(maxInstructions == null || maxInstructions > 0) { "maxInstructions must be positive or null: $maxInstructions" }
+        require(maxSourceLength > 0 && maxTokens > 0 && maxNodes > 0 && maxModules >= 0 && maxTotalSourceLength > 0) { "limits must be positive: $this" }
+        require(maxPropertyTypeChain == null || maxPropertyTypeChain > 0) { "maxPropertyTypeChain must be positive or null: $maxPropertyTypeChain" }
+        require(maxTotalTokens >= maxTokens) { "maxTotalTokens must be at least maxTokens: $this" }
+        require(maxVerificationSteps == null || maxVerificationSteps > 0) { "maxVerificationSteps must be positive or null: $maxVerificationSteps" }
+        // プログラム全体の位置（offset）は Int。ファイルごとに 1 つ区切りを足すため、合計の上限とファイルの数の和が Int に収まること
+        require(maxTotalSourceLength.toLong() + maxModules + 1 <= Int.MAX_VALUE) { "maxTotalSourceLength is too large: $maxTotalSourceLength" }
     }
 
     companion object {
@@ -97,7 +125,17 @@ data class CompileOptions(val maxInstructions: Int? = VmLimits.MAX_INSTRUCTIONS)
         val EMBEDDED = CompileOptions(VmLimits.MAX_INSTRUCTIONS)
 
         // 独立版の createscript コマンド向け。命令数の上限なし（入力の上限・実行時の上限はそのまま）
-        val STANDALONE = CompileOptions(null)
+        val STANDALONE = CompileOptions(
+            maxInstructions = null,
+            maxSourceLength = 1_000_000,
+            maxTokens = 250_000,
+            maxNodes = 250_000,
+            maxModules = 1024,
+            maxTotalSourceLength = 8_000_000,
+            maxPropertyTypeChain = 128,
+            maxTotalTokens = 1_000_000,
+            maxVerificationSteps = 100_000_000,
+        )
     }
 }
 
@@ -167,7 +205,7 @@ class Compiler private constructor(
             val diagnostics = DiagnosticCollector()
             diagnostics.merge(semanticResult.diagnostics, semanticResult.diagnosticsTruncated, semanticResult.hasErrors)
             // 前の段階でエラーがあれば変換しない（A8）
-            val program = semanticResult.program?.let { Compiler(it, diagnostics, options).run() }?.let { verified(it, diagnostics) }
+            val program = semanticResult.program?.let { Compiler(it, diagnostics, options).run() }?.let { verified(it, diagnostics, options) }
             return CompileResult(program.takeUnless { diagnostics.hasErrors }, diagnostics.diagnostics, diagnostics.isTruncated, diagnostics.hasErrors)
         }
 
@@ -175,13 +213,31 @@ class Compiler private constructor(
         fun compileSource(source: String): CompileResult = compileSource(source, CompileOptions.DEFAULT)
 
         fun compileSource(source: String, options: CompileOptions): CompileResult =
-            compile(SemanticAnalyzer.analyze(Parser.parse(Lexer.tokenize(source))), options)
+            compile(SemanticAnalyzer.analyze(Parser.parse(Lexer.tokenize(source, options.maxSourceLength, options.maxTokens), options.maxNodes), options.maxPropertyTypeChain), options)
 
         // 出力したバイトコードを SnapshotVerifier で検証する（第3.7b段階）。分岐先・合流点のスタックの深さと型・変数の初期化を確かめ、
         // スタックの深さが maxStackDepth を超えないことも確かめる。通らなければ Compiler の内部エラーとして報告し、プログラムを返さない
-        internal fun verified(program: CompiledProgram, diagnostics: DiagnosticCollector): CompiledProgram? {
-            val frames = SnapshotVerifier.framesOf(program)
-            if (frames != null && frames.all { (it?.stack?.size ?: 0) <= program.maxStackDepth }) return program
+        // 第8.0.1段階: CompileOptions.maxVerificationSteps（独立版）があれば、検証の処理回数をそこまでに抑え、超えたら CS_COMP_PROGRAM_TOO_COMPLEX にする
+        // （上限の無いときは、これまでどおり SnapshotVerifier.maxSteps。正しいプログラムがそれに達することは無い）
+        // その場合は、基本ブロックの先頭の状態だけを持つ SnapshotVerifier.analyzeBlocks で検証する（framesOf と同じ規則で、メモリーと時間が少ない）
+        internal fun verified(program: CompiledProgram, diagnostics: DiagnosticCollector, options: CompileOptions = CompileOptions.DEFAULT): CompiledProgram? {
+            val limit = options.maxVerificationSteps
+            if (limit == null) {
+                val frames = SnapshotVerifier.framesOf(program)
+                if (frames != null && frames.all { (it?.stack?.size ?: 0) <= program.maxStackDepth }) return program
+                diagnostics.report(Diagnostic(DiagnosticCode.COMP_VERIFICATION_FAILED, DiagnosticSeverity.ERROR, DiagnosticPhase.COMPILER, END))
+                return null
+            }
+            when (val analysis = SnapshotVerifier.analyzeBlocks(program, minOf(limit, SnapshotVerifier.maxSteps(program)))) {
+                is SnapshotVerifier.BlockAnalysis.Verified -> if (analysis.maxStackDepth <= program.maxStackDepth) return program
+                SnapshotVerifier.BlockAnalysis.StepLimitReached -> {
+                    diagnostics.report(
+                        Diagnostic(DiagnosticCode.COMP_PROGRAM_TOO_COMPLEX, DiagnosticSeverity.ERROR, DiagnosticPhase.COMPILER, END, listOf(DiagnosticArgument.IntArgument(options.maxVerificationSteps!!.coerceAtMost(Int.MAX_VALUE.toLong()).toInt())))
+                    )
+                    return null
+                }
+                SnapshotVerifier.BlockAnalysis.Invalid -> {}
+            }
             diagnostics.report(Diagnostic(DiagnosticCode.COMP_VERIFICATION_FAILED, DiagnosticSeverity.ERROR, DiagnosticPhase.COMPILER, END))
             return null
         }
@@ -303,11 +359,14 @@ class Compiler private constructor(
     // これにより、再帰に入らない呼び出しは実行時に CS_RUN_STACK_OVERFLOW にならない（トップレベル自身の深さは emit が上限を確かめる）。
     // 再帰に入りうる関数の深さは実行時の引数で決まるため、ここでは確かめず、VM が実行時に上限で止める（第3.8e段階）。
     // 再帰に入らない関数が呼ぶ関数も再帰に入らないため、neededBy がたどる関係に循環は無く、必ず終わる
+    // 呼び出しを呼び出し元ごとにまとめておく（第8.0.1段階。関数ごとにすべての呼び出しを探すと、関数の数の 2 乗の手間になるため）。
+    // neededBy の再帰の深さは、checkCallDepth を通った再帰に入らない呼び出しの連鎖の長さ（MAX_CALL_DEPTH 以下）
     private fun checkTotalStackDepth() {
         val needed = IntArray(functionMaxDepths.size) { -1 }
+        val sitesByCaller = callSites.filter { it.caller >= 0 }.groupBy { it.caller }
         fun neededBy(function: Int): Int {
             if (needed[function] < 0) {
-                needed[function] = maxOf(functionMaxDepths[function], callSites.filter { it.caller == function }.maxOfOrNull { it.base + neededBy(it.callee) } ?: 0)
+                needed[function] = maxOf(functionMaxDepths[function], sitesByCaller[function].orEmpty().maxOfOrNull { it.base + neededBy(it.callee) } ?: 0)
             }
             return needed[function]
         }
@@ -320,11 +379,17 @@ class Compiler private constructor(
     // 呼び出しの深さ（その関数から始まる最も長い呼び出しの連鎖に含まれる関数の数）が上限を超える関数を拒否する。
     // 再帰に入りうる関数は深さが実行時に決まるため対象外（VM が CS_RUN_CALL_DEPTH_EXCEEDED で止める）。
     // 再帰に入らない関数が呼ぶ関数も再帰に入らないため、depthOf がたどる関係に循環は無く、必ず終わる
+    // 第8.0.1段階: 再帰せずに求める。再帰に入らない関数どうしの呼び出しの関係には循環が無いため、行き先が先になる順（強連結成分の番号の順）に
+    // 深さを決める。深さは MAX_CALL_DEPTH + 1 で打ち切る（それを超えるかどうかだけが必要で、長い連鎖でも値が大きくならない）
     private fun checkCallDepth() {
-        val depths = IdentityHashMap<CallableDeclaration, Int>()
-        fun depthOf(routine: CallableDeclaration): Int =
-            depths[routine] ?: (1 + (analyzed.callees.getValue(routine).maxOfOrNull(::depthOf) ?: 0)).also { depths[routine] = it }
-        val tooDeep = analyzed.routines.firstOrNull { !reachesRecursion[routineIndices.getValue(it)] && depthOf(it) > VmLimits.MAX_CALL_DEPTH } ?: return
+        val routines = analyzed.routines
+        val component = Graphs.stronglyConnectedComponents(routines.size, calleeIndices::get)
+        val depths = IntArray(routines.size)
+        for (index in routines.indices.sortedBy { component[it] }) {
+            if (reachesRecursion[index]) continue
+            depths[index] = minOf(VmLimits.MAX_CALL_DEPTH + 1, 1 + (calleeIndices[index].maxOfOrNull { depths[it] } ?: 0))
+        }
+        val tooDeep = routines.withIndex().firstOrNull { (index, _) -> !reachesRecursion[index] && depths[index] > VmLimits.MAX_CALL_DEPTH }?.value ?: return
         val position = when (tooDeep) {
             is FunctionDeclaration -> tooDeep.namePosition
             is ClassDeclaration -> tooDeep.namePosition
@@ -332,27 +397,13 @@ class Compiler private constructor(
         abort(DiagnosticCode.COMP_CALL_TOO_DEEP, position, VmLimits.MAX_CALL_DEPTH)
     }
 
-    // 深さ優先でたどり、たどっている途中の関数へ戻る呼び出し（循環）を見つけたら、その経路の関数をすべて「循環に入りうる」とする。
-    // 各関数は1回だけたどる（たどる深さは関数の数まで。関数の数は AST ノード数の上限 2048 で数百個に抑えられる）
-    private fun recursionReachability(): BooleanArray {
-        val functions = analyzed.routines
-        // 0: 未訪問、1: たどっている途中、2: 循環に入らない、3: 循環に入りうる
-        val state = IntArray(functions.size)
-        fun visit(index: Int): Boolean {
-            when (state[index]) {
-                1, 3 -> return true
-                2 -> return false
-            }
-            state[index] = 1
-            var cyclic = false
-            for (callee in analyzed.callees.getValue(functions[index])) {
-                if (visit(routineIndices.getValue(callee))) cyclic = true
-            }
-            state[index] = if (cyclic) 3 else 2
-            return cyclic
-        }
-        functions.indices.forEach(::visit)
-        return BooleanArray(functions.size) { state[it] == 3 }
+    // 循環に入りうる関数（循環の上にあるか、呼び出しをたどって循環へ行ける関数）。第8.0.1段階から、深さ優先の再帰の代わりに強連結成分で求める
+    // （関数の数が多くても JVM のスタックを使わない。結果は第8.0段階までの深さ優先の判定と同じ）
+    private fun recursionReachability(): BooleanArray = Graphs.reachesCycle(analyzed.routines.size, calleeIndices::get)
+
+    // 手続きごとの、呼び出す手続きの番号（AnalyzedProgram.callees を番号にしたもの）
+    private val calleeIndices: List<IntArray> by lazy {
+        analyzed.routines.map { routine -> analyzed.callees.getValue(routine).map { routineIndices.getValue(it) }.toIntArray() }
     }
 
     // 文の前後でスタックの深さは 0

@@ -8,6 +8,8 @@ import com.creatrbypc.createanalytical.script.diagnostic.DiagnosticPhase
 import com.creatrbypc.createanalytical.script.diagnostic.DiagnosticSeverity
 import com.creatrbypc.createanalytical.script.diagnostic.SourcePosition
 
+// MAX_SOURCE_LENGTH・MAX_TOKENS は既定（埋め込み先）の値。独立版（CompileOptions.STANDALONE: 第8.0.1段階）は tokenize の引数で広げる。
+// それ以外（識別子・整数・浮動小数点数・文字列の長さ）は言語の仕様で、どの設定でも同じ
 object LexerLimits {
     const val MAX_SOURCE_LENGTH = 4096
     const val MAX_TOKENS = 2048
@@ -20,7 +22,7 @@ object LexerLimits {
 }
 
 // CreateScript の字句解析器。Minecraft に依存しない純粋な Kotlin で、1回の tokenize ごとに新しいインスタンスを使う
-class Lexer private constructor(private val source: String) {
+class Lexer private constructor(private val source: String, private val maxSourceLength: Int, private val maxTokens: Int) {
     private val diagnostics = DiagnosticCollector()
     private val tokens = ArrayList<Token>()
     private var index = 0
@@ -34,12 +36,18 @@ class Lexer private constructor(private val source: String) {
         // 最長一致のため、綴りの長い演算子から順に試す
         private val OPERATORS = TokenType.entries.filter { it.symbol != null }.sortedByDescending { it.symbol!!.length }
 
-        fun tokenize(source: String): LexResult = Lexer(source).run()
+        fun tokenize(source: String): LexResult = Lexer(source, LexerLimits.MAX_SOURCE_LENGTH, LexerLimits.MAX_TOKENS).run()
+
+        // ソースの長さとトークン数の上限を指定する（第8.0.1段階。CompileOptions から使う）
+        fun tokenize(source: String, maxSourceLength: Int, maxTokens: Int): LexResult {
+            require(maxSourceLength > 0 && maxTokens > 0) { "limits must be positive: $maxSourceLength, $maxTokens" }
+            return Lexer(source, maxSourceLength, maxTokens).run()
+        }
     }
 
     private fun run(): LexResult {
-        if (source.length > LexerLimits.MAX_SOURCE_LENGTH) {
-            reportError(DiagnosticCode.LEX_SOURCE_TOO_LONG, position(), source.length, LexerLimits.MAX_SOURCE_LENGTH)
+        if (source.length > maxSourceLength) {
+            reportError(DiagnosticCode.LEX_SOURCE_TOO_LONG, position(), source.length, maxSourceLength)
         } else if (validateCharacters()) {
             while (!stopped && index < source.length) scanToken()
         }
@@ -312,8 +320,8 @@ class Lexer private constructor(private val source: String) {
         floatValue: Float? = null,
         doubleValue: Double? = null,
     ) {
-        if (tokens.size >= LexerLimits.MAX_TOKENS) {
-            reportError(DiagnosticCode.LEX_TOO_MANY_TOKENS, startPosition, LexerLimits.MAX_TOKENS)
+        if (tokens.size >= maxTokens) {
+            reportError(DiagnosticCode.LEX_TOO_MANY_TOKENS, startPosition, maxTokens)
             stopped = true
             return
         }

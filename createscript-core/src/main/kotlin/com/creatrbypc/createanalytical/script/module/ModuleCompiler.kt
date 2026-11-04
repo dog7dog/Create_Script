@@ -8,6 +8,7 @@ import com.creatrbypc.createanalytical.script.diagnostic.Diagnostic
 import com.creatrbypc.createanalytical.script.diagnostic.DiagnosticArgument
 import com.creatrbypc.createanalytical.script.diagnostic.DiagnosticCode
 import com.creatrbypc.createanalytical.script.diagnostic.DiagnosticCollector
+import com.creatrbypc.createanalytical.script.diagnostic.DiagnosticLimits
 import com.creatrbypc.createanalytical.script.diagnostic.DiagnosticPhase
 import com.creatrbypc.createanalytical.script.diagnostic.DiagnosticSeverity
 import com.creatrbypc.createanalytical.script.diagnostic.SourcePosition
@@ -22,7 +23,8 @@ import com.creatrbypc.createanalytical.script.vm.ProgramFingerprint
 
 // ローカル import（第8.0段階）。Core はファイル・ネットワークを読まない。モジュールのソースは、ホスト（CLI など）が ModuleResolver で渡す
 object ModuleLimits {
-    // エントリーのファイルを除くモジュールの数。1 つのソースの上限（LexerLimits）はファイルごとに、命令数などの上限（VmLimits）はプログラム全体に適用する
+    // エントリーのファイルを除くモジュールの数の既定（埋め込み先）。独立版は CompileOptions.STANDALONE で広げる（第8.0.1段階）。
+    // 1 つのソースの上限（LexerLimits）はファイルごとに、命令数などの上限（VmLimits）はプログラム全体に適用する
     const val MAX_MODULES = 16
 }
 
@@ -75,9 +77,11 @@ class ModuleCompileResult internal constructor(
     fun locate(diagnostic: Diagnostic): ModuleDiagnostic = locate(files, diagnostic)
 
     internal companion object {
+        // files は base の昇順。base が offset 以下の最後のファイル（二分探索。ファイルが多くても診断 1 つあたりの手間は小さい）
         fun locate(files: List<SourceFile>, diagnostic: Diagnostic): ModuleDiagnostic {
             val position = diagnostic.position
-            val file = files.lastOrNull { it.base <= position.offset } ?: files.first()
+            val found = files.binarySearch { it.base.compareTo(position.offset) }
+            val file = files[if (found >= 0) found else maxOf(0, -found - 2)]
             return ModuleDiagnostic(file.module, diagnostic.copy(position = position.copy(offset = position.offset - file.base)))
         }
     }
@@ -99,6 +103,8 @@ internal class ModuleCompiler private constructor(private val resolver: ModuleRe
     private val resolved = ArrayList<SourceUnit>()
     private val moduleSources = HashMap<String, String>()
     private var nextBase = 0
+    private var totalSourceLength = 0
+    private var totalTokens = 0
 
     companion object {
         fun compile(source: String, resolver: ModuleResolver, entryModule: String?, options: CompileOptions): ModuleCompileResult =
@@ -106,15 +112,15 @@ internal class ModuleCompiler private constructor(private val resolver: ModuleRe
     }
 
     private fun run(source: String): ModuleCompileResult {
-        val entry = load(null, source)
-        entry.program?.let { visit(it.imports, listOf(entryModule ?: ENTRY)) }
+        val entry = load(null, source)!!
+        entry.program?.let { visitAll(it.imports) }
         val main = entry.program
         val compiled = if (main == null || diagnostics.hasErrors) {
             null
         } else {
             val functions = main.functions + resolved.flatMap { unit -> unit.program!!.functions.map { it.copy(name = "${unit.module}.${it.name}") } }
             val merged = Program(main.statements, functions, main.classes)
-            Compiler.compile(SemanticAnalyzer.analyze(ParseResult(merged, diagnostics.diagnostics, diagnostics.isTruncated, diagnostics.hasErrors)), options)
+            Compiler.compile(SemanticAnalyzer.analyze(ParseResult(merged, diagnostics.diagnostics, diagnostics.isTruncated, diagnostics.hasErrors), options.maxPropertyTypeChain), options)
         }
         val all = compiled?.diagnostics ?: diagnostics.diagnostics
         return ModuleCompileResult(
@@ -129,11 +135,17 @@ internal class ModuleCompiler private constructor(private val resolver: ModuleRe
     }
 
     // 1 つのファイルを字句解析・構文解析する。位置はプログラム全体での位置にずらす
-    private fun load(module: String?, source: String): SourceUnit {
+    // トークン数の合計が上限を超えるモジュールは null（エントリーのファイルは 1 つのファイルの上限以下で、合計の上限を超えない）
+    private fun load(module: String?, source: String): SourceUnit? {
+        val lexed = Lexer.tokenize(source, options.maxSourceLength, options.maxTokens)
+        val tokens = lexed.tokens.size - 1
+        if (module != null && tokens > options.maxTotalTokens - totalTokens) return null
+        totalTokens += tokens
         val base = nextBase
         nextBase += source.length + 1
+        totalSourceLength += source.length
         files.add(ModuleCompileResult.SourceFile(module, base))
-        val parsed = Parser.parse(shift(Lexer.tokenize(source), base))
+        val parsed = Parser.parse(shift(lexed, base), options.maxNodes)
         diagnostics.merge(parsed.diagnostics, parsed.diagnosticsTruncated, parsed.hasErrors)
         return SourceUnit(module, base, parsed.program)
     }
@@ -147,22 +159,41 @@ internal class ModuleCompiler private constructor(private val resolver: ModuleRe
         )
     }
 
-    // path は import をたどってきたモジュール（エントリーのファイルから順）。深さは MAX_MODULES + 1 まで
-    private fun visit(imports: List<ImportDeclaration>, path: List<String>) {
-        for (declaration in imports) {
+    // import を深さ優先でたどる。モジュールの数が多くても JVM のスタックを使わないよう、再帰せずに、たどっている途中のファイル（エントリーから順）を
+    // 積んで処理する（第8.0.1段階。たどる順・解決の順・診断は再帰で書いた第8.0段階と同じ）。path はその名前の並び（エントリーは entryModule か "<main>"）、
+    // onPath は path の中の位置（循環の検出に使う）
+    private class Pending(val unit: SourceUnit?, val imports: Iterator<ImportDeclaration>)
+
+    private fun visitAll(entryImports: List<ImportDeclaration>) {
+        val stack = arrayListOf(Pending(null, entryImports.iterator()))
+        val path = arrayListOf(entryModule ?: ENTRY)
+        val onPath = HashMap<String, Int>().also { map -> entryModule?.let { map[it] = 0 } }
+        while (stack.isNotEmpty()) {
+            val top = stack.last()
+            if (!top.imports.hasNext()) {
+                stack.removeAt(stack.lastIndex)
+                val unit = top.unit ?: continue
+                onPath.remove(unit.module)
+                path.removeAt(path.lastIndex)
+                states[unit.module!!] = State.DONE
+                // import されるモジュールを先に並べる（決まった順にするため）
+                resolved.add(unit)
+                continue
+            }
+            val declaration = top.imports.next()
             val name = declaration.name
             if (name in BuiltinFunctions.NAMES) {
                 report(DiagnosticCode.MODULE_BUILTIN_NAME, declaration, name)
                 continue
             }
-            if (name == entryModule || states[name] == State.RESOLVING) {
-                val start = path.indexOf(name).coerceAtLeast(0)
-                report(DiagnosticCode.MODULE_CYCLE, declaration, (path.drop(start) + name).joinToString(" -> "))
+            val cycleStart = onPath[name]
+            if (cycleStart != null) {
+                report(DiagnosticCode.MODULE_CYCLE, declaration, cyclePath(path, cycleStart, name))
                 continue
             }
             if (states[name] != null) continue
-            if (states.size >= ModuleLimits.MAX_MODULES) {
-                report(DiagnosticCode.MODULE_TOO_MANY, declaration, name, ModuleLimits.MAX_MODULES)
+            if (states.size >= options.maxModules) {
+                report(DiagnosticCode.MODULE_TOO_MANY, declaration, name, options.maxModules)
                 continue
             }
             val source = when (val lookup = resolver.resolve(name)) {
@@ -176,18 +207,42 @@ internal class ModuleCompiler private constructor(private val resolver: ModuleRe
                 states[name] = State.FAILED
                 continue
             }
+            // すべてのファイルの長さの合計の上限（第8.0.1段階。1 つのファイルの上限とは別に、プログラム全体の大きさを抑える）
+            if (source.length > options.maxTotalSourceLength - totalSourceLength) {
+                report(DiagnosticCode.MODULE_PROGRAM_TOO_LARGE, declaration, name, "characters", options.maxTotalSourceLength)
+                states[name] = State.FAILED
+                continue
+            }
+            val unit = load(name, source)
+            if (unit == null) {
+                // トークン数の合計の上限（第8.0.1段階）。構文解析の前に止め、AST を作らない
+                report(DiagnosticCode.MODULE_PROGRAM_TOO_LARGE, declaration, name, "tokens", options.maxTotalTokens)
+                states[name] = State.FAILED
+                continue
+            }
             states[name] = State.RESOLVING
             moduleSources[name] = source
-            val unit = load(name, source)
             val program = unit.program
-            if (program != null) {
-                checkContents(program)
-                visit(program.imports, path + name)
+            if (program == null) {
+                states[name] = State.DONE
+                resolved.add(unit)
+                continue
             }
-            states[name] = State.DONE
-            // import されるモジュールを先に並べる（決まった順にするため）
-            resolved.add(unit)
+            checkContents(program)
+            onPath[name] = path.size
+            path.add(name)
+            stack.add(Pending(unit, program.imports.iterator()))
         }
+    }
+
+    // 循環の経路 "a -> b -> a"。診断の引数は 64 単位までなので、長い経路は先頭から 64 単位を超えたところまでだけ作る
+    private fun cyclePath(path: List<String>, start: Int, name: String): String {
+        val text = StringBuilder()
+        for (index in start until path.size) {
+            text.append(path[index]).append(" -> ")
+            if (text.length > DiagnosticLimits.MAX_STRING_ARGUMENT_LENGTH) return text.toString()
+        }
+        return text.append(name).toString()
     }
 
     // モジュールに書けるのは import と関数だけ（第8.0段階）。トップレベルの文は実行の順番、クラスは型の名前の扱いが決まっていないため

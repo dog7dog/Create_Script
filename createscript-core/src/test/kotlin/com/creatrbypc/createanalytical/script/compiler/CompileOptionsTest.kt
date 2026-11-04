@@ -5,12 +5,9 @@ import com.creatrbypc.createanalytical.script.api.RunOptions
 import com.creatrbypc.createanalytical.script.api.ScriptRun
 import com.creatrbypc.createanalytical.script.diagnostic.DiagnosticArgument
 import com.creatrbypc.createanalytical.script.diagnostic.DiagnosticCode
-import com.creatrbypc.createanalytical.script.lexer.LexerLimits
-import com.creatrbypc.createanalytical.script.module.ModuleLimits
 import com.creatrbypc.createanalytical.script.module.ModuleLookup
 import com.creatrbypc.createanalytical.script.module.ModuleResolver
 import com.creatrbypc.createanalytical.script.vm.ProgramFingerprint
-import com.creatrbypc.createanalytical.script.vm.SnapshotVerifier
 import com.creatrbypc.createanalytical.script.vm.VmLimits
 import com.creatrbypc.createanalytical.script.vm.VmState
 import org.junit.jupiter.api.Assertions.assertArrayEquals
@@ -20,7 +17,6 @@ import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
-import java.lang.management.ManagementFactory
 
 // 第8.0.1段階: コンパイル時のプログラムの大きさの上限（CompileOptions）。EMBEDDED・既定は 4096 命令、STANDALONE は上限なし
 class CompileOptionsTest {
@@ -124,88 +120,5 @@ class CompileOptionsTest {
         finish(deepRun)
         assertEquals(VmState.ERROR, deepRun.state)
         assertEquals(DiagnosticCode.RUN_CALL_DEPTH_EXCEEDED, deepRun.error!!.code)
-    }
-
-    // 入力の上限（1 ファイル 4096 文字・2048 トークン・2048 ノード、モジュール 16 個）でほぼ最大の命令数になるプログラム。
-    // && を並べた式（1 ファイルで約 4000 命令）をエントリーと 16 のモジュールに置く。コンパイル（検証を含む）の時間と割り当てたメモリーを表示する
-    @Test
-    fun measureLargestProgramWithinInputLimits() {
-        val chain = (1..30).joinToString("&&") { "b" } + "\n"
-        // モジュールとしてエラー無くコンパイルできる範囲で、式の行をできるだけ多く並べる
-        fun fill(head: String, tail: String): String {
-            var count = 0
-            while (true) {
-                val next = head + chain.repeat(count + 1) + tail
-                if (next.length > LexerLimits.MAX_SOURCE_LENGTH) break
-                if (CreateScript.compile("import m\n", resolver(mapOf("m" to next)), "main", CompileOptions.STANDALONE).program == null) break
-                count++
-            }
-            return head + chain.repeat(count) + tail
-        }
-        val moduleSource = fill("fun f(b: Boolean) {\n", "}\n")
-        val names = (1..ModuleLimits.MAX_MODULES).map { "m$it" }
-        val sources = names.associateWith { moduleSource }
-        val entry = names.joinToString("") { "import $it\n" } + "val b = true\n" + names.joinToString("") { "$it.f(b)\n" }
-        val entrySource = entry + chain.repeat(20)
-        assertTrue(entrySource.length <= LexerLimits.MAX_SOURCE_LENGTH)
-
-        repeat(2) { CreateScript.compile(entrySource, resolver(sources), "main", CompileOptions.STANDALONE) }
-        val bean = ManagementFactory.getThreadMXBean() as com.sun.management.ThreadMXBean
-        val thread = Thread.currentThread().id
-        val bytesBefore = bean.getThreadAllocatedBytes(thread)
-        val start = System.nanoTime()
-        val result = CreateScript.compile(entrySource, resolver(sources), "main", CompileOptions.STANDALONE)
-        val millis = (System.nanoTime() - start) / 1_000_000.0
-        val allocated = (bean.getThreadAllocatedBytes(thread) - bytesBefore) / 1024 / 1024
-        val program = result.program ?: error("${result.diagnostics}")
-        val verifyStart = System.nanoTime()
-        assertNotNull(SnapshotVerifier.framesOf(program))
-        val verifyMillis = (System.nanoTime() - verifyStart) / 1_000_000.0
-        println(
-            "[8.0.1 measure] ${program.instructions.size} instructions from ${names.size + 1} files: compile ${"%.1f".format(millis)} ms " +
-                "($allocated MiB allocated), verification alone ${"%.1f".format(verifyMillis)} ms, steps limit ${SnapshotVerifier.maxSteps(program)}",
-        )
-        assertTrue(program.instructions.size > 10 * VmLimits.MAX_INSTRUCTIONS)
-        val embedded = CreateScript.compile(entrySource, resolver(sources), "main", CompileOptions.EMBEDDED)
-        assertNull(embedded.program)
-        assertTrue(embedded.diagnostics.any { it.diagnostic.code == DiagnosticCode.COMP_TOO_MANY_INSTRUCTIONS })
-        val run = CreateScript.start(program, RunOptions(4096, 0L))
-        finish(run)
-        assertEquals(VmState.HALTED, run.state)
-    }
-
-    // 検証に重い形（変数の多い関数の中の、多数の while ループ。合流と逆向きの分岐が多い）を入力の上限いっぱいに並べたもの。時間とメモリーを表示する
-    @Test
-    fun measureLoopHeavyProgram() {
-        val locals = (1..40).joinToString("") { "    var v$it = 0\n" }
-        val loop = "    while (v1 < 1) {\n        v1 = v1 + 1\n        v2 = v1\n    }\n"
-        fun fill(): String {
-            var count = 0
-            while (true) {
-                val next = "fun f() {\n" + locals + loop.repeat(count + 1) + "}\n"
-                if (next.length > LexerLimits.MAX_SOURCE_LENGTH) break
-                if (CreateScript.compile("import m\n", resolver(mapOf("m" to next)), "main", CompileOptions.STANDALONE).program == null) break
-                count++
-            }
-            return "fun f() {\n" + locals + loop.repeat(count) + "}\n"
-        }
-        val moduleSource = fill()
-        val names = (1..ModuleLimits.MAX_MODULES).map { "m$it" }
-        val entry = names.joinToString("") { "import $it\n" } + (1..60).joinToString("") { "var g$it = 0\n" } + names.joinToString("") { "$it.f()\n" }
-        val sources = names.associateWith { moduleSource }
-        repeat(2) { CreateScript.compile(entry, resolver(sources), "main", CompileOptions.STANDALONE) }
-        val bean = ManagementFactory.getThreadMXBean() as com.sun.management.ThreadMXBean
-        val thread = Thread.currentThread().id
-        val bytesBefore = bean.getThreadAllocatedBytes(thread)
-        val start = System.nanoTime()
-        val result = CreateScript.compile(entry, resolver(sources), "main", CompileOptions.STANDALONE)
-        val millis = (System.nanoTime() - start) / 1_000_000.0
-        val allocated = (bean.getThreadAllocatedBytes(thread) - bytesBefore) / 1024 / 1024
-        val program = result.program ?: error("${result.diagnostics}")
-        println("[8.0.1 measure] loop-heavy: ${program.instructions.size} instructions, ${program.variableCount} variables: compile ${"%.1f".format(millis)} ms ($allocated MiB allocated)")
-        assertTrue(program.instructions.size > VmLimits.MAX_INSTRUCTIONS)
-        val run = CreateScript.start(program, RunOptions(4096, 0L))
-        finish(run)
-        assertEquals(VmState.HALTED, run.state)
     }
 }

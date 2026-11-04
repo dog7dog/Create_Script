@@ -79,12 +79,15 @@ class CreateScriptCliTest {
         assertEquals("$file:1:14: error CS_SEM_TYPE_MISMATCH (\"Int\", \"String\")\n", result.err)
     }
 
-    // ソースの上限（4096 単位）は Core の字句解析が診断する
+    // ソースの上限は Core の字句解析が診断する。独立版のコマンドは CompileOptions.STANDALONE の 1,000,000 単位（第8.0.1段階。それまでは 4096）
     @Test
     fun sourceLimitIsReportedByCore() {
-        val result = cli("run", script("long.cscr", "//" + "a".repeat(5000)))
+        val fits = cli("run", script("long.cscr", "println(1)\n//" + "a".repeat(5000)))
+        assertEquals(ExitCode.OK, fits.code, fits.err)
+        assertEquals(listOf("1"), fits.lines)
+        val result = cli("run", script("longer.cscr", "//" + "a".repeat(CliLimits.MAX_SOURCE_LENGTH)))
         assertEquals(ExitCode.COMPILE_ERROR, result.code)
-        assertTrue(result.err.contains("error CS_LEX_SOURCE_TOO_LONG"), result.err)
+        assertTrue(result.err.contains("error CS_LEX_SOURCE_TOO_LONG (1000002, 1000000)"), result.err)
     }
 
     // ---- waitTicks と --max-ticks（論理 tick） ----

@@ -37,9 +37,11 @@ import com.creatrbypc.createanalytical.script.diagnostic.Diagnostic
 import com.creatrbypc.createanalytical.script.diagnostic.DiagnosticArgument
 import com.creatrbypc.createanalytical.script.diagnostic.DiagnosticCode
 import com.creatrbypc.createanalytical.script.diagnostic.DiagnosticCollector
+import com.creatrbypc.createanalytical.script.diagnostic.DiagnosticLimits
 import com.creatrbypc.createanalytical.script.diagnostic.DiagnosticPhase
 import com.creatrbypc.createanalytical.script.diagnostic.DiagnosticSeverity
 import com.creatrbypc.createanalytical.script.diagnostic.SourcePosition
+import com.creatrbypc.createanalytical.script.graph.Graphs
 import com.creatrbypc.createanalytical.script.parser.ParseResult
 import java.util.Collections
 import java.util.IdentityHashMap
@@ -368,7 +370,8 @@ data class SemanticResult(
 )
 
 // CreateScript の意味解析器。Minecraft に依存しない純粋な Kotlin で、1回の analyze ごとに新しいインスタンスを使う
-class SemanticAnalyzer private constructor(private val diagnostics: DiagnosticCollector) {
+// maxPropertyTypeChain は、型の注釈の無いプロパティの型を決めるために、別のプロパティの初期化式を先に解析する入れ子の上限（第8.0.1段階。null なら上限なし）
+class SemanticAnalyzer private constructor(private val diagnostics: DiagnosticCollector, private val maxPropertyTypeChain: Int?) {
     // スコープの並び（先頭がプログラム全体、末尾がいま解析しているブロック: 第3.7c段階）。名前は内側から外側へ探す。
     // 同じスコープ内の重複宣言はエラー、内側での同名の宣言（シャドーイング）は可（D4）
     private val scopes = ArrayList<HashMap<String, VariableSymbol>>().also { it.add(HashMap()) }
@@ -467,11 +470,18 @@ class SemanticAnalyzer private constructor(private val diagnostics: DiagnosticCo
     companion object {
         private const val MAX_NEGATED_LITERAL = 2_147_483_648L
 
+        // checkCalls が呼び出しの関係をたどって正確な変数を求める報告の数（表示されうる診断は、件数の上限 16 と、それに置き換えられうる警告 16 の分まで）
+        private const val EXACT_REPORTS = DiagnosticLimits.MAX_DIAGNOSTICS * 2
+
         // リストのメンバー（第3.10a段階）
         private const val SIZE = "size"
         private val LIST_METHODS = mapOf("add" to ListOperation.ADD, "removeAt" to ListOperation.REMOVE_AT, "clear" to ListOperation.CLEAR)
 
-        fun analyze(parseResult: ParseResult): SemanticResult {
+        fun analyze(parseResult: ParseResult): SemanticResult = analyze(parseResult, null)
+
+        // 型の注釈の無いプロパティの連鎖の上限を指定する（第8.0.1段階。CompileOptions.maxPropertyTypeChain から使う）
+        fun analyze(parseResult: ParseResult, maxPropertyTypeChain: Int?): SemanticResult {
+            require(maxPropertyTypeChain == null || maxPropertyTypeChain > 0) { "maxPropertyTypeChain must be positive or null: $maxPropertyTypeChain" }
             val diagnostics = DiagnosticCollector()
             diagnostics.merge(parseResult.diagnostics, parseResult.diagnosticsTruncated, parseResult.hasErrors)
             // モジュールの解決（ModuleCompiler）を通らないコンパイルでは import を使えない（第8.0段階。ModuleCompiler は import を除いた AST を渡す）
@@ -485,7 +495,7 @@ class SemanticAnalyzer private constructor(private val diagnostics: DiagnosticCo
                 return SemanticResult(null, diagnostics.diagnostics, diagnostics.isTruncated, diagnostics.hasErrors)
             }
             // 構文エラーがあれば AST が無いため、意味解析しない（A8）
-            val analyzed = parseResult.program?.let { SemanticAnalyzer(diagnostics).run(it) }
+            val analyzed = parseResult.program?.let { SemanticAnalyzer(diagnostics, maxPropertyTypeChain).run(it) }
             return SemanticResult(
                 analyzed.takeUnless { diagnostics.hasErrors },
                 diagnostics.diagnostics,
@@ -640,6 +650,14 @@ class SemanticAnalyzer private constructor(private val diagnostics: DiagnosticCo
     // トップレベルの文より前（スコープは空のトップレベルだけ）に解析するため、ブロックのスコープは無い
     private fun analyzeInitializer(property: Property) {
         if (property.state != InitializerState.PENDING) return
+        // 初期化式の解析の入れ子（第8.0.1段階）。再帰の深さが JVM のスタックを使い切らないよう、上限を超えたら型を決めずにエラーにする（型の注釈を書けば連鎖しない）
+        val limit = maxPropertyTypeChain
+        if (limit != null && initializerDepth >= limit) {
+            reportError(DiagnosticCode.SEM_PROPERTY_TYPE_CHAIN_TOO_DEEP, property.declaration.namePosition, property.declaration.name, limit)
+            property.state = InitializerState.DONE
+            return
+        }
+        initializerDepth++
         property.state = InitializerState.ANALYZING
         val saved = Context(currentClass, initializing, currentRoutine, currentFunction, conditionalDepth)
         currentClass = property.owner
@@ -660,7 +678,11 @@ class SemanticAnalyzer private constructor(private val diagnostics: DiagnosticCo
             reportTypeMismatch(property.declaration.initializer.position, annotated, type)
         }
         property.state = InitializerState.DONE
+        initializerDepth--
     }
+
+    // いま解析している初期化式の入れ子の数（第8.0.1段階）
+    private var initializerDepth = 0
 
     // プロパティの型。型の注釈の無いプロパティは、初期化式をまだ解析していなければ先に解析する。その初期化式の解析中に（他のインスタンスを通して）
     // 自分の型が必要になった場合は、型が決まらない（位置は依存が循環した参照）
@@ -685,16 +707,16 @@ class SemanticAnalyzer private constructor(private val diagnostics: DiagnosticCo
 
     // プロパティの初期化式で必ず（&& || の右辺以外で）生成するクラスをたどって自分に戻るクラスは、生成が終わらない（第3.9b段階）。
     // 関数・メソッドを通した生成は条件によるため対象外（実行時に CS_RUN_CALL_DEPTH_EXCEEDED で止まる）
+    // 第8.0.1段階: クラスごとに生成の関係をたどる（クラスの数の 2 乗の手間）代わりに、強連結成分で「生成をたどって自分に戻る」（2 つ以上のクラスの成分に属するか、
+    // 自分自身を生成する）クラスを求める。報告の順・内容は第8.0段階までと同じ
     private fun checkConstructionCycles(program: Program) {
-        for (declaration in program.classes) {
-            val visited = Collections.newSetFromMap(IdentityHashMap<ClassDeclaration, Boolean>())
-            val pending = ArrayList(constructionEdges[declaration].orEmpty())
-            var cyclic = false
-            while (pending.isNotEmpty() && !cyclic) {
-                val next = pending.removeAt(pending.lastIndex)
-                if (next === declaration) cyclic = true else if (visited.add(next)) pending.addAll(constructionEdges[next].orEmpty())
-            }
-            if (cyclic) reportError(DiagnosticCode.SEM_CYCLIC_CONSTRUCTION, declaration.namePosition, declaration.name)
+        val indices = IdentityHashMap<ClassDeclaration, Int>()
+        program.classes.forEachIndexed { index, declaration -> indices[declaration] = index }
+        val edges = program.classes.map { declaration -> constructionEdges[declaration].orEmpty().mapNotNull { indices[it] }.distinct().toIntArray() }
+        val component = Graphs.stronglyConnectedComponents(edges.size, edges::get)
+        val cyclic = Graphs.onCycle(edges.size, edges::get, component)
+        program.classes.forEachIndexed { index, declaration ->
+            if (cyclic[index]) reportError(DiagnosticCode.SEM_CYCLIC_CONSTRUCTION, declaration.namePosition, declaration.name)
         }
     }
 
@@ -762,23 +784,63 @@ class SemanticAnalyzer private constructor(private val diagnostics: DiagnosticCo
     // トップレベルのスコープの宣言は分岐・ループの中に無いため、前の文で宣言された変数は必ず初期化されている。
     // 再帰（第3.8e段階）で呼び出しの関係が循環するため、呼び出す手続きを通して使う変数は、集合が変わらなくなるまで広げて求める
     // （集合は増えるだけで、手続きの数 × 変数の数 回以内に必ず止まる）
+    // 第8.0.1段階: 集合を広げる繰り返し（手続きの数の 2 乗の手間になりうる）の代わりに、呼び出しの関係の強連結成分を行き先が先の順にたどり、
+    // 手続きごとに「使う変数のうち最も後の文で宣言されたものの文の番号」（latest）を求める。呼び出しを含む文より前の文で宣言済みでない変数を使う
+    // ＝ latest がその文の番号以上。報告する変数は、第8.0段階までと同じく、そのうち最も前で宣言されたもの（宣言の順は文の番号の順）。
+    // 手間を抑えるため、正確な変数は最初の EXACT_REPORTS 件だけ呼び出しの関係をたどって求める（それより後の報告は、診断の件数の上限で表示されない。
+    // 表示されない報告の変数は、使う変数のうち最も後の文で宣言されたもの）
     private fun checkCalls(program: Program) {
         val routines = routinesOf(program)
-        val uses = IdentityHashMap<CallableDeclaration, MutableSet<VariableSymbol>>()
-        routines.forEach { uses[it] = HashSet(globalUses[it].orEmpty()) }
-        var changed = true
-        while (changed) {
-            changed = false
-            for (routine in routines) {
-                for (callee in callsIn[routine].orEmpty()) {
-                    if (uses.getValue(routine).addAll(uses.getValue(callee))) changed = true
-                }
-            }
+        val indices = IdentityHashMap<CallableDeclaration, Int>()
+        routines.forEachIndexed { index, routine -> indices[routine] = index }
+        val callees = routines.map { routine -> callsIn[routine].orEmpty().map { indices.getValue(it) }.distinct().toIntArray() }
+        val component = Graphs.stronglyConnectedComponents(routines.size, callees::get)
+        val count = (component.maxOrNull() ?: -1) + 1
+        val members = Array(count) { ArrayList<Int>() }
+        routines.indices.forEach { members[component[it]].add(it) }
+        val latestSymbol = arrayOfNulls<VariableSymbol>(count)
+        fun later(a: VariableSymbol?, b: VariableSymbol?): VariableSymbol? = when {
+            a == null -> b
+            b == null -> a
+            globalDeclarationIndices.getValue(b) > globalDeclarationIndices.getValue(a) -> b
+            else -> a
         }
+        for (c in 0 until count) {
+            var latest: VariableSymbol? = null
+            for (member in members[c]) {
+                globalUses[routines[member]]?.forEach { latest = later(latest, it) }
+                for (callee in callees[member]) if (component[callee] != c) latest = later(latest, latestSymbol[component[callee]])
+            }
+            latestSymbol[c] = latest
+        }
+        var exact = 0
         for (call in topLevelCalls) {
-            val late = uses.getValue(call.routine).filter { globalDeclarationIndices.getValue(it) >= call.index }.minByOrNull { it.declarationPosition.offset } ?: continue
+            val routine = indices.getValue(call.routine)
+            val latest = latestSymbol[component[routine]] ?: continue
+            if (globalDeclarationIndices.getValue(latest) < call.index) continue
+            val late = if (exact++ < EXACT_REPORTS) earliestLateUse(routines, callees, routine, call.index) else latest
             reportError(DiagnosticCode.SEM_CALL_BEFORE_VARIABLE_DECLARATION, call.position, call.name, late.name)
         }
+    }
+
+    // 手続き start から呼び出しをたどって使う変数のうち、番号 index 以上の文で宣言された、最も前のもの（あることは確かめ済み）
+    private fun earliestLateUse(routines: List<CallableDeclaration>, callees: List<IntArray>, start: Int, index: Int): VariableSymbol {
+        val visited = BooleanArray(routines.size)
+        val pending = arrayListOf(start)
+        visited[start] = true
+        var best: VariableSymbol? = null
+        while (pending.isNotEmpty()) {
+            val current = pending.removeAt(pending.lastIndex)
+            globalUses[routines[current]]?.forEach { symbol ->
+                val declared = globalDeclarationIndices.getValue(symbol)
+                if (declared >= index && (best == null || declared < globalDeclarationIndices.getValue(best!!))) best = symbol
+            }
+            for (callee in callees[current]) if (!visited[callee]) {
+                visited[callee] = true
+                pending.add(callee)
+            }
+        }
+        return best!!
     }
 
     // 手続きの呼び出しを記録する（トップレベルの文からの呼び出しは、その文の番号とともに）

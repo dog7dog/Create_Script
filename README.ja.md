@@ -39,8 +39,9 @@ println(fib(10))   // 55
 - ローカルのモジュール（開発中。v0.1.0-alpha には入っていません）：`import geometry` と書くと、同じプロジェクトの `geometry.cscr` の関数を `geometry.square(5)` の形で使えます。
   ファイルをまたいで型を検査します。モジュールは自分のプロジェクトのディレクトリからだけ読みます。パッケージ管理やダウンロードの機能は、
   まだありません（[Modules](docs/language.md#modules-local-import)）。
-- 安全な実行：ソースの長さ・スタック・呼び出しの深さ・オブジェクト・リストの要素に固定の上限があり、1 tick の命令の数も決まっています。
-  プログラムの大きさ（命令の数）は、埋め込み先では 4096 までです（`createscript` コマンドでは上限なし。開発中。[Program size](docs/language.md#program-size)）。
+- 安全な実行：スタック・呼び出しの深さ・オブジェクト・リストの要素に固定の上限があり、1 tick の命令の数も決まっています。
+  入力とプログラムの大きさの上限はホストが選びます。埋め込み先では小さく（4096 文字・4096 命令）、`createscript` コマンドでは大きくなります
+  （1 ファイル 1,000,000 文字・モジュール 1024 個・命令数の固定の上限なし。開発中。[Limits and safety](docs/language.md#limits-and-safety)）。
   ファイル・ネットワーク・OS・JVM には触れられません。
 - 診断は、決まったコード（`CS_SEM_TYPE_MISMATCH` など）と行・列で報告します。
 
@@ -89,8 +90,8 @@ result.diagnostics.forEach { println("${it.module ?: "main"}: ${it.diagnostic.co
 val program = result.program ?: error("compile failed")
 ```
 
-`CreateScript.compile(source, CompileOptions.STANDALONE)` は、4096 命令の上限なしでコンパイルします（開発中。v0.1.0-alpha には入っていません）。
-`CreateScript.compile(source)` と `CompileOptions.EMBEDDED` は、これまでどおり 4096 命令までです。実行時の上限は、どちらでも変わりません。
+`CreateScript.compile(source, CompileOptions.STANDALONE)` は、独立版の大きな上限でコンパイルします（開発中。v0.1.0-alpha には入っていません）。
+`CreateScript.compile(source)` と `CompileOptions.EMBEDDED` は、これまでどおりの小さな上限（4096 文字・4096 命令など）です。実行時の上限は、どちらでも変わりません。
 
 `CreateScript.compile(source)` は、これまでと同じです。`import` のあるプログラムには `CS_MODULE_IMPORT_UNAVAILABLE` を報告します。
 実行時エラーがどのファイルで起きたかは、`result.locate(run.error!!)` で分かります。
