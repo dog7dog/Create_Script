@@ -154,7 +154,17 @@ identifier: an ASCII letter or `_` first, then letters, digits and `_`, not only
 a Kotlin hard keyword and not a built-in function that cannot be redefined (`println`, `waitTicks`, `listOf`,
 `mutableListOf`). **Package names and module names are separate:** the package `vector-math` may export the module
 `vector_math`, and nothing converts one into the other. A library's module `name` lives in the file
-`modules/name.cscr`; other files in `modules/` are modules that only the package itself can import (S8.2 Phase 4).
+`modules/name.cscr`.
+
+### Public and private modules
+
+- **Public modules** are the ones listed in `modules`. Projects that depend on the package can `import` them.
+- **Private modules** are the other `.cscr` files in `modules/`. Only the package's own modules are meant to
+  import them; a project that depends on the package cannot. This visibility rule is enforced from S8.2 Phase 4
+  (until then nothing installs packages, so nothing imports them).
+- **Private does not mean secret.** Private modules are in the package archive like the public ones, so anyone
+  who downloads the package can read their source. "Private" only limits what other packages and projects can
+  `import`; it is not a way to hide code, keys or data.
 
 ## Package archives: `createscript-package.zip`
 
@@ -203,6 +213,61 @@ entry; both are accepted):
 
 The files of a package are only source code and documents. Neither the archive nor its manifest can give a
 program more access to the operating system, the network or the JVM than any other CreateScript program has.
+
+## Downloading package archives (S8.2 Phase 2)
+
+> **In development.** The download, the checks and the cache exist as a library (`createscript-install`); no
+> command uses them yet. Installing (unpacking, the lock file and dependencies) comes in Phase 3.
+
+For a dependency `{ "version": "1.2.0", "source": "github:owner/repo" }` the archive is
+
+```text
+https://github.com/owner/repo/releases/download/v1.2.0/createscript-package.zip
+```
+
+The URL is built from the name, so downloading needs no GitHub API request and is not limited by the API rate
+limit.
+
+### Connections
+
+- Only HTTPS to `github.com`, `api.github.com` and the hosts that GitHub redirects release downloads to
+  (`release-assets.githubusercontent.com`; `objects.githubusercontent.com` is also allowed), on port 443. The list is
+  fixed in the code: no option, environment variable or file can change where packages are downloaded from.
+- Redirects are followed by CreateScript itself (at most 5), and every location is checked against the list. URLs
+  with user information (`user@host`), other ports, IP addresses (also decimal and hexadecimal forms) and
+  fragments are refused.
+- System proxy settings are not used (proxies are planned for S8.3).
+- A GitHub token is optional and read only from the environment variable `CREATESCRIPT_GITHUB_TOKEN`. It is sent
+  only to `api.github.com` (never with downloads or to redirect locations) and never printed; messages also leave
+  out the query part of URLs, which for release downloads contains a signature.
+- Limits: 10 seconds to connect, 60 seconds for each attempt including the whole body, 32 MiB for an archive and
+  4 MiB for an API response, counted in bytes actually received (a larger `Content-Length` is refused before
+  reading). A stalled connection cannot hold an attempt longer than 60 seconds.
+- Retries: up to 3 more attempts after network errors, timeouts, HTTP 5xx and 429, waiting 1, 2 and 4 seconds, or as
+  long as `Retry-After` or the rate limit reset says (when that is more than 60 seconds, CreateScript gives up and
+  suggests a token). HTTP 404, 401 and other 403 responses are not retried.
+
+### Trust
+
+| What | Trusted party | Shows | Does not show |
+|---|---|---|---|
+| The SHA-256 in `createscript.lock` | your project | the archive is exactly the one recorded before; **any other archive is always refused** | whether the recorded one was good |
+| First download without a lock entry (TOFU) | HTTPS and whoever controls the repository at that time | the archive was not changed on the way | who wrote it, or that the account is not compromised |
+| GitHub's `digest` for the asset (from the API) | GitHub, the same party as the download | the file was not damaged or swapped between GitHub and you; **a different value is refused** | anything about the author. If the API cannot be used (rate limit, network, no digest), the download is reported as **unverified** and the reason is given |
+| `immutable` of the release (from the API) | GitHub | the release assets cannot be replaced after publishing | whether they were good when published |
+| The cache | nobody | — | it is read only when the lock file gives a SHA-256, and that SHA-256 is checked every time |
+
+Proving who published a package (signatures, attestations) is planned for S8.3, and reviewed hashes in an official
+registry for S8.4.
+
+### Cache
+
+Archives are stored by their SHA-256 in `archives/sha256/<sha256>.zip` under `CREATESCRIPT_CACHE_DIR`, or by
+default `~/Library/Caches/CreateScript` on macOS and `$XDG_CACHE_HOME/createscript` or `~/.cache/createscript`
+elsewhere. Directories that CreateScript creates there are private to the user (mode 0700). The cache location
+itself may be a symbolic link (to another disk, for example), but `archives`, `sha256` and the entries must not be:
+links and entries whose contents do not match their name are not used, deleted or replaced, and the download goes
+on without the cache with a warning. Nothing in the cache is ever run.
 
 ## `createscript.lock` (lock version 1)
 
@@ -300,11 +365,13 @@ know it; we did not run them for S8.1.
   their rules, the canonical form and the consistency checks, and the package archive reader and writer
   (`PackageArchives`). It uses only the Kotlin standard library and never touches files or the network; it takes
   bytes and returns values and diagnostics.
+- `createscript-install` (S8.2 Phase 2): downloads package archives from GitHub Releases with the JDK HTTP client,
+  checks their SHA-256 and GitHub's digest, and keeps the cache. It never runs what it downloads.
 - `createscript-cli`: reads and writes the files, checks the entry file on disk, and implements `init`,
   `manifest check`, `lock check` and `pack`.
 - `createscript-core` (the language, compiler and virtual machine) is unchanged.
 
-## Planned: packages on GitHub Releases (S8.2 and later)
+## Planned: installing packages (S8.2 Phase 3 and later)
 
 This is not implemented. It is written down so that the lock file format fits it.
 

@@ -17,5 +17,8 @@ include 'createscript-core'
 // Project files (createscript.json and createscript.lock): JSON, validation and canonical form, without file access (a library)
 include 'createscript-project'
 
+// Downloading packages from GitHub Releases and the archive cache (S8.2 Phase 2; a library)
+include 'createscript-install'
+
 // The createscript command: runs .cscr files and the interactive mode (REPL)
 include 'createscript-cli'
