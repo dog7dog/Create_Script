@@ -41,8 +41,8 @@ println(fib(10))   // 55
   ファイルをまたいで型を検査します。モジュールは自分のプロジェクトのディレクトリからだけ読みます。パッケージ管理やダウンロードの機能は、
   まだありません（[Modules](docs/language.md#modules-local-import)）。
 - プロジェクトのファイル（開発中。v0.1.0-alpha には入っていません）：`createscript init` で、マニフェスト `createscript.json` のあるプロジェクトを作れます。
-  `createscript manifest check`・`createscript lock check` で、マニフェストとロックファイルを確かめます。パッケージのダウンロードやインストールは、
-  まだできません（[Project files](docs/packages.md)）。
+  `createscript manifest check`・`createscript lock check` で、マニフェストとロックファイルを確かめます。`createscript install github:owner/repo@v1.2.0` で、
+  GitHub Releases からパッケージと依存を SHA-256 を確かめてインストールできます。インストールしたパッケージを import することは、まだできません（[Project files](docs/packages.md)）。
 - 安全な実行：スタック・呼び出しの深さ・オブジェクト・リストの要素に固定の上限があり、1 tick の命令の数も決まっています。
   入力とプログラムの大きさの上限はホストが選びます。埋め込み先では小さく（4096 文字・4096 命令）、`createscript` コマンドでは大きくなります
   （1 ファイル 1,000,000 文字・モジュール 1024 個・命令数の固定の上限なし。開発中。[Limits and safety](docs/language.md#limits-and-safety)）。

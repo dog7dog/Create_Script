@@ -48,7 +48,8 @@ println(fib(10))   // 55
   there is no package manager or download yet (see [Modules](docs/language.md#modules-local-import)).
 - Project files (in development, not in v0.1.0-alpha): `createscript init` creates a project with a
   `createscript.json` manifest; `createscript manifest check` and `createscript lock check` check the manifest
-  and the lock file. Packages cannot be downloaded or installed yet (see [Project files](docs/packages.md)).
+  and the lock file; `createscript install github:owner/repo@v1.2.0` installs a package and its dependencies from
+  GitHub Releases with SHA-256 checks. Programs cannot import installed packages yet (see [Project files](docs/packages.md)).
 - A safe execution model: fixed limits on stack, call depth, objects and list elements; an instruction budget
   per tick; input and program size limits chosen by the host: small for embedding hosts (4096 characters and
   4096 instructions), large for the `createscript` command (1,000,000 characters per file, 1024 modules, no

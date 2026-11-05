@@ -8,7 +8,7 @@ import com.creatrbypc.createanalytical.project.ProjectRules
 // - 無ければ、HTTPS で受け取ったものの SHA-256 を記録する（TOFU: 初めて使うときに信頼する。作者の真正性の証明ではない）
 // - GitHub API の digest は、GitHub がサーバーで計算した値（ダウンロードと同じ相手）。違えば拒否し、得られなければ「未検証」と示す
 // - キャッシュは信頼しない。expectedSha256 があるときだけ使い、読むたびに SHA-256 を確かめる
-class PackageFetcher(private val releases: GitHubReleases, private val cache: ArchiveCache?) {
+class PackageFetcher(private val releases: ReleaseStore, private val cache: ArchiveCache?) {
     // GitHub の digest と比べた結果
     sealed interface DigestCheck {
         data object Matched : DigestCheck
@@ -46,7 +46,8 @@ class PackageFetcher(private val releases: GitHubReleases, private val cache: Ar
                 ArchiveCache.Lookup.Miss -> {}
             }
         }
-        if (offline) throw FetchFailure.Offline("$source $version is not in the cache" + if (expectedSha256 == null) " (and has no SHA-256 in the lock file)" else "")
+        // （source・version は呼び出し側が添える。キャッシュを使わなかった理由があれば、それも示す）
+        if (offline) throw FetchFailure.Offline("not in the cache" + (if (expectedSha256 == null) " (and the lock file has no SHA-256 for it)" else "") + warnings.joinToString("") { "; $it" })
         val bytes = releases.download(source, version)
         val sha256 = GitHubReleases.sha256Hex(bytes)
         if (expectedSha256 != null && sha256 != expectedSha256) throw FetchFailure.HashMismatch(expectedSha256, sha256)

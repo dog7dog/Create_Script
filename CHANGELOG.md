@@ -41,10 +41,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   (`createscript-package.zip`): a strict ZIP reader (layout, no ZIP64, encryption, data descriptors, links or
   special files, size, count and ratio limits, CRC checks) and a deterministic writer. `createscript pack` makes a
   package archive from a library project. Schema version 1 is unchanged.
+- `createscript install [github:owner/repo@v1.2.0] [directory] [--offline]`: installs a package and its
+  dependencies (exact versions, followed depth first in name order; conflicts, cycles and more than 256 packages,
+  a depth of 32 or 128 MiB are errors) into `.createscript/packages/<name>/<version>/`, adds the package to
+  `createscript.json` (only that entry changes) and writes `createscript.lock`. SHA-256 values in the lock file are
+  always enforced; `--offline` uses only the cache. A journal (`.createscript/transaction.json`) and
+  `.createscript/install.lock` make the update of several files safe: a failed or interrupted installation is
+  finished or undone, files changed by another program are never overwritten or removed, and a damaged journal
+  stops with instructions. New exit codes 69 and 75. `manifest check`, `lock check` and `pack` stop while an
+  installation is interrupted. Installed packages cannot be imported yet.
 - `createscript-install`: downloading package archives from GitHub Releases with the JDK HTTP client (HTTPS to fixed
   GitHub hosts only, checked redirects, the token only for `api.github.com`, size and time limits, retries and rate
   limits), SHA-256 checks against the lock file and GitHub's asset digest, and a cache keyed by SHA-256 that is
-  checked on every use. Not used by a command yet. The bundled Java runtime gains `java.net.http` and
+  checked on every use. The bundled Java runtime gains `java.net.http` and
   `jdk.crypto.ec` (for TLS).
 - Core: `ast.Program` keeps the JVM signatures of v0.1.0-alpha (the constructor and `copy` with three lists, as
   hidden members), so code compiled against v0.1.0-alpha still runs; a regression test runs such code.

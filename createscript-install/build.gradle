@@ -1,4 +1,5 @@
-// CreateScript Install：GitHub Releases からのパッケージアーカイブのダウンロード、SHA-256 の照合、キャッシュ（S8.2 Phase 2）。
+// CreateScript Install：GitHub Releases からのパッケージアーカイブのダウンロード、SHA-256 の照合、キャッシュ（S8.2 Phase 2）、
+// 依存の解決とジャーナルによるインストール（S8.2 Phase 3）。
 // JDK の HttpClient だけを使い、ほかのライブラリに依存しない。ダウンロードしたものを実行しない。Minecraft・NeoForge・Create・Kotlin for Forge に依存しない
 plugins {
     id 'java-library'

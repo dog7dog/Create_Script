@@ -83,7 +83,7 @@ createscript --version
 - モジュールの中の診断と実行時エラーは、そのモジュールのファイルの名前・行・列で表示します。
 - すべてのファイルを 1 つのプログラムにまとめて 1 台の VM で実行するので、`--instructions-per-tick`・`--max-ticks`・言語の上限は、プログラム全体に働きます。
 - 対話モードでは `import` を使えません（`CS_MODULE_IMPORT_UNAVAILABLE`）。
-- パッケージ管理・ダウンロード・`createscript install` は、まだありません。言語の規則は [docs/language.md](../docs/language.md#modules-local-import)（英語）にあります。
+- `createscript install`（7.1）でインストールしたパッケージは、まだ import できません（S8.2 Phase 4）。言語の規則は [docs/language.md](../docs/language.md#modules-local-import)（英語）にあります。
 
 ## 5.1 対話モード（REPL）
 
@@ -240,20 +240,29 @@ createscript-cli/samples/infinite_loop.cscr: stopped after 1000 ticks (--max-tic
 | 64 | 使い方の誤り（コマンドやオプションの誤り、値の誤りや範囲外、`.cscr` でないファイル） |
 | 65 | ファイルの内容を扱えない（UTF-8 でない、大きすぎる。1,000,000 文字を超え得る 3,000,000 バイト超は読まずに拒否する。v0.1.0-alpha では 4096 文字・12288 バイト） |
 | 66 | ファイルがない、通常のファイルでない、読めない |
-| 73 | `createscript init` がファイルを作れない（既にある、書けない。S8.1） |
+| 69 | `createscript install` が通信できない（`--offline` でキャッシュに無いときも。S8.2） |
+| 73 | `createscript init` がファイルを作れない（既にある、書けない。S8.1）。`createscript install` が、想定と違う状態のファイル（シンボリックリンク、ほかのプログラムが変えたファイル、続行も取り消しもできない中断）を見つけた（S8.2） |
+| 75 | `createscript install`: 同じプロジェクトで、ほかのインストールが動いている（S8.2） |
 
-64〜66・73 は `sysexits.h` の EX_USAGE・EX_DATAERR・EX_NOINPUT・EX_CANTCREAT と同じ番号です。
+64〜66・69・73・75 は `sysexits.h` の EX_USAGE・EX_DATAERR・EX_NOINPUT・EX_UNAVAILABLE・EX_CANTCREAT・EX_TEMPFAIL と同じ番号です。
 
 ### 7.1 プロジェクトのファイル（S8.1。開発中）
 
 `createscript.json`（マニフェスト）と `createscript.lock`（ロックファイル）を扱うコマンドです。形式は [docs/packages.md](../docs/packages.md)（英語）にあります。
-パッケージのダウンロード・インストール・依存の解決は、まだありません。`run` は、これらのファイルを読みません。
+`run` は、これらのファイルを読みません。
 
 ```text
 $ createscript init my-app                 # createscript.json と src/main.cscr を作る（名前の既定はディレクトリ名。--name で指定）
 $ createscript manifest check my-app       # マニフェストと、エントリーのファイルを確かめる
 $ createscript lock check my-app           # ロックファイルを、マニフェストと照らして確かめる（依存が無ければ不要）
+$ createscript install github:owner/vector-math@v1.2.0 my-app   # パッケージと依存をインストールし、createscript.json に足す（S8.2）
+$ createscript install my-app              # createscript.json・createscript.lock どおりにインストールする
+$ createscript install --offline my-app    # 通信しない（キャッシュだけを使う）
 ```
+
+- `install` は、GitHub Releases の `createscript-package.zip` を取得し、ロックファイルの SHA-256 と違うものは必ず拒否します。初回は、取得したものの SHA-256 を記録します（TOFU）。
+  ダウンロードしたものは実行しません。`.createscript/packages/<名前>/<版>/` に置き、`createscript.json`・`createscript.lock` をジャーナルを使って安全に書き換えます。
+  途中で止まったら、次の `install` が続きを行うか、取り消します（ほかのプログラムが変えたファイルは、上書きも削除もしません）。詳しくは [docs/packages.md](../docs/packages.md#installing-packages-s82-phase-3)（英語）にあります。
 
 - `init` は、既にあるファイルを上書きしません（どちらかがあれば何も作らず、終了コード 73）。途中で失敗したら、今回作ったファイル・ディレクトリだけを消します。
 - 診断は `createscript.json:行:列: error CS_PKG_… (引数)` の形で、終了コードは 65 です。ファイルが無いときは 66 です。

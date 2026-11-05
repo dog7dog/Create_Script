@@ -27,8 +27,14 @@ object ExitCode {
     const val INVALID_INPUT = 65
     const val NO_INPUT = 66
 
+    // 通信できない（sysexits.h の EX_UNAVAILABLE。createscript install: S8.2）
+    const val UNAVAILABLE = 69
+
     // ファイルを作れない（既にある・書けない: sysexits.h の EX_CANTCREAT。createscript init: S8.1）
     const val CANNOT_CREATE = 73
+
+    // ほかのインストールが動いている（sysexits.h の EX_TEMPFAIL。createscript install: S8.2）
+    const val TEMPORARY_FAILURE = 75
 }
 
 // CLI の設定の既定値と上限（README に記載）。Core の RunOptions とは別に、CLI だけで管理する
@@ -78,6 +84,11 @@ class CreateScriptCli(private val out: PrintStream, private val err: PrintStream
                 }
                 "run" -> return run(parseRun(args.drop(1)))
                 "init", "manifest", "lock", "pack" -> return project(args)
+                "install" -> return try {
+                    InstallCommands(out, err).install(args.drop(1))
+                } catch (error: InstallCommands.Usage) {
+                    throw UsageError(error.message ?: "invalid arguments")
+                }
                 else -> throw UsageError(if (args[0].startsWith("-")) "unknown option: ${args[0]}" else "unknown command: ${args[0]}")
             }
         } catch (error: UsageError) {
@@ -279,6 +290,8 @@ class CreateScriptCli(private val out: PrintStream, private val err: PrintStream
             |  createscript manifest check [directory]       check createscript.json
             |  createscript lock check [directory]           check createscript.lock against createscript.json
             |  createscript pack [directory] [--output <file>]  make createscript-package.zip from a library
+            |  createscript install [github:<owner>/<repo>@v<version>] [directory] [--offline]
+            |                                    install the dependencies (and add the given package to createscript.json)
             |  createscript --help
             |  createscript --version
             |
@@ -294,7 +307,8 @@ class CreateScriptCli(private val out: PrintStream, private val err: PrintStream
             |Exit codes:
             |  0 finished, 1 runtime error, 2 compile error, 3 --max-ticks reached,
             |  64 usage error, 65 invalid input file, 66 input file not found or unreadable,
-            |  73 cannot create a file (init)
+            |  69 network unavailable (install), 73 cannot create a file or safely change one (init, pack, install),
+            |  75 another install is running
             |""".trimMargin()
 
         // file:line:column: error CS_XXX (arguments)

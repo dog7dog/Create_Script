@@ -79,7 +79,8 @@ $ createscript run my-project/apps/tool.cscr --project-root my-project
   `--max-ticks` and the language limits apply to the whole program.
 - A file without `import` is compiled exactly as before.
 
-There is no package manager yet: `createscript` does not download modules and has no `install` command.
+`createscript install` (in development) downloads and installs packages into `.createscript/packages/`, but
+`createscript run` does not read them yet (S8.2 Phase 4).
 
 ## Project files
 
@@ -92,8 +93,10 @@ In development (not in v0.1.0-alpha). See [Project files](packages.md) for the f
 - `createscript lock check [directory]` checks `createscript.lock` against `createscript.json`.
 - `createscript pack [directory] [--output <file>]` makes `createscript-package.zip` from a library project
   (schema version 2). The same files always give the same bytes; an existing file is never overwritten.
+- `createscript install [github:<owner>/<repo>@v<version>] [directory] [--offline]` installs the dependencies
+  and, with a package, adds it to `createscript.json` (see [Installing packages](packages.md#installing-packages-s82-phase-3)).
 - The directory defaults to the current directory. The checks only read files. `createscript run` does not read
-  these files yet, and nothing is downloaded or installed.
+  these files yet.
 
 | Exit code | Meaning |
 |---|---|
@@ -101,7 +104,9 @@ In development (not in v0.1.0-alpha). See [Project files](packages.md) for the f
 | 64 | Usage error |
 | 65 | A problem in `createscript.json` or `createscript.lock` (shown as `file:line:column: error CS_PKG_…`) |
 | 66 | `createscript.json` or the directory does not exist, or a file cannot be read |
-| 73 | `init` cannot create the files (one exists already, or writing failed) |
+| 69 | `install`: the network is unavailable, or a package is not in the cache with `--offline` |
+| 73 | `init` cannot create the files (one exists already, or writing failed); `install` finds files in an unexpected state (symbolic links, changed files, an interrupted installation that cannot be finished or undone) |
+| 75 | `install`: another installation is running in the project |
 
 ## Interactive mode (REPL)
 

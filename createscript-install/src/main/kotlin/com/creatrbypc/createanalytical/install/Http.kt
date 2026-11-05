@@ -108,15 +108,20 @@ internal class HttpGetter(
             if (token != null && endpoints.mayCarryToken(current)) {
                 builder.header("Authorization", "Bearer ${token.value}").header("X-GitHub-Api-Version", "2022-11-28")
             }
-            val future = client.sendAsync(builder.build()) { info -> CappedBody(maxBytes, info.headers().firstValueAsLong("Content-Length").orElse(-1)) }
+            // 本文の受け取り側（上限を超えたことを記録する）。受け取りを取り消すと、HTTP/2 では HttpClient 自身が IOException で終わることがあり、
+            // その場合も上限を超えたことを TooLarge として報告する（再試行しない。実際の GitHub の配信先で確かめた: S8.2 Phase 3）
+            val body = java.util.concurrent.atomic.AtomicReference<CappedBody?>()
+            val future = client.sendAsync(builder.build()) { info -> CappedBody(maxBytes, info.headers().firstValueAsLong("Content-Length").orElse(-1)).also(body::set) }
             val remaining = deadline - clock()
             val response = try {
                 if (remaining <= 0) throw TimeoutException()
                 future.get(remaining, TimeUnit.MILLISECONDS)
             } catch (timeout: TimeoutException) {
                 future.cancel(true)
+                body.get()?.tooLarge?.let { throw it }
                 throw Retry(null, FetchFailure.Network("timed out after ${limits.totalTimeout.toMillis()} ms: ${shown(current)}"))
             } catch (error: ExecutionException) {
+                body.get()?.tooLarge?.let { throw it }
                 val cause = error.cause
                 if (cause is FetchFailure) throw cause
                 if (cause is java.net.http.HttpTimeoutException) throw Retry(null, FetchFailure.Network("timed out after ${limits.totalTimeout.toMillis()} ms: ${shown(current)}"))
@@ -164,13 +169,24 @@ internal class HttpGetter(
         private val out = ByteArrayOutputStream()
         private var subscription: Flow.Subscription? = null
 
+        // 上限を超えた（受け取りを取り消した）なら、その失敗
+        @Volatile
+        var tooLarge: FetchFailure.TooLarge? = null
+            private set
+
+        private fun refuse() {
+            val failure = FetchFailure.TooLarge(max)
+            tooLarge = failure
+            subscription?.cancel()
+            result.completeExceptionally(failure)
+        }
+
         override fun getBody(): CompletionStage<ByteArray> = result
 
         override fun onSubscribe(subscription: Flow.Subscription) {
             this.subscription = subscription
             if (declared > max) {
-                subscription.cancel()
-                result.completeExceptionally(FetchFailure.TooLarge(max))
+                refuse()
                 return
             }
             subscription.request(1)
@@ -180,8 +196,7 @@ internal class HttpGetter(
             if (result.isDone) return
             for (buffer in item) {
                 if (out.size().toLong() + buffer.remaining() > max) {
-                    subscription?.cancel()
-                    result.completeExceptionally(FetchFailure.TooLarge(max))
+                    refuse()
                     return
                 }
                 val bytes = ByteArray(buffer.remaining())

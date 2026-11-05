@@ -216,8 +216,8 @@ program more access to the operating system, the network or the JVM than any oth
 
 ## Downloading package archives (S8.2 Phase 2)
 
-> **In development.** The download, the checks and the cache exist as a library (`createscript-install`); no
-> command uses them yet. Installing (unpacking, the lock file and dependencies) comes in Phase 3.
+> **In development.** The download, the checks and the cache are in the library `createscript-install` and are
+> used by `createscript install` (see [Installing packages](#installing-packages-s82-phase-3)).
 
 For a dependency `{ "version": "1.2.0", "source": "github:owner/repo" }` the archive is
 
@@ -365,25 +365,128 @@ know it; we did not run them for S8.1.
   their rules, the canonical form and the consistency checks, and the package archive reader and writer
   (`PackageArchives`). It uses only the Kotlin standard library and never touches files or the network; it takes
   bytes and returns values and diagnostics.
-- `createscript-install` (S8.2 Phase 2): downloads package archives from GitHub Releases with the JDK HTTP client,
-  checks their SHA-256 and GitHub's digest, and keeps the cache. It never runs what it downloads.
+- `createscript-install` (S8.2 Phases 2 and 3): downloads package archives from GitHub Releases with the JDK HTTP
+  client, checks their SHA-256 and GitHub's digest, keeps the cache, resolves dependencies, and installs them
+  with the journal. It never runs what it downloads.
 - `createscript-cli`: reads and writes the files, checks the entry file on disk, and implements `init`,
-  `manifest check`, `lock check` and `pack`.
+  `manifest check`, `lock check`, `pack` and `install`.
 - `createscript-core` (the language, compiler and virtual machine) is unchanged.
 
-## Planned: installing packages (S8.2 Phase 3 and later)
+## Installing packages (S8.2 Phase 3)
 
-This is not implemented. It is written down so that the lock file format fits it.
+> **In development.** Programs cannot `import` installed packages yet: `createscript run` reads only the local
+> modules. Using installed packages, and the rule that only public modules of direct dependencies can be
+> imported, come in S8.2 Phase 4.
 
-- A package version will be published as a **package archive attached to a GitHub Release** (a release asset),
-  built by the package's author with a CreateScript tool. `sha256` in the lock file is the SHA-256 of that
-  asset's bytes.
-- The **"Source code (zip)" and "Source code (tar.gz)" files that GitHub generates automatically are not
-  package archives** and will not be used or checked: they are generated on request, are not files that the
-  author uploaded, and their bytes are not guaranteed to stay the same, so a lock file could not pin them.
-- Downloads will be checked against `sha256` before anything is unpacked or compiled. Package sources will be
-  given to the compiler through the existing `ModuleResolver`, so the Core still reads no files and no network.
-  A program's identity for saving and restoring runs will include all package sources
-  (`ModuleCompileResult.sourceFingerprint`).
-- An official registry (reviewed through pull requests) and direct GitHub URLs (not reviewed) are planned; the
-  `source` field will grow new forms with a new schema or lock version.
+```text
+$ createscript install github:owner/vector-math@v1.2.0
+Installed numbers 3.0.0 from github:owner/numbers -> .createscript/packages/numbers/3.0.0
+  sha256 9c1e…
+  downloaded; recorded on first use (trust on first use); GitHub digest matched; the release is immutable
+Installed vector-math 1.2.0 from github:owner/vector-math -> .createscript/packages/vector-math/1.2.0
+  sha256 3f1c…
+  downloaded; recorded on first use (trust on first use); GitHub digest matched; the release is immutable
+Updated createscript.json (dependency vector-math 1.2.0 from github:owner/vector-math)
+Wrote createscript.lock (2 packages)
+
+$ createscript install              # install what createscript.json and createscript.lock say
+$ createscript install --offline    # the same without the network (from the cache only)
+```
+
+- `createscript install github:<owner>/<repo>@v<version> [directory]` downloads the package, reads its name from
+  its `createscript.json`, adds or changes that one entry in `dependencies` and installs everything. Only exact
+  versions are accepted (`@v1.2.0` or `@1.2.0`). A dependency of the same name from another source is not
+  replaced, and one source cannot be two packages.
+- `createscript install [directory]` installs the dependencies in `createscript.json`. Packages that
+  `createscript.lock` has with the same name, version and source use its SHA-256, which is **always** enforced
+  (a different archive is refused, from the cache or from GitHub). Other packages are recorded on first use.
+  Lock entries that are no longer needed are removed from the lock file.
+- `--offline` uses no network: every package must be in the cache with the SHA-256 from the lock file.
+- Running the same command again changes nothing (no file is rewritten).
+- Exit codes: 69 network unavailable (or not in the cache with `--offline`), 65 a problem in a package, a conflict
+  or an invalid project file, 66 no `createscript.json`, 73 files are not in the expected state (symbolic links,
+  changed files, an interrupted installation that cannot be finished or undone), 75 another install is running.
+
+### Dependencies
+
+- Dependencies are followed from `createscript.json`, depth first in name order, so the order of downloads and
+  the result depend only on the files.
+- Each name is one package. Two requirements for the same name must have the same version and source, otherwise
+  the installation stops with both requirements and who made them (versions are not chosen or merged; ranges
+  and resolution are planned for S8.4). One source cannot be two packages, and no package can depend on the
+  project itself.
+- Cycles are refused (`dependency cycle: alpha -> beta -> alpha`).
+- Limits for one installation: 256 packages, a depth of 32, and 128 MiB of package files in all (each archive
+  also has the [archive limits](#package-archives-createscript-packagezip)).
+- Every archive is checked like `createscript pack` checks it: a library, the expected name and version, only
+  allowed paths, valid sources. If `createscript.lock` lists other dependencies for a package than its archive
+  does, the lock file was changed by hand and the installation stops.
+
+### Files
+
+```text
+.createscript/
+  install.lock                       held while an installation runs (an empty file)
+  packages/<name>/<version>/         an installed package: createscript.json, modules/*.cscr, documents
+    .createscript-package.json       the marker: which installation put the files there and their SHA-256
+  transaction.json                   only while an installation is running or after it was interrupted
+  txn-<id>/                          the prepared files of that installation
+```
+
+- `.createscript/` should not be committed; `install` suggests adding `/.createscript/` to `.gitignore` when it is
+  missing. It does not change `.gitignore`.
+- An existing `packages/<name>/<version>/` is used only if its marker and files match the package exactly (no
+  missing, extra or changed files, no symbolic links). Otherwise the installation stops before changing anything
+  and asks you to remove the directory.
+- Directories of versions that are no longer used are not removed (removing packages is planned for S8.3).
+- `createscript.json`, `createscript.lock`, `.createscript` and everything in it must not be symbolic links:
+  `install` does not write through links.
+- Nothing that is downloaded is run: archives are only checked and unpacked as files.
+
+### Changing several files safely
+
+1. Hold `.createscript/install.lock` (`FileChannel.tryLock`), so that only one installation runs in a project.
+2. Read the project files and download and check every package. Up to here nothing in the project changes, so a
+   network or check failure leaves everything as it was.
+3. Write, in a new `.createscript/txn-<id>/`, the new manifest and lock file, copies of the current ones, and the
+   unpacked packages, and flush them to disk.
+4. Create `.createscript/transaction.json` (state `prepared`) with the SHA-256 of the old and new manifest and lock
+   file and of each package marker. It is written to a temporary file and then given its name with a hard link,
+   so a half-written journal never has the name.
+5. Move the packages into `packages/` (never replacing a directory), then replace `createscript.json` and
+   `createscript.lock` (a rename). Before each replacement the current file must be the one read in step 2, with
+   the same SHA-256 and, where the file system tells, the same file (`fileKey`): a file that another program
+   changed or replaced is never overwritten.
+6. Mark the journal `committed`, then remove the prepared files and the journal.
+
+When a step fails, the installation is undone at once. When the process stops (a crash or `kill`), the next
+`createscript install` finds the journal and finishes or undoes the installation before doing anything else:
+
+- **The journal is not trusted.** It must be a regular file of this user with exactly the expected fields and
+  valid values; package names, versions and the id are checked, so it cannot name paths outside `.createscript`.
+- **Finish** when the new manifest and lock file are in place or their copies are intact, and every package is
+  in place with this installation's marker or its prepared copy is intact.
+- **Undo** otherwise: a manifest or lock file whose SHA-256 is the new one is put back from its copy (or removed if
+  there was none), and package directories with this installation's marker and unchanged files are removed.
+- **Files changed by someone else are never overwritten or removed.** A manifest or lock file that is neither the
+  old nor the new one, and package directories that do not match, are left as they are; the installation is
+  undone otherwise and stops with a list of what was left.
+- **When neither is safe** (a damaged journal, or missing or changed copies), nothing is changed and the command
+  explains how to check the files and remove `.createscript/transaction.json` and `.createscript/txn-*` by hand.
+- `manifest check`, `lock check` and `pack` stop with exit code 65 while a journal exists.
+- An installation that stopped before step 4 has changed nothing; its `txn-<id>` directory is reported and can be
+  removed.
+
+Known limits: checks and renames are separate steps, so a program that changes a file in the moment between them
+is not always noticed (Java names files by path); a file whose contents and size stay the same after a change
+cannot be told apart where the file system has no `fileKey`. Windows has not been tried.
+
+### Still planned
+
+- S8.2 Phase 4: `createscript run` for projects, with the installed packages as modules, and the visibility of
+  public and private modules.
+- An official registry (reviewed through pull requests) and direct GitHub URLs (not reviewed); the `source`
+  field will grow new forms with a new schema or lock version.
+- Package sources will be given to the compiler through the existing `ModuleResolver`, so the Core still reads
+  no files and no network, and a program's identity for saving and restoring runs will include all package
+  sources (`ModuleCompileResult.sourceFingerprint`).

@@ -13,13 +13,20 @@ import java.security.MessageDigest
 // GitHub Releases のパッケージアーカイブ（S8.2 Phase 2）。source は github:持ち主/リポジトリ、タグは v<version>、アセットは固定の createscript-package.zip。
 // アセットの URL は名前から決まるため、ダウンロードには API を使わない（レート制限を受けない）。API は、アセットの digest とリリースの immutable を読むときだけ使う。
 // GitHub が自動で作るソースの ZIP・tar.gz は使わない。ダウンロードしたものは、バイト列として返すだけで、展開も実行もしない
+// リリースのアセットを得る相手（S8.2 Phase 3）。本番は GitHubReleases だけ。テストはメモリーの中の実装を渡す（照合は PackageFetcher が行う）
+interface ReleaseStore {
+    fun download(source: String, version: String): ByteArray
+
+    fun releaseInfo(source: String, version: String): GitHubReleases.ReleaseInfo
+}
+
 class GitHubReleases internal constructor(
     private val endpoints: Endpoints,
     private val limits: NetworkLimits,
     token: GitHubToken?,
     sleeper: Sleeper,
     userAgent: String,
-) : AutoCloseable {
+) : ReleaseStore, AutoCloseable {
     constructor(token: GitHubToken? = null, userAgent: String = "createscript") : this(Endpoints.GITHUB, NetworkLimits(), token, Sleeper.REAL, userAgent)
 
     private val http = HttpGetter(endpoints, limits, token, sleeper, userAgent)
@@ -45,11 +52,11 @@ class GitHubReleases internal constructor(
     }
 
     // アセットをダウンロードする（最大 limits.maxDownloadBytes バイト）
-    fun download(source: String, version: String): ByteArray = http.get(assetUri(source, version), limits.maxDownloadBytes, "application/octet-stream").body
+    override fun download(source: String, version: String): ByteArray = http.get(assetUri(source, version), limits.maxDownloadBytes, "application/octet-stream").body
 
     // GET https://api.github.com/repos/持ち主/リポジトリ/releases/tags/v<version> から、アセットの digest とリリースの immutable を読む。
     // 応答は厳密な JSON として読む（重複キー・整数でない数値などがあれば InvalidResponse）。アセットが無ければ NotFound
-    fun releaseInfo(source: String, version: String): ReleaseInfo {
+    override fun releaseInfo(source: String, version: String): ReleaseInfo {
         val c = coordinates(source, version)
         val uri = URI(endpoints.api.scheme, endpoints.api.rawAuthority, "/repos/${c.owner}/${c.repository}/releases/tags/${c.tag}", null, null)
         val response = http.get(uri, limits.maxApiBytes, "application/vnd.github+json")

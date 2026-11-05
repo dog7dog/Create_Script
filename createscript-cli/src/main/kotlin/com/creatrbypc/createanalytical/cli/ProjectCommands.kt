@@ -348,6 +348,13 @@ internal class ProjectCommands(
 
     // マニフェストを読んで確かめ、エントリーのファイルがルートの中の通常のファイルであることも確かめる。問題があれば報告して null
     private fun loadManifest(root: Path): ManifestResult? {
+        // 中断したインストール（S8.2 Phase 3）: マニフェスト・ロックファイルが更新の途中かもしれないので、確かめずに止める
+        if (Files.exists(com.creatrbypc.createanalytical.install.InstallLayout.journal(root), LinkOption.NOFOLLOW_LINKS)) {
+            throw Failure(
+                ExitCode.INVALID_INPUT,
+                "an installation was interrupted (${shown(root, ".createscript/transaction.json")} exists); run createscript install to finish or undo it",
+            )
+        }
         val manifestPath = root.resolve(Manifests.FILE_NAME)
         val shownManifest = shown(root, Manifests.FILE_NAME)
         if (!Files.exists(manifestPath, LinkOption.NOFOLLOW_LINKS)) throw Failure(ExitCode.NO_INPUT, "$shownManifest not found (create one with createscript init)")
