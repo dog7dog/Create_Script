@@ -33,7 +33,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   limits), validation of names, SemVer versions, entry paths, sources and SHA-256 values, the canonical lock file
   form and its consistency with the manifest. It does not access files or the network.
 - `createscript init`, `createscript manifest check` and `createscript lock check`; exit code 73 when `init`
-  cannot create the files. No downloads, installation or dependency resolution yet.
+  cannot create the files. No downloads, installation or dependency resolution yet. `init` rolls back only
+  files and directories that are still the ones it created (identifier, size, SHA-256). The checks read only
+  regular files inside the project (`CS_PKG_FILE_OUTSIDE_PROJECT`, `CS_PKG_NOT_A_REGULAR_FILE`,
+  `CS_PKG_FILE_CHANGED_WHILE_READING`).
+- Core: `ast.Program` keeps the JVM signatures of v0.1.0-alpha (the constructor and `copy` with three lists, as
+  hidden members), so code compiled against v0.1.0-alpha still runs; a regression test runs such code.
 - `createscript run`: `--project-root <directory>` (default: the directory of the file). The interactive
   mode reports `CS_MODULE_IMPORT_UNAVAILABLE` for `import`.
 

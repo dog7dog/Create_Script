@@ -41,6 +41,12 @@ enum class ProjectDiagnosticCode(val id: String) {
     ENTRY_NOT_A_FILE("CS_PKG_ENTRY_NOT_A_FILE"),
     ENTRY_OUTSIDE_PROJECT("CS_PKG_ENTRY_OUTSIDE_PROJECT"),
 
+    // createscript.json・createscript.lock そのもの（CLI が確かめる。引数: ファイル名。S8.1 の追加検証）。シンボリックリンクがプロジェクトの外を指す、
+    // 通常のファイルでない（ディレクトリ・FIFO・デバイスなど）、読んでいる間に差し替えられた・変わった
+    FILE_OUTSIDE_PROJECT("CS_PKG_FILE_OUTSIDE_PROJECT"),
+    NOT_A_REGULAR_FILE("CS_PKG_NOT_A_REGULAR_FILE"),
+    FILE_CHANGED_WHILE_READING("CS_PKG_FILE_CHANGED_WHILE_READING"),
+
     // ロックファイル。依存があるのに無い、正規形でない、同じ名前のパッケージが複数ある（引数: 名前）、パッケージの依存の重複（引数: パッケージ、依存）、
     // ロックファイルに無いパッケージへの依存（引数: パッケージ、依存）、依存の循環（引数: 循環の上のパッケージ）、
     // root がマニフェストと違う（引数: 項目、マニフェストの値、ロックファイルの値）、マニフェストの依存がロックファイルに無い（引数: 名前）、

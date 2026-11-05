@@ -15,26 +15,36 @@ import java.nio.file.FileAlreadyExistsException
 import java.nio.file.Files
 import java.nio.file.InvalidPathException
 import java.nio.file.LinkOption
+import java.nio.file.NoSuchFileException
 import java.nio.file.Path
 import java.nio.file.Paths
 import java.nio.file.StandardOpenOption
+import java.nio.file.attribute.BasicFileAttributes
+import java.security.MessageDigest
 import java.util.UUID
 
-// ファイルを壊さずに書く手順（S8.1）
+// 作ったファイルの同一性（S8.1 の追加検証）。fileKey はファイルシステムの識別子（macOS・Linux ではデバイス番号と i ノード番号。取得できない環境では null）、
+// size と sha256 は書いた内容。ロールバックで、別のプロセスが差し替えたファイルを消さないために使う
+internal class FileIdentity(val fileKey: Any?, val size: Long, val sha256: ByteArray)
+
+// ファイルを壊さずに書く・読む手順（S8.1）
 internal object SafeFiles {
-    // 新しいファイルとして書く。同じ名前のファイルがあれば（書き始めた後に作られたものも）上書きせずに FileAlreadyExistsException。
+    // 新しいファイルとして書き、作ったファイルの同一性を返す。同じ名前のファイルがあれば（書き始めた後に作られたものも）上書きせずに FileAlreadyExistsException。
     // 同じディレクトリの一時ファイルに書いて内容をディスクに書き出し（force）、ハードリンクで名前を付ける（リンクの作成は、名前が既にあれば失敗する。
     // 途中で止まっても、目的の名前に書きかけのファイルは残らない）。ハードリンクを作れないファイルシステムでは、置き換えない移動を使う。
-    // 一時ファイルは CREATE_NEW で作る（Files.createTempFile は所有者だけが読める 0600 で作るため使わない。権限は通常のファイルと同じく umask に従う）
-    fun writeNew(target: Path, text: String) {
+    // 一時ファイルは CREATE_NEW で作る（Files.createTempFile は所有者だけが読める 0600 で作るため使わない。権限は通常のファイルと同じく umask に従う）。
+    // fileKey は名前を付ける前の一時ファイルのもの（ハードリンク・同じファイルシステムの中の移動では、目的のファイルと同じ）
+    fun writeNew(target: Path, text: String): FileIdentity {
         val directory = target.toAbsolutePath().parent
         val temporary = directory.resolve(".createscript-${UUID.randomUUID()}.tmp")
+        val bytes = text.toByteArray(Charsets.UTF_8)
         try {
             FileChannel.open(temporary, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE).use { channel ->
-                val buffer = ByteBuffer.wrap(text.toByteArray(Charsets.UTF_8))
+                val buffer = ByteBuffer.wrap(bytes)
                 while (buffer.hasRemaining()) channel.write(buffer)
                 channel.force(true)
             }
+            val fileKey = Files.readAttributes(temporary, BasicFileAttributes::class.java, LinkOption.NOFOLLOW_LINKS).fileKey()
             try {
                 Files.createLink(target, temporary)
             } catch (error: FileAlreadyExistsException) {
@@ -45,6 +55,7 @@ internal object SafeFiles {
                 if (Files.exists(target, LinkOption.NOFOLLOW_LINKS)) throw FileAlreadyExistsException(target.toString())
                 Files.move(temporary, target)
             }
+            return FileIdentity(fileKey, bytes.size.toLong(), sha256(bytes))
         } finally {
             // 名前を付けた後の一時ファイルの削除の失敗は、書き込みの失敗にしない（このメソッドが例外を投げたら、目的のファイルは作っていない）
             try {
@@ -55,18 +66,87 @@ internal object SafeFiles {
         }
     }
 
-    // 最大 maxBytes + 1 バイトまで読む（大きすぎるファイルを読み切らない。大きすぎることは呼び出し側の検査で分かる）
-    fun readLimited(path: Path, maxBytes: Int): ByteArray = Files.newInputStream(path).use { it.readNBytes(maxBytes + 1) }
+    fun sha256(bytes: ByteArray): ByteArray = MessageDigest.getInstance("SHA-256").digest(bytes)
+
+    // ファイルを消してよいかを確かめてから消す。消さなかった理由を返す（消したか、既に無ければ null）。
+    // リンクをたどらずに属性を読み、通常のファイルで、大きさ・内容（SHA-256）が同じで、fileKey が両方とも取得できるなら同じときだけ消す。
+    // fileKey が取得できない環境（どちらかが null）では、大きさと内容だけで判断する（内容の同じ別のファイルへの差し替えは見分けられない）。
+    // 確かめてから消すまでの間に差し替えられる競合（TOCTOU）は、Java のファイルの API（名前で消す）では完全には無くせない
+    fun deleteIfSame(path: Path, identity: FileIdentity): String? {
+        val attributes = try {
+            Files.readAttributes(path, BasicFileAttributes::class.java, LinkOption.NOFOLLOW_LINKS)
+        } catch (error: NoSuchFileException) {
+            return null
+        } catch (error: IOException) {
+            return "cannot read its attributes"
+        }
+        if (!attributes.isRegularFile) return "it was replaced by something that is not a regular file"
+        val key = attributes.fileKey()
+        if (identity.fileKey != null && key != null && key != identity.fileKey) return "it was replaced by another file"
+        if (attributes.size() != identity.size) return "its contents changed"
+        val contents = try {
+            readLimited(path, identity.size.toInt())
+        } catch (error: IOException) {
+            return "cannot read it"
+        }
+        if (!sha256(contents).contentEquals(identity.sha256)) return "its contents changed"
+        return try {
+            Files.delete(path)
+            null
+        } catch (error: NoSuchFileException) {
+            null
+        } catch (error: IOException) {
+            "cannot delete it"
+        }
+    }
+
+    // 作ったディレクトリを、同じディレクトリ（fileKey が両方とも取得できるなら同じ）で空のときだけ消す。消さなかった理由を返す
+    fun deleteDirectoryIfSame(path: Path, fileKey: Any?): String? {
+        val attributes = try {
+            Files.readAttributes(path, BasicFileAttributes::class.java, LinkOption.NOFOLLOW_LINKS)
+        } catch (error: NoSuchFileException) {
+            return null
+        } catch (error: IOException) {
+            return "cannot read its attributes"
+        }
+        if (!attributes.isDirectory) return "it was replaced by something that is not a directory"
+        val key = attributes.fileKey()
+        if (fileKey != null && key != null && key != fileKey) return "it was replaced by another directory"
+        return try {
+            Files.delete(path)
+            null
+        } catch (error: NoSuchFileException) {
+            null
+        } catch (error: java.nio.file.DirectoryNotEmptyException) {
+            "it is not empty"
+        } catch (error: IOException) {
+            "cannot delete it"
+        }
+    }
+
+    // 最大 maxBytes + 1 バイトまで読む（大きすぎるファイルを読み切らない。大きすぎることは呼び出し側の検査で分かる）。
+    // リンクをたどらずに開く（開く直前にシンボリックリンクに差し替えられたら失敗する）
+    fun readLimited(path: Path, maxBytes: Int): ByteArray =
+        Files.newInputStream(path, StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS).use { it.readNBytes(maxBytes + 1) }
 }
 
 // createscript init・manifest check・lock check（S8.1）。マニフェスト・ロックファイルの検査は createscript-project が行い、ここではファイルの読み書きと、
-// エントリーのファイルがプロジェクトのルートの中にあることを確かめる。write はファイルを書く手順（テストで失敗を起こすために差し替える）
+// ファイルがプロジェクトのルートの中にあることを確かめる。write はファイルを書く手順（テストで失敗・差し替えを起こすために差し替える）
 internal class ProjectCommands(
     private val out: PrintStream,
     private val err: PrintStream,
-    private val write: (Path, String) -> Unit = SafeFiles::writeNew,
+    private val write: (Path, String) -> FileIdentity = SafeFiles::writeNew,
 ) {
     class Failure(val code: Int, message: String) : Exception(message)
+
+    // 今回作ったもの（ロールバックで消す候補）
+    private sealed interface Created {
+        val path: Path
+
+        class File(override val path: Path, val identity: FileIdentity) : Created
+
+        class Directory(override val path: Path, val fileKey: Any?) : Created
+    }
 
     companion object {
         const val ENTRY = "src/main.cscr"
@@ -77,7 +157,8 @@ internal class ProjectCommands(
     // ---- init ----
 
     // createscript init [ディレクトリ] [--name 名前]。createscript.json と src/main.cscr を作る（ロックファイルは作らない）。
-    // どちらかが既にあれば何も作らない。途中で失敗したら、今回作ったファイル・ディレクトリだけを消す（前からあったものには触れない）
+    // どちらかが既にあれば何も作らない。途中で失敗したら、今回作ったファイル・ディレクトリだけを、作ったときと同じものであることを確かめてから消す
+    // （前からあったもの・別のプロセスが差し替えたものには触れない）
     fun init(directoryArgument: String?, nameOption: String?): Int {
         val directory = path(directoryArgument ?: ".")
         val absolute = directory.toAbsolutePath().normalize()
@@ -99,17 +180,15 @@ internal class ProjectCommands(
         if (Files.exists(sourceDirectory, LinkOption.NOFOLLOW_LINKS) && !Files.isDirectory(sourceDirectory, LinkOption.NOFOLLOW_LINKS)) {
             throw Failure(ExitCode.CANNOT_CREATE, "$sourceDirectory is not a directory; nothing was created")
         }
-        val created = ArrayList<Path>()
+        val created = ArrayList<Created>()
         try {
             createDirectories(entryPath.parent, created)
-            write(manifestPath, Manifests.write(Manifest(name, INITIAL_VERSION, ENTRY)))
-            created.add(manifestPath)
-            write(entryPath, HELLO)
-            created.add(entryPath)
+            created.add(Created.File(manifestPath, write(manifestPath, Manifests.write(Manifest(name, INITIAL_VERSION, ENTRY)))))
+            created.add(Created.File(entryPath, write(entryPath, HELLO)))
         } catch (error: Exception) {
             val kept = rollBack(created)
             val reason = if (error is FileAlreadyExistsException) "${error.file} already exists" else (error.message ?: error.javaClass.simpleName)
-            throw Failure(ExitCode.CANNOT_CREATE, "cannot create the project: $reason; " + if (kept.isEmpty()) "nothing was left behind" else "could not remove: ${kept.joinToString()}")
+            throw Failure(ExitCode.CANNOT_CREATE, "cannot create the project: $reason; " + if (kept.isEmpty()) "nothing was left behind" else "kept: ${kept.joinToString()}")
         }
         out.println("Created $manifestPath")
         out.println("Created $entryPath")
@@ -117,8 +196,8 @@ internal class ProjectCommands(
         return ExitCode.OK
     }
 
-    // 無いディレクトリを外側から作り、作ったものを記録する
-    private fun createDirectories(directory: Path, created: MutableList<Path>) {
+    // 無いディレクトリを外側から作り、作ったもの（と、その fileKey）を記録する
+    private fun createDirectories(directory: Path, created: MutableList<Created>) {
         val missing = ArrayList<Path>()
         var current: Path? = directory.toAbsolutePath().normalize()
         while (current != null && !Files.exists(current, LinkOption.NOFOLLOW_LINKS)) {
@@ -127,18 +206,22 @@ internal class ProjectCommands(
         }
         for (path in missing.asReversed()) {
             Files.createDirectory(path)
-            created.add(path)
+            val fileKey = try {
+                Files.readAttributes(path, BasicFileAttributes::class.java, LinkOption.NOFOLLOW_LINKS).fileKey()
+            } catch (error: IOException) {
+                null
+            }
+            created.add(Created.Directory(path, fileKey))
         }
     }
 
-    // 作った順の逆に消す（ディレクトリは空のときだけ）。消せなかったものを返す
-    private fun rollBack(created: List<Path>): List<Path> = created.asReversed().filter { path ->
-        try {
-            Files.deleteIfExists(path)
-            false
-        } catch (error: IOException) {
-            true
+    // 作った順の逆に、作ったときと同じものであることを確かめてから消す。消さなかったものを、理由とともに返す
+    private fun rollBack(created: List<Created>): List<String> = created.asReversed().mapNotNull { item ->
+        val reason = when (item) {
+            is Created.File -> SafeFiles.deleteIfSame(item.path, item.identity)
+            is Created.Directory -> SafeFiles.deleteDirectoryIfSame(item.path, item.fileKey)
         }
+        reason?.let { "${item.path} ($it)" }
     }
 
     // ---- manifest check / lock check ----
@@ -167,7 +250,7 @@ internal class ProjectCommands(
             report(shownLock, listOf(ProjectDiagnostic(ProjectDiagnosticCode.LOCK_MISSING, 1, 1, listOf(Lockfiles.FILE_NAME))))
             return ExitCode.INVALID_INPUT
         }
-        val bytes = readFile(lockPath, shownLock, Lockfiles.MAX_BYTES)
+        val bytes = readProjectFile(root, Lockfiles.FILE_NAME, shownLock, Lockfiles.MAX_BYTES) ?: return ExitCode.INVALID_INPUT
         val parsed = Lockfiles.parse(bytes)
         val diagnostics = Lockfiles.check(bytes, parsed, manifest)
         if (diagnostics.isNotEmpty()) {
@@ -182,8 +265,9 @@ internal class ProjectCommands(
     private fun loadManifest(root: Path): ManifestResult? {
         val manifestPath = root.resolve(Manifests.FILE_NAME)
         val shownManifest = shown(root, Manifests.FILE_NAME)
-        if (!Files.exists(manifestPath)) throw Failure(ExitCode.NO_INPUT, "$shownManifest not found (create one with createscript init)")
-        val result = Manifests.parse(readFile(manifestPath, shownManifest, Manifests.MAX_BYTES))
+        if (!Files.exists(manifestPath, LinkOption.NOFOLLOW_LINKS)) throw Failure(ExitCode.NO_INPUT, "$shownManifest not found (create one with createscript init)")
+        val bytes = readProjectFile(root, Manifests.FILE_NAME, shownManifest, Manifests.MAX_BYTES) ?: return null
+        val result = Manifests.parse(bytes)
         val manifest = result.manifest
         if (manifest == null) {
             report(shownManifest, result.diagnostics, result.truncated)
@@ -194,6 +278,51 @@ internal class ProjectCommands(
             return null
         }
         return result
+    }
+
+    // プロジェクトのファイル（createscript.json・createscript.lock）を読む（S8.1 の追加検証）。問題があれば報告して null。
+    // - シンボリックリンクは、たどった先がルートの中にあるときだけ使う（外を指せば CS_PKG_FILE_OUTSIDE_PROJECT）。たどれないリンクは、ファイルが無いものとする
+    // - たどった先が通常のファイルでなければ（ディレクトリ・FIFO・デバイスなど）CS_PKG_NOT_A_REGULAR_FILE。FIFO は開くと書き手を待って止まるため、開く前に確かめる
+    // - たどった先の実際のパスを、リンクをたどらずに開いて最大 上限 + 1 バイトを読み、読む前と後で fileKey・大きさ・更新時刻が同じことを確かめる
+    //   （違えば CS_PKG_FILE_CHANGED_WHILE_READING）。確かめてから開くまでの間に FIFO などに差し替えられる競合は、これでも完全には無くせない
+    private fun readProjectFile(root: Path, name: String, shown: String, maxBytes: Int): ByteArray? {
+        fun problem(code: ProjectDiagnosticCode): ByteArray? {
+            report(shown, listOf(ProjectDiagnostic(code, 1, 1, listOf(name))))
+            return null
+        }
+        val path = root.resolve(name)
+        val real = try {
+            path.toRealPath()
+        } catch (error: NoSuchFileException) {
+            throw Failure(ExitCode.NO_INPUT, "$shown is a broken symbolic link")
+        } catch (error: IOException) {
+            throw Failure(ExitCode.NO_INPUT, "cannot read file: $shown")
+        }
+        val realRoot = try {
+            root.toRealPath()
+        } catch (error: IOException) {
+            throw Failure(ExitCode.NO_INPUT, "cannot read the directory: $root")
+        }
+        if (!real.startsWith(realRoot)) return problem(ProjectDiagnosticCode.FILE_OUTSIDE_PROJECT)
+        val before = attributes(real) ?: throw Failure(ExitCode.NO_INPUT, "cannot read file: $shown")
+        if (!before.isRegularFile) return problem(ProjectDiagnosticCode.NOT_A_REGULAR_FILE)
+        val bytes = try {
+            SafeFiles.readLimited(real, maxBytes)
+        } catch (error: IOException) {
+            // リンクに差し替えられたもの（NOFOLLOW_LINKS で開けない）を含む
+            return problem(ProjectDiagnosticCode.FILE_CHANGED_WHILE_READING)
+        }
+        val after = attributes(real)
+        val same = after != null && after.isRegularFile && after.fileKey() == before.fileKey() && after.size() == before.size() &&
+            after.lastModifiedTime() == before.lastModifiedTime()
+        if (!same) return problem(ProjectDiagnosticCode.FILE_CHANGED_WHILE_READING)
+        return bytes
+    }
+
+    private fun attributes(path: Path): BasicFileAttributes? = try {
+        Files.readAttributes(path, BasicFileAttributes::class.java, LinkOption.NOFOLLOW_LINKS)
+    } catch (error: IOException) {
+        null
     }
 
     // エントリーのファイル: シンボリックリンクをたどった先がルートの中の通常のファイルであること（パスの字面は createscript-project が確かめ済み）
@@ -214,15 +343,6 @@ internal class ProjectCommands(
         val root = path(directoryArgument ?: ".")
         if (!Files.isDirectory(root)) throw Failure(ExitCode.NO_INPUT, "not a directory: $root")
         return root
-    }
-
-    private fun readFile(path: Path, shown: String, maxBytes: Int): ByteArray {
-        if (!Files.isRegularFile(path)) throw Failure(ExitCode.NO_INPUT, "not a regular file: $shown")
-        return try {
-            SafeFiles.readLimited(path, maxBytes)
-        } catch (error: IOException) {
-            throw Failure(ExitCode.NO_INPUT, "cannot read file: $shown")
-        }
     }
 
     private fun report(file: String, diagnostics: List<ProjectDiagnostic>, truncated: Boolean = false) {

@@ -113,7 +113,7 @@ class ProjectCliTest {
         val keep = write(parent.resolve("notes.txt"), "keep me")
         val project = parent.resolve("new-app")
         var calls = 0
-        val failing: (Path, String) -> Unit = { path, text ->
+        val failing: (Path, String) -> FileIdentity = { path, text ->
             if (++calls == 2) throw IOException("disk full (simulated)")
             SafeFiles.writeNew(path, text)
         }
@@ -196,7 +196,7 @@ class ProjectCliTest {
     @Test
     fun initRollsBackWhenTheFirstWriteFails() {
         val project = directory.resolve("deep/new/app")
-        val failing: (Path, String) -> Unit = { _, _ -> throw IOException("read-only file system (simulated)") }
+        val failing: (Path, String) -> FileIdentity = { _, _ -> throw IOException("read-only file system (simulated)") }
         assertThrows(ProjectCommands.Failure::class.java) { ProjectCommands(PrintStream(ByteArrayOutputStream()), PrintStream(ByteArrayOutputStream()), failing).init(project.toString(), null) }
         assertFalse(Files.exists(directory.resolve("deep")))
     }

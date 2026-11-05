@@ -38,9 +38,11 @@ my-app/createscript.lock: not needed (no dependencies)
   name with a hard link, which fails instead of replacing a file that appeared meanwhile, so a file is never
   left half-written; the files get the normal permissions (as set by the umask). If `src` is a symbolic link or
   not a directory, nothing is created, so `init` never writes through a link. If a later step fails, `init`
-  removes only the files and directories it created. It does not create a lock file.
+  removes only the files and directories it created (see [Rollback](#rollback-of-init)). It does not create a
+  lock file.
 - `createscript manifest check [directory]` checks `createscript.json` and that the entry file exists, is a
-  regular file and, after following symbolic links, is inside the project directory.
+  regular file and, after following symbolic links, is inside the project directory. `createscript.json` itself
+  is read under the same rule (see [Reading the project files](#reading-the-project-files)).
 - `createscript lock check [directory]` checks the manifest, then `createscript.lock` against it. A project
   without dependencies needs no lock file; a project with dependencies and no lock file is an error.
 
@@ -48,6 +50,42 @@ The checks only read files. Problems are reported like compile errors, `file:lin
 ("arguments")`, with exit code 65 (66 when a file is missing or unreadable, 64 for usage errors). Arguments
 come from the files, so characters that could change what a terminal shows (control characters, bidirectional
 and other format characters, line separators, unpaired surrogates) are shown as `\uXXXX`.
+
+### Rollback of `init`
+
+When `init` creates a file, it records the file's identifier (`fileKey`: device and inode numbers on macOS and
+Linux), its size and the SHA-256 of what it wrote; for a directory it records the identifier. If a later step
+fails, it goes through what it created in reverse order and removes an item only if it is still the same:
+
+- a file is removed only if it is a regular file (not a link), has the same size and SHA-256, and the same
+  identifier when both identifiers are known;
+- a directory is removed only if it is a directory with the same identifier (when known) and is empty.
+
+Anything else is kept and listed in the error message, for example
+`kept: my-app/createscript.json (it was replaced by another file)`. Where the file system gives no identifier
+(`fileKey()` returns `null`, as on some file systems and platforms), only the size and the SHA-256 are compared;
+a file replaced by another one with exactly the same contents then cannot be told apart and is removed.
+Checking and removing are two separate steps with a file name, so a replacement in between (a time-of-check to
+time-of-use race) cannot be ruled out completely with the Java file API; the checks make the window very small.
+
+### Reading the project files
+
+`manifest check` and `lock check` read `createscript.json` and `createscript.lock` like this:
+
+- A symbolic link is followed, and the file it leads to must be inside the project directory
+  (`CS_PKG_FILE_OUTSIDE_PROJECT` otherwise, also for links to `/dev/null` and other devices). A broken link is
+  reported as a missing file.
+- What the path leads to must be a regular file; directories, FIFOs (named pipes), devices and sockets give
+  `CS_PKG_NOT_A_REGULAR_FILE`. This is checked before the file is opened, because opening a FIFO waits for a
+  writer.
+- The file is opened at its real path without following links (`NOFOLLOW_LINKS`), at most the size limit plus
+  one byte is read, and its identifier, size and modification time are compared before and after reading
+  (`CS_PKG_FILE_CHANGED_WHILE_READING` if they differ).
+
+These steps reduce, but do not remove, the races between checking and reading: a directory on the path could be
+swapped after the check, and a file swapped for a FIFO just before it is opened would still make the command wait.
+`NOFOLLOW_LINKS` only applies to the last part of the path. The commands only read these files, and show at most
+short parts of them in diagnostics.
 
 ## `createscript.json` (schema version 1)
 

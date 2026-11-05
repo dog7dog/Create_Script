@@ -10,7 +10,25 @@ data class Program(
     val functions: List<FunctionDeclaration> = emptyList(),
     val classes: List<ClassDeclaration> = emptyList(),
     val imports: List<ImportDeclaration> = emptyList(),
-)
+) {
+    // v0.1.0-alpha（imports の無い 3 つの項目の Program）のバイナリとの互換（S8.1 の検証で追加）。v0.1.0-alpha の Core に対してコンパイルしたコードが呼ぶ
+    // Program(List, List, List)・その既定値付きの合成コンストラクター・copy(List, List, List)・copy$default を JVM に残す。
+    // ソースからは見えない（HIDDEN）ため、新しい呼び出しと曖昧にならない。equals・hashCode・toString・データクラスの copy は 4 つの項目のまま。
+    // 互換用の copy は imports を引き継ぐ（古いコードが新しい Parser の結果を写しても、imports を失わない）
+    @Deprecated("Binary compatibility with v0.1.0-alpha", level = DeprecationLevel.HIDDEN)
+    constructor(
+        statements: List<Statement>,
+        functions: List<FunctionDeclaration> = emptyList(),
+        classes: List<ClassDeclaration> = emptyList(),
+    ) : this(statements, functions, classes, emptyList())
+
+    @Deprecated("Binary compatibility with v0.1.0-alpha", level = DeprecationLevel.HIDDEN)
+    fun copy(
+        statements: List<Statement> = this.statements,
+        functions: List<FunctionDeclaration> = this.functions,
+        classes: List<ClassDeclaration> = this.classes,
+    ): Program = Program(statements, functions, classes, imports)
+}
 
 // import モジュール名（第8.0段階）。ファイルの先頭（他の文・宣言より前）にだけ書ける。モジュール名は識別子 1 つ。
 // position は import の位置、namePosition はモジュール名の位置
