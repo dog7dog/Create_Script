@@ -92,9 +92,9 @@ class ManifestTest {
         assertEquals(listOf(ProjectDiagnosticCode.WRONG_TYPE), codes("{\"schemaVersion\": \"1\"}"))
         assertEquals(listOf(ProjectDiagnosticCode.JSON_NUMBER_NOT_INTEGER), codes("{\"schemaVersion\": 1.0}"))
         // 対応していない版は、他の項目を確かめずに報告する
-        val future = parse("""{"schemaVersion": 2, "anything": true}""").diagnostics.single()
+        val future = parse("""{"schemaVersion": 3, "anything": true}""").diagnostics.single()
         assertEquals(ProjectDiagnosticCode.UNSUPPORTED_SCHEMA_VERSION, future.code)
-        assertEquals(listOf("2", "1"), future.arguments)
+        assertEquals(listOf("3", "1, 2"), future.arguments)
         assertEquals(listOf(ProjectDiagnosticCode.UNSUPPORTED_SCHEMA_VERSION), codes("""{"schemaVersion": 0}"""))
         // 必須の項目・型・知らない項目
         assertEquals(List(3) { ProjectDiagnosticCode.MISSING_FIELD }, codes("""{"schemaVersion": 1}"""))

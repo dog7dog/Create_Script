@@ -36,6 +36,16 @@ enum class ProjectDiagnosticCode(val id: String) {
     INVALID_SHA256("CS_PKG_INVALID_SHA256"),
     DEPENDS_ON_ITSELF("CS_PKG_DEPENDS_ON_ITSELF"),
 
+    // schemaVersion 2（S8.2 Phase 1）。kind が application・library でない（引数: 値）、その kind では書けない項目（引数: 項目、kind）、
+    // import のモジュール名として使えない名前（引数: 名前）、同じモジュール名の重複（引数: 名前）、library の modules が空
+    INVALID_KIND("CS_PKG_INVALID_KIND"),
+    FIELD_NOT_ALLOWED("CS_PKG_FIELD_NOT_ALLOWED"),
+    INVALID_MODULE_NAME("CS_PKG_INVALID_MODULE_NAME"),
+    DUPLICATE_MODULE("CS_PKG_DUPLICATE_MODULE"),
+    NO_MODULES("CS_PKG_NO_MODULES"),
+    // プロジェクトに、modules に書いたモジュールのファイル（modules/名前.cscr）が無い（CLI が確かめる。引数: 名前）
+    MODULE_FILE_NOT_FOUND("CS_PKG_MODULE_FILE_NOT_FOUND"),
+
     // エントリーのファイル（CLI が確かめる。引数: パス）
     ENTRY_NOT_FOUND("CS_PKG_ENTRY_NOT_FOUND"),
     ENTRY_NOT_A_FILE("CS_PKG_ENTRY_NOT_A_FILE"),
@@ -62,6 +72,31 @@ enum class ProjectDiagnosticCode(val id: String) {
     LOCK_VERSION_MISMATCH("CS_PKG_LOCK_VERSION_MISMATCH"),
     LOCK_SOURCE_MISMATCH("CS_PKG_LOCK_SOURCE_MISMATCH"),
     LOCK_UNUSED_PACKAGE("CS_PKG_LOCK_UNUSED_PACKAGE"),
+
+    // パッケージアーカイブ（createscript-package.zip。S8.2 Phase 1）。位置は 1 行 1 列。
+    // 大きすぎる（引数: 上限のバイト数）、ZIP として正しくない（引数: 理由）、使えない ZIP の機能（引数: 機能。ZIP64・暗号化・データディスクリプター・圧縮方式など）、
+    // 使えないパス（引数: パス、理由）、重複したパス（大文字・小文字だけの違いを含む。引数: パス）、通常のファイル・ディレクトリでない項目（シンボリックリンクなど。引数: パス）、
+    // 項目が多すぎる（引数: 上限）、ファイルが大きすぎる（引数: パス、上限）、展開後の合計が大きすぎる（引数: 上限）、圧縮率が高すぎる（引数: パス、上限）、
+    // 中身が CRC と合わない・宣言した大きさと違う（引数: パス）、createscript.json が無い、library のマニフェストでない、
+    // 名前・版がインストールを指示したものと違う（引数: 期待した値、アーカイブの値）、modules のファイルが無い（引数: 名前）、
+    // .cscr が使えない（引数: パス、理由。UTF-8 でない・BOM・長すぎる）
+    ARCHIVE_TOO_LARGE("CS_PKG_ARCHIVE_TOO_LARGE"),
+    ARCHIVE_MALFORMED("CS_PKG_ARCHIVE_MALFORMED"),
+    ARCHIVE_UNSUPPORTED("CS_PKG_ARCHIVE_UNSUPPORTED"),
+    ARCHIVE_INVALID_PATH("CS_PKG_ARCHIVE_INVALID_PATH"),
+    ARCHIVE_DUPLICATE_PATH("CS_PKG_ARCHIVE_DUPLICATE_PATH"),
+    ARCHIVE_SPECIAL_FILE("CS_PKG_ARCHIVE_SPECIAL_FILE"),
+    ARCHIVE_TOO_MANY_FILES("CS_PKG_ARCHIVE_TOO_MANY_FILES"),
+    ARCHIVE_FILE_TOO_LARGE("CS_PKG_ARCHIVE_FILE_TOO_LARGE"),
+    ARCHIVE_TOTAL_TOO_LARGE("CS_PKG_ARCHIVE_TOTAL_TOO_LARGE"),
+    ARCHIVE_COMPRESSION_RATIO("CS_PKG_ARCHIVE_COMPRESSION_RATIO"),
+    ARCHIVE_CORRUPT_ENTRY("CS_PKG_ARCHIVE_CORRUPT_ENTRY"),
+    ARCHIVE_MISSING_MANIFEST("CS_PKG_ARCHIVE_MISSING_MANIFEST"),
+    ARCHIVE_NOT_A_LIBRARY("CS_PKG_ARCHIVE_NOT_A_LIBRARY"),
+    ARCHIVE_NAME_MISMATCH("CS_PKG_ARCHIVE_NAME_MISMATCH"),
+    ARCHIVE_VERSION_MISMATCH("CS_PKG_ARCHIVE_VERSION_MISMATCH"),
+    ARCHIVE_MISSING_MODULE("CS_PKG_ARCHIVE_MISSING_MODULE"),
+    ARCHIVE_INVALID_SOURCE("CS_PKG_ARCHIVE_INVALID_SOURCE"),
 }
 
 data class ProjectDiagnostic(val code: ProjectDiagnosticCode, val line: Int, val column: Int, val arguments: List<String> = emptyList()) {

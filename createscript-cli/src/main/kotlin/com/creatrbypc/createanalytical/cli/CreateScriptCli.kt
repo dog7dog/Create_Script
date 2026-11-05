@@ -77,7 +77,7 @@ class CreateScriptCli(private val out: PrintStream, private val err: PrintStream
                     return ExitCode.OK
                 }
                 "run" -> return run(parseRun(args.drop(1)))
-                "init", "manifest", "lock" -> return project(args)
+                "init", "manifest", "lock", "pack" -> return project(args)
                 else -> throw UsageError(if (args[0].startsWith("-")) "unknown option: ${args[0]}" else "unknown command: ${args[0]}")
             }
         } catch (error: UsageError) {
@@ -98,6 +98,28 @@ class CreateScriptCli(private val out: PrintStream, private val err: PrintStream
         val commands = ProjectCommands(out, err)
         val rest = args.drop(1)
         return when (args[0]) {
+            "pack" -> {
+                var directory: String? = null
+                var output: String? = null
+                var index = 0
+                while (index < rest.size) {
+                    val argument = rest[index]
+                    when {
+                        argument == "--output" -> {
+                            if (output != null) throw UsageError("duplicate option: --output")
+                            output = rest.getOrNull(index + 1) ?: throw UsageError("missing value for --output")
+                            index += 2
+                        }
+                        argument.startsWith("-") -> throw UsageError("unknown option: $argument")
+                        directory != null -> throw UsageError("unexpected argument: $argument")
+                        else -> {
+                            directory = argument
+                            index++
+                        }
+                    }
+                }
+                commands.pack(directory, output)
+            }
             "init" -> {
                 var directory: String? = null
                 var name: String? = null
@@ -256,6 +278,7 @@ class CreateScriptCli(private val out: PrintStream, private val err: PrintStream
             |  createscript init [directory] [--name <name>]   create createscript.json and src/main$EXTENSION
             |  createscript manifest check [directory]       check createscript.json
             |  createscript lock check [directory]           check createscript.lock against createscript.json
+            |  createscript pack [directory] [--output <file>]  make createscript-package.zip from a library
             |  createscript --help
             |  createscript --version
             |

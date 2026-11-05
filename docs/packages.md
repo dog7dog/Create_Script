@@ -126,6 +126,84 @@ short parts of them in diagnostics.
 `createscript init` writes the manifest in a canonical form (the field order above, two-space indentation, LF
 line ends, one final newline, dependencies sorted by name). Hand-written manifests do not have to be canonical.
 
+## `createscript.json` schema version 2: applications and libraries
+
+> **S8.2 Phase 1** (in development). Schema version 1 stays valid and unchanged; `createscript init` still
+> writes version 1.
+
+```json
+{
+  "schemaVersion": 2,
+  "kind": "library",
+  "name": "vector-math",
+  "version": "1.2.0",
+  "license": "MIT",
+  "modules": ["vector_math"],
+  "dependencies": {}
+}
+```
+
+| Field | Rule |
+|---|---|
+| `kind` | Required in version 2: `"application"` (a program with an `entry`) or `"library"` (a package that other projects import). |
+| `entry` | Required for an application, optional for a library. |
+| `modules` | Only for a library, and required there: the module names that other projects can `import`, at least one, no duplicates, at most 1024. |
+
+All other fields keep the version 1 rules, and unknown fields are still errors. A module name is a CreateScript
+identifier: an ASCII letter or `_` first, then letters, digits and `_`, not only `_`, at most 32 characters, not
+a Kotlin hard keyword and not a built-in function that cannot be redefined (`println`, `waitTicks`, `listOf`,
+`mutableListOf`). **Package names and module names are separate:** the package `vector-math` may export the module
+`vector_math`, and nothing converts one into the other. A library's module `name` lives in the file
+`modules/name.cscr`; other files in `modules/` are modules that only the package itself can import (S8.2 Phase 4).
+
+## Package archives: `createscript-package.zip`
+
+> **S8.2 Phase 1** (in development). The archive format and `createscript pack` exist; downloading and installing
+> come in the next phases.
+
+A library is distributed as one ZIP file named `createscript-package.zip`, attached to a GitHub Release whose tag
+is `v<version>`. GitHub's automatically generated "Source code" archives are not package archives.
+
+```text
+createscript-package.zip
+  createscript.json          schema version 2, kind "library"
+  modules/vector_math.cscr   modules listed in "modules"
+  modules/helpers.cscr       other modules of the package
+  LICENSE                    optional: LICENSE, LICENCE, NOTICE, README, CHANGELOG or COPYING, also with .md or .txt
+```
+
+`createscript pack [directory] [--output <file>]` makes the archive from a library project. It takes exactly
+`createscript.json`, the `.cscr` files directly in `modules/` and the documents listed above, and refuses anything
+else in `modules/`, symbolic links and files that are not regular files. It writes entries sorted by path, without
+compression, with the time 1980-01-01 00:00 and mode 0644, and without directory entries, comments or extra
+fields, so the same files always give the same bytes. It checks the result with the same rules as an
+installation, prints its SHA-256 and never overwrites a file (exit code 73). It does not run or compile any code.
+
+An archive is accepted only in this strict form (other tools may write `DEFLATED` entries and a `modules/` directory
+entry; both are accepted):
+
+- **Layout:** the end of central directory record at the end (a comment is allowed), the central directory right
+  before it, and the local headers and data from the first byte on, one after another without gaps or overlaps.
+  The local headers must match the central directory (name, method, sizes, CRC). Prepended data, data between
+  entries and data after the end record are rejected, and so are overlapping entries (a known way to build zip bombs).
+- **Not supported:** ZIP64, multiple disks, encryption, data descriptors, and compression methods other than STORED
+  and DEFLATED.
+- **Entries:** names must be printable ASCII and follow the paths above (no `..`, absolute paths, `\`, `:` or other
+  directories). Only regular files and the `modules/` directory are allowed: entries whose Unix file type is a
+  symbolic link, a device, a FIFO or a socket are rejected. Duplicate paths, also those that differ only in case,
+  are rejected.
+- **Limits:** the archive at most 32 MiB; at most 1024 entries; a `.cscr` file at most 3,000,000 bytes (the
+  standalone source limit of 1,000,000 UTF-16 units times 3 bytes, the same value as the `createscript` command's
+  file limit), other files at most 1 MiB; at most 16 MiB in all after expansion; at most 100 times compression.
+  The declared sizes are checked before expanding, and expansion stops at the declared size, so an entry that
+  expands to more than it declares is rejected.
+- **Contents:** `createscript.json` must be a schema version 2 library (with the expected name and version when
+  installing), every module in `modules` must have its file, and every `.cscr` file must be valid UTF-8 without a
+  byte order mark and at most 1,000,000 characters. Every entry's CRC-32 is checked.
+
+The files of a package are only source code and documents. Neither the archive nor its manifest can give a
+program more access to the operating system, the network or the JVM than any other CreateScript program has.
+
 ## `createscript.lock` (lock version 1)
 
 The lock file is written by the tools (from S8.2 on), not by hand. It records the exact packages that the
@@ -219,10 +297,11 @@ know it; we did not run them for S8.1.
 ## Code layout
 
 - `createscript-project` (new Gradle module): the JSON parser and writer, the manifest and lock file models,
-  their rules, the canonical form and the consistency checks. It uses only the Kotlin standard library and
-  never touches files or the network; it takes bytes and returns values and diagnostics.
+  their rules, the canonical form and the consistency checks, and the package archive reader and writer
+  (`PackageArchives`). It uses only the Kotlin standard library and never touches files or the network; it takes
+  bytes and returns values and diagnostics.
 - `createscript-cli`: reads and writes the files, checks the entry file on disk, and implements `init`,
-  `manifest check` and `lock check`.
+  `manifest check`, `lock check` and `pack`.
 - `createscript-core` (the language, compiler and virtual machine) is unchanged.
 
 ## Planned: packages on GitHub Releases (S8.2 and later)

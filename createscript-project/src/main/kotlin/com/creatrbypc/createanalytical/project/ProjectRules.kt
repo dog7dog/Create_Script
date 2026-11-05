@@ -34,6 +34,32 @@ object ProjectRules {
 
     fun isValidName(name: String) = name.length <= MAX_NAME_LENGTH && NAME.matches(name)
 
+    // ---- モジュール名（S8.2 Phase 1） ----
+
+    // import のモジュール名の長さ（Core の LexerLimits.MAX_IDENTIFIER_LENGTH と同じ。一致は CLI のテストで確かめる）
+    const val MAX_MODULE_NAME_LENGTH = 32
+
+    // Core の識別子（英字・_ で始まり、英数字・_。_ だけのものは不可）で、Kotlin のハードキーワードでも、import できない組み込み関数の名前でもないもの。
+    // createscript-project は Core に依存しないため、キーワード・組み込み関数の一覧をここにも持つ（Core の HARD_KEYWORDS・BuiltinFunctions.NAMES との一致は CLI のテストで確かめる）。
+    // パッケージ名（ハイフンを使える）とは別の概念で、自動では変換しない
+    private val MODULE_NAME = Regex("[A-Za-z_][A-Za-z0-9_]*")
+    val HARD_KEYWORDS: Set<String> = setOf(
+        "as", "break", "class", "continue", "do", "else", "false", "for", "fun", "if", "in",
+        "interface", "is", "null", "object", "package", "return", "super", "this", "throw",
+        "true", "try", "typealias", "typeof", "val", "var", "when", "while",
+    )
+    val BUILTIN_FUNCTIONS: Set<String> = setOf("println", "waitTicks", "listOf", "mutableListOf")
+
+    fun isValidModuleName(name: String) = name.length <= MAX_MODULE_NAME_LENGTH && MODULE_NAME.matches(name) && !name.all { it == '_' } &&
+        name !in HARD_KEYWORDS && name !in BUILTIN_FUNCTIONS
+
+    // ---- ソースファイルの大きさ（S8.2 Phase 1） ----
+
+    // .cscr 1 ファイルの上限（UTF-16 単位）と、それを UTF-8 にしたときの最大のバイト数（1 単位あたり最大 3 バイト。BMP の外の文字は 4 バイトで 2 単位）。
+    // Core の CompileOptions.STANDALONE.maxSourceLength・CLI の CliLimits.MAX_SOURCE_BYTES と同じ値（一致は CLI のテストで確かめる）
+    const val MAX_SOURCE_LENGTH = 1_000_000
+    const val MAX_SOURCE_BYTES = MAX_SOURCE_LENGTH * 3
+
     fun isValidVersion(version: String) = version.length <= MAX_VERSION_LENGTH && VERSION.matches(version)
 
     fun isValidLicense(license: String) = license.length <= MAX_LICENSE_LENGTH && LICENSE.matches(license)

@@ -37,6 +37,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   files and directories that are still the ones it created (identifier, size, SHA-256). The checks read only
   regular files inside the project (`CS_PKG_FILE_OUTSIDE_PROJECT`, `CS_PKG_NOT_A_REGULAR_FILE`,
   `CS_PKG_FILE_CHANGED_WHILE_READING`).
+- Project files schema version 2 (`kind` `application` or `library`, `modules`) and package archives
+  (`createscript-package.zip`): a strict ZIP reader (layout, no ZIP64, encryption, data descriptors, links or
+  special files, size, count and ratio limits, CRC checks) and a deterministic writer. `createscript pack` makes a
+  package archive from a library project. Schema version 1 is unchanged.
 - Core: `ast.Program` keeps the JVM signatures of v0.1.0-alpha (the constructor and `copy` with three lists, as
   hidden members), so code compiled against v0.1.0-alpha still runs; a regression test runs such code.
 - `createscript run`: `--project-root <directory>` (default: the directory of the file). The interactive

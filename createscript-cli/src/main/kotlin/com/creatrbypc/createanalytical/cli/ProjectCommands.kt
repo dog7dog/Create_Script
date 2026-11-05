@@ -4,6 +4,8 @@ import com.creatrbypc.createanalytical.project.Lockfiles
 import com.creatrbypc.createanalytical.project.Manifest
 import com.creatrbypc.createanalytical.project.ManifestResult
 import com.creatrbypc.createanalytical.project.Manifests
+import com.creatrbypc.createanalytical.project.PackageArchives
+import com.creatrbypc.createanalytical.project.PackageKind
 import com.creatrbypc.createanalytical.project.ProjectDiagnostic
 import com.creatrbypc.createanalytical.project.ProjectDiagnosticCode
 import com.creatrbypc.createanalytical.project.ProjectRules
@@ -34,10 +36,11 @@ internal object SafeFiles {
     // 途中で止まっても、目的の名前に書きかけのファイルは残らない）。ハードリンクを作れないファイルシステムでは、置き換えない移動を使う。
     // 一時ファイルは CREATE_NEW で作る（Files.createTempFile は所有者だけが読める 0600 で作るため使わない。権限は通常のファイルと同じく umask に従う）。
     // fileKey は名前を付ける前の一時ファイルのもの（ハードリンク・同じファイルシステムの中の移動では、目的のファイルと同じ）
-    fun writeNew(target: Path, text: String): FileIdentity {
+    fun writeNew(target: Path, text: String): FileIdentity = writeNew(target, text.toByteArray(Charsets.UTF_8))
+
+    fun writeNew(target: Path, bytes: ByteArray): FileIdentity {
         val directory = target.toAbsolutePath().parent
         val temporary = directory.resolve(".createscript-${UUID.randomUUID()}.tmp")
-        val bytes = text.toByteArray(Charsets.UTF_8)
         try {
             FileChannel.open(temporary, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE).use { channel ->
                 val buffer = ByteBuffer.wrap(bytes)
@@ -152,6 +155,9 @@ internal class ProjectCommands(
         const val ENTRY = "src/main.cscr"
         const val INITIAL_VERSION = "0.1.0"
         const val HELLO = "println(\"Hello, CreateScript!\")\n"
+
+        // library のモジュールのディレクトリ（プロジェクト・パッケージアーカイブで同じ。S8.2 Phase 1）
+        const val MODULES_DIRECTORY = "modules"
     }
 
     // ---- init ----
@@ -224,6 +230,83 @@ internal class ProjectCommands(
         reason?.let { "${item.path} ($it)" }
     }
 
+    // ---- pack（S8.2 Phase 1） ----
+
+    // createscript pack [ディレクトリ] [--output ファイル]。library のプロジェクトから、パッケージアーカイブ（既定はプロジェクトの直下の createscript-package.zip）を作る。
+    // 入れるのは createscript.json・modules/*.cscr・直下の説明のファイル（LICENSE など）だけで、どれもシンボリックリンクでない通常のファイルでなければならない
+    // （リンクの先・ほかのファイルを入れない）。作ったアーカイブは、インストールと同じ検査（PackageArchives.read）で確かめてから、既存のファイルを上書きせずに書く。
+    // コードは実行しない（コンパイルもしない）
+    fun pack(directoryArgument: String?, outputOption: String?): Int {
+        val root = projectRoot(directoryArgument)
+        val loaded = loadManifest(root) ?: return ExitCode.INVALID_INPUT
+        val manifest = loaded.manifest!!
+        val shownManifest = shown(root, Manifests.FILE_NAME)
+        if (manifest.kind != PackageKind.LIBRARY) {
+            throw Failure(ExitCode.INVALID_INPUT, "$shownManifest is not a library; createscript pack needs \"schemaVersion\": 2 and \"kind\": \"library\"")
+        }
+        val files = java.util.TreeMap<String, ByteArray>()
+        files[Manifests.FILE_NAME] = readProjectFile(root, Manifests.FILE_NAME, shownManifest, Manifests.MAX_BYTES) ?: return ExitCode.INVALID_INPUT
+        val problems = ArrayList<String>()
+        // modules/: シンボリックリンクでないディレクトリで、中は modules/名前.cscr の通常のファイルだけ
+        val modulesDirectory = root.resolve(MODULES_DIRECTORY)
+        if (Files.isSymbolicLink(modulesDirectory)) throw Failure(ExitCode.INVALID_INPUT, "${shown(root, MODULES_DIRECTORY)} is a symbolic link; it is not packed")
+        val entries = Files.list(modulesDirectory).use { stream -> stream.map { it.fileName.toString() }.sorted().toList() }
+        for (fileName in entries) {
+            val relative = "$MODULES_DIRECTORY/$fileName"
+            val path = root.resolve(relative)
+            val reason = when {
+                Files.isSymbolicLink(path) -> "symbolic links are not packed"
+                !Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS) -> "only regular files are packed"
+                else -> PackageArchives.pathProblem(relative)
+            }
+            if (reason != null) {
+                problems += ProjectDiagnostic(ProjectDiagnosticCode.ARCHIVE_INVALID_PATH, 1, 1, listOf(relative, reason)).format(shown(root, relative))
+                continue
+            }
+            val bytes = readProjectFile(root, relative, shown(root, relative), PackageArchives.MAX_OTHER_FILE_BYTES.coerceAtLeast(ProjectRules.MAX_SOURCE_BYTES)) ?: return ExitCode.INVALID_INPUT
+            PackageArchives.sourceProblem(bytes)?.let { problems += ProjectDiagnostic(ProjectDiagnosticCode.ARCHIVE_INVALID_SOURCE, 1, 1, listOf(relative, it)).format(shown(root, relative)) }
+            files[relative] = bytes
+        }
+        // 直下の説明のファイル（あるものだけ）
+        for (document in listOf("LICENSE", "LICENCE", "NOTICE", "README", "CHANGELOG", "COPYING").flatMap { listOf(it, "$it.md", "$it.txt") }) {
+            val path = root.resolve(document)
+            if (!Files.exists(path, LinkOption.NOFOLLOW_LINKS)) continue
+            if (Files.isSymbolicLink(path) || !Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)) {
+                problems += ProjectDiagnostic(ProjectDiagnosticCode.ARCHIVE_INVALID_PATH, 1, 1, listOf(document, "only regular files that are not symbolic links are packed")).format(shown(root, document))
+                continue
+            }
+            val bytes = readProjectFile(root, document, shown(root, document), PackageArchives.MAX_OTHER_FILE_BYTES) ?: return ExitCode.INVALID_INPUT
+            if (bytes.size > PackageArchives.MAX_OTHER_FILE_BYTES) {
+                problems += ProjectDiagnostic(ProjectDiagnosticCode.ARCHIVE_FILE_TOO_LARGE, 1, 1, listOf(document, PackageArchives.MAX_OTHER_FILE_BYTES.toString())).format(shown(root, document))
+                continue
+            }
+            files[document] = bytes
+        }
+        if (problems.isNotEmpty()) {
+            problems.forEach(err::println)
+            return ExitCode.INVALID_INPUT
+        }
+        val archive = PackageArchives.write(files)
+        // インストールと同じ検査（大きさ・数・パス・マニフェスト・ソース）
+        val checked = PackageArchives.read(archive, manifest.name, manifest.version)
+        if (checked.archive == null) {
+            checked.diagnostics.forEach { err.println(it.diagnostic.format(it.path ?: PackageArchives.FILE_NAME)) }
+            return ExitCode.INVALID_INPUT
+        }
+        val output = outputOption?.let(::path) ?: root.resolve(PackageArchives.FILE_NAME)
+        try {
+            SafeFiles.writeNew(output, archive)
+        } catch (error: FileAlreadyExistsException) {
+            throw Failure(ExitCode.CANNOT_CREATE, "$output already exists; remove it or choose another file with --output")
+        } catch (error: IOException) {
+            throw Failure(ExitCode.CANNOT_CREATE, "cannot write $output: ${error.message ?: error.javaClass.simpleName}")
+        }
+        val hex = SafeFiles.sha256(archive).joinToString("") { "%02x".format(it) }
+        out.println("Packed ${manifest.name} ${manifest.version}: $output (${files.size} files, ${archive.size} bytes)")
+        out.println("sha256 $hex")
+        return ExitCode.OK
+    }
+
     // ---- manifest check / lock check ----
 
     // createscript manifest check [ディレクトリ]
@@ -231,7 +314,9 @@ internal class ProjectCommands(
         val root = projectRoot(directoryArgument)
         val loaded = loadManifest(root) ?: return ExitCode.INVALID_INPUT
         val manifest = loaded.manifest!!
-        out.println("${shown(root, Manifests.FILE_NAME)}: ok (${manifest.name} ${manifest.version}, entry ${manifest.entry}, ${manifest.dependencies.size} dependencies)")
+        val contents = manifest.entry?.let { "entry $it" } ?: "library"
+        val modules = if (manifest.modules.isEmpty()) "" else ", modules ${manifest.modules.joinToString(" ")}"
+        out.println("${shown(root, Manifests.FILE_NAME)}: ok (${manifest.name} ${manifest.version}, $contents$modules, ${manifest.dependencies.size} dependencies)")
         return ExitCode.OK
     }
 
@@ -273,8 +358,21 @@ internal class ProjectCommands(
             report(shownManifest, result.diagnostics, result.truncated)
             return null
         }
-        entryProblem(root, manifest.entry)?.let { code ->
-            report(shownManifest, listOf(ProjectDiagnostic(code, result.entryPosition.first, result.entryPosition.second, listOf(manifest.entry))))
+        manifest.entry?.let { entry ->
+            entryProblem(root, entry)?.let { code ->
+                report(shownManifest, listOf(ProjectDiagnostic(code, result.entryPosition.first, result.entryPosition.second, listOf(entry))))
+                return null
+            }
+        }
+        // library の modules（S8.2 Phase 1）: modules/名前.cscr が、ルートの中の通常のファイルであること（エントリーと同じ規則）
+        val missing = manifest.modules.mapNotNull { module ->
+            entryProblem(root, "$MODULES_DIRECTORY/$module.cscr")?.let { _ ->
+                val position = result.modulePositions[module] ?: (1 to 1)
+                ProjectDiagnostic(ProjectDiagnosticCode.MODULE_FILE_NOT_FOUND, position.first, position.second, listOf(module))
+            }
+        }
+        if (missing.isNotEmpty()) {
+            report(shownManifest, missing)
             return null
         }
         return result

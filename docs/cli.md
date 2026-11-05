@@ -6,6 +6,7 @@ createscript run <file.cscr> [options]
 createscript init [directory] [--name <name>]
 createscript manifest check [directory]
 createscript lock check [directory]
+createscript pack [directory] [--output <file>]
 createscript --help      (-h)
 createscript --version
 ```
@@ -89,6 +90,8 @@ In development (not in v0.1.0-alpha). See [Project files](packages.md) for the f
   the files).
 - `createscript manifest check [directory]` checks `createscript.json` and its entry file.
 - `createscript lock check [directory]` checks `createscript.lock` against `createscript.json`.
+- `createscript pack [directory] [--output <file>]` makes `createscript-package.zip` from a library project
+  (schema version 2). The same files always give the same bytes; an existing file is never overwritten.
 - The directory defaults to the current directory. The checks only read files. `createscript run` does not read
   these files yet, and nothing is downloaded or installed.
 
