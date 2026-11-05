@@ -8,8 +8,8 @@
 #               so a runtime for another operating system is never made here.
 # <output-dir>  Must not exist yet. It receives:
 #                 bin/createscript   launcher (POSIX sh)
-#                 lib/               createscript-cli, createscript-core, kotlin-stdlib, annotations, jline-reader,
-#                                    jline-terminal
+#                 lib/               createscript-cli, createscript-core, createscript-project, kotlin-stdlib, annotations,
+#                                    jline-reader, jline-terminal
 #                 runtime/           minimal Java runtime made by jlink (runtime/legal holds its licenses)
 #                 legal/             CreateScript's NOTICE, THIRD-PARTY-NOTICES.md, the Apache License 2.0,
 #                                    the JLine license and JAVA-RUNTIME-SOURCE.txt (where to get the source
@@ -100,14 +100,15 @@ for entry in $classpath; do
 done
 IFS=$old_ifs
 
-# Only the CLI, Core and their Kotlin libraries: nothing from Minecraft, NeoForge, Create or Kotlin for Forge
+# Only the CLI, Core, Project and their Kotlin libraries: nothing from Minecraft, NeoForge, Create or Kotlin for Forge
 for name in $jars; do
     if unzip -Z1 "$out/lib/$name" | grep -E -i -q '^(net/minecraft|net/neoforged|com/mojang|com/simibubi|thedarkcolour)/|neoforge\.mods\.toml|mods\.toml'; then
         fail "$name contains Minecraft, NeoForge, Create or Kotlin for Forge files"
     fi
 done
-for name in createscript-cli.jar createscript-core.jar; do
-    other=$(unzip -Z1 "$out/lib/$name" | grep -v -E '^(META-INF/|com/$|com/creatrbypc/$|com/creatrbypc/createanalytical/$|com/creatrbypc/createanalytical/(script|cli)/)' || true)
+for name in createscript-cli.jar createscript-core.jar createscript-project.jar; do
+    [ -f "$out/lib/$name" ] || fail "$name is missing from the installation"
+    other=$(unzip -Z1 "$out/lib/$name" | grep -v -E '^(META-INF/|com/$|com/creatrbypc/$|com/creatrbypc/createanalytical/$|com/creatrbypc/createanalytical/(script|cli|project)/)' || true)
     [ -z "$other" ] || fail "$name contains files outside the CreateScript packages: $other"
 done
 

@@ -28,6 +28,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   chains, construction cycles and comparisons that look like type arguments.
 - `createscript run` and the interactive mode compile with `CompileOptions.STANDALONE`; the command reads
   files up to 3,000,000 bytes.
+- `createscript-project`: a new module for the project files `createscript.json` (schema version 1) and
+  `createscript.lock` (lock version 1): a strict JSON parser and writer (duplicate keys, size and nesting
+  limits), validation of names, SemVer versions, entry paths, sources and SHA-256 values, the canonical lock file
+  form and its consistency with the manifest. It does not access files or the network.
+- `createscript init`, `createscript manifest check` and `createscript lock check`; exit code 73 when `init`
+  cannot create the files. No downloads, installation or dependency resolution yet.
 - `createscript run`: `--project-root <directory>` (default: the directory of the file). The interactive
   mode reports `CS_MODULE_IMPORT_UNAVAILABLE` for `import`.
 

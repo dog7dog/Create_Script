@@ -8,6 +8,7 @@ CreateScript は、Kotlin に似た書き方の、静的型付けの小さなス
 
 - **`createscript-core`**：字句解析・構文解析・意味解析・バイトコードへのコンパイル・VM。Kotlin/JVM のライブラリで、依存は Kotlin の標準ライブラリだけです。
 - **`createscript-cli`**：`createscript` コマンド。`.cscr` ファイルを実行します。行編集つきの対話モード（REPL）もあります。
+- **`createscript-project`**（開発中。v0.1.0-alpha には入っていません）：プロジェクトのファイル `createscript.json`・`createscript.lock` の読み取り（厳密な JSON）・検査・正規形。ファイルとネットワークには触れません。
 
 > **状態：0.1.0-alpha。** 言語と API は、まだ変わることがあります。
 > [v0.1.0-alpha](https://github.com/dog7dog/Create_Script/releases/tag/v0.1.0-alpha) を、GitHub Releases にプレリリースとして公開しています（2026-11-04）。
@@ -39,6 +40,9 @@ println(fib(10))   // 55
 - ローカルのモジュール（開発中。v0.1.0-alpha には入っていません）：`import geometry` と書くと、同じプロジェクトの `geometry.cscr` の関数を `geometry.square(5)` の形で使えます。
   ファイルをまたいで型を検査します。モジュールは自分のプロジェクトのディレクトリからだけ読みます。パッケージ管理やダウンロードの機能は、
   まだありません（[Modules](docs/language.md#modules-local-import)）。
+- プロジェクトのファイル（開発中。v0.1.0-alpha には入っていません）：`createscript init` で、マニフェスト `createscript.json` のあるプロジェクトを作れます。
+  `createscript manifest check`・`createscript lock check` で、マニフェストとロックファイルを確かめます。パッケージのダウンロードやインストールは、
+  まだできません（[Project files](docs/packages.md)）。
 - 安全な実行：スタック・呼び出しの深さ・オブジェクト・リストの要素に固定の上限があり、1 tick の命令の数も決まっています。
   入力とプログラムの大きさの上限はホストが選びます。埋め込み先では小さく（4096 文字・4096 命令）、`createscript` コマンドでは大きくなります
   （1 ファイル 1,000,000 文字・モジュール 1024 個・命令数の固定の上限なし。開発中。[Limits and safety](docs/language.md#limits-and-safety)）。
@@ -50,6 +54,7 @@ println(fib(10))   // 55
 - [言語の基本](docs/language.md)（英語）
 - [`createscript` コマンド・REPL・行編集](docs/cli.md)（英語）
 - [サンプル](docs/samples.md)（英語）
+- [プロジェクトのファイル（createscript.json・createscript.lock）](docs/packages.md)（英語）
 - CLI の詳しい説明（日本語）：[createscript-cli/README.md](createscript-cli/README.md)
 
 ## ビルド

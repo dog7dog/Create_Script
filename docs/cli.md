@@ -3,6 +3,9 @@
 ```
 createscript                         interactive mode (REPL)
 createscript run <file.cscr> [options]
+createscript init [directory] [--name <name>]
+createscript manifest check [directory]
+createscript lock check [directory]
 createscript --help      (-h)
 createscript --version
 ```
@@ -76,6 +79,26 @@ $ createscript run my-project/apps/tool.cscr --project-root my-project
 - A file without `import` is compiled exactly as before.
 
 There is no package manager yet: `createscript` does not download modules and has no `install` command.
+
+## Project files
+
+In development (not in v0.1.0-alpha). See [Project files](packages.md) for the formats.
+
+- `createscript init [directory] [--name <name>]` creates `createscript.json` and `src/main.cscr`. It never
+  overwrites a file and, if it fails halfway, removes only what it created (exit code 73 when it cannot create
+  the files).
+- `createscript manifest check [directory]` checks `createscript.json` and its entry file.
+- `createscript lock check [directory]` checks `createscript.lock` against `createscript.json`.
+- The directory defaults to the current directory. The checks only read files. `createscript run` does not read
+  these files yet, and nothing is downloaded or installed.
+
+| Exit code | Meaning |
+|---|---|
+| 0 | No problems |
+| 64 | Usage error |
+| 65 | A problem in `createscript.json` or `createscript.lock` (shown as `file:line:column: error CS_PKG_…`) |
+| 66 | `createscript.json` or the directory does not exist, or a file cannot be read |
+| 73 | `init` cannot create the files (one exists already, or writing failed) |
 
 ## Interactive mode (REPL)
 

@@ -10,6 +10,8 @@ that run untrusted scripts. This repository contains:
   library with no dependency other than the Kotlin standard library.
 - **`createscript-cli`**: the `createscript` command, which runs `.cscr` files and has an interactive mode
   (REPL) with line editing.
+- **`createscript-project`** (in development, not in v0.1.0-alpha): the project files `createscript.json` and
+  `createscript.lock` (strict JSON, validation, canonical form), without file or network access.
 
 > **Status: 0.1.0-alpha.** The language and the APIs can still change.
 > [v0.1.0-alpha](https://github.com/dog7dog/Create_Script/releases/tag/v0.1.0-alpha) is published as a
@@ -44,6 +46,9 @@ println(fib(10))   // 55
 - Local modules (in development, not in v0.1.0-alpha): `import geometry` uses the functions of
   `geometry.cscr` in the same project, as `geometry.square(5)`, with type checks across files. Modules are only read from your project directory;
   there is no package manager or download yet (see [Modules](docs/language.md#modules-local-import)).
+- Project files (in development, not in v0.1.0-alpha): `createscript init` creates a project with a
+  `createscript.json` manifest; `createscript manifest check` and `createscript lock check` check the manifest
+  and the lock file. Packages cannot be downloaded or installed yet (see [Project files](docs/packages.md)).
 - A safe execution model: fixed limits on stack, call depth, objects and list elements; an instruction budget
   per tick; input and program size limits chosen by the host: small for embedding hosts (4096 characters and
   4096 instructions), large for the `createscript` command (1,000,000 characters per file, 1024 modules, no
@@ -55,6 +60,7 @@ println(fib(10))   // 55
 - [Language basics](docs/language.md)
 - [The `createscript` command, REPL and line editing](docs/cli.md)
 - [Samples](docs/samples.md)
+- [Project files: `createscript.json` and `createscript.lock`](docs/packages.md)
 - Detailed CLI manual in Japanese: [createscript-cli/README.md](createscript-cli/README.md)
 
 ## Building

@@ -17,6 +17,8 @@ kotlin {
 
 dependencies {
     implementation project(':createscript-core')
+    // プロジェクトのファイル（createscript.json・createscript.lock）の読み取りと検査（S8.1。ファイルの読み書きは CLI が行う）
+    implementation project(':createscript-project')
 
     // 対話モードの行編集（S5.3。BSD 3-Clause）。端末の操作は stty を使う exec の方式だけを使う。jline-native は
     // すべての OS・CPU 向けのネイティブライブラリを含むため、配布物に入れない（exec の方式では使わない）

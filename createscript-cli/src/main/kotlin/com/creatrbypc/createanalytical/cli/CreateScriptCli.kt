@@ -26,6 +26,9 @@ object ExitCode {
     const val USAGE = 64
     const val INVALID_INPUT = 65
     const val NO_INPUT = 66
+
+    // ファイルを作れない（既にある・書けない: sysexits.h の EX_CANTCREAT。createscript init: S8.1）
+    const val CANNOT_CREATE = 73
 }
 
 // CLI の設定の既定値と上限（README に記載）。Core の RunOptions とは別に、CLI だけで管理する
@@ -74,6 +77,7 @@ class CreateScriptCli(private val out: PrintStream, private val err: PrintStream
                     return ExitCode.OK
                 }
                 "run" -> return run(parseRun(args.drop(1)))
+                "init", "manifest", "lock" -> return project(args)
                 else -> throw UsageError(if (args[0].startsWith("-")) "unknown option: ${args[0]}" else "unknown command: ${args[0]}")
             }
         } catch (error: UsageError) {
@@ -83,6 +87,47 @@ class CreateScriptCli(private val out: PrintStream, private val err: PrintStream
         } catch (error: InputError) {
             err.println("createscript: ${error.message}")
             return error.code
+        } catch (error: ProjectCommands.Failure) {
+            err.println("createscript: ${error.message}")
+            return error.code
+        }
+    }
+
+    // プロジェクトのファイルのコマンド（S8.1）: init [ディレクトリ] [--name 名前]、manifest check [ディレクトリ]、lock check [ディレクトリ]
+    private fun project(args: List<String>): Int {
+        val commands = ProjectCommands(out, err)
+        val rest = args.drop(1)
+        return when (args[0]) {
+            "init" -> {
+                var directory: String? = null
+                var name: String? = null
+                var index = 0
+                while (index < rest.size) {
+                    val argument = rest[index]
+                    when {
+                        argument == "--name" -> {
+                            if (name != null) throw UsageError("duplicate option: --name")
+                            name = rest.getOrNull(index + 1) ?: throw UsageError("missing value for --name")
+                            index += 2
+                        }
+                        argument.startsWith("-") -> throw UsageError("unknown option: $argument")
+                        directory != null -> throw UsageError("unexpected argument: $argument")
+                        else -> {
+                            directory = argument
+                            index++
+                        }
+                    }
+                }
+                commands.init(directory, name)
+            }
+            else -> {
+                val subcommand = rest.firstOrNull() ?: throw UsageError("missing subcommand: createscript ${args[0]} check [directory]")
+                if (subcommand != "check") throw UsageError("unknown subcommand: ${args[0]} $subcommand")
+                val directory = rest.getOrNull(1)
+                if (directory != null && directory.startsWith("-")) throw UsageError("unknown option: $directory")
+                if (rest.size > 2) throw UsageError("unexpected argument: ${rest[2]}")
+                if (args[0] == "manifest") commands.checkManifest(directory) else commands.checkLock(directory)
+            }
         }
     }
 
@@ -208,6 +253,9 @@ class CreateScriptCli(private val out: PrintStream, private val err: PrintStream
             |Usage:
             |  createscript                      start the interactive mode
             |  createscript run <file$EXTENSION> [options]
+            |  createscript init [directory] [--name <name>]   create createscript.json and src/main$EXTENSION
+            |  createscript manifest check [directory]       check createscript.json
+            |  createscript lock check [directory]           check createscript.lock against createscript.json
             |  createscript --help
             |  createscript --version
             |
@@ -222,7 +270,8 @@ class CreateScriptCli(private val out: PrintStream, private val err: PrintStream
             |
             |Exit codes:
             |  0 finished, 1 runtime error, 2 compile error, 3 --max-ticks reached,
-            |  64 usage error, 65 invalid input file, 66 input file not found or unreadable
+            |  64 usage error, 65 invalid input file, 66 input file not found or unreadable,
+            |  73 cannot create a file (init)
             |""".trimMargin()
 
         // file:line:column: error CS_XXX (arguments)

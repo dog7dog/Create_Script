@@ -240,8 +240,24 @@ createscript-cli/samples/infinite_loop.cscr: stopped after 1000 ticks (--max-tic
 | 64 | 使い方の誤り（コマンドやオプションの誤り、値の誤りや範囲外、`.cscr` でないファイル） |
 | 65 | ファイルの内容を扱えない（UTF-8 でない、大きすぎる。1,000,000 文字を超え得る 3,000,000 バイト超は読まずに拒否する。v0.1.0-alpha では 4096 文字・12288 バイト） |
 | 66 | ファイルがない、通常のファイルでない、読めない |
+| 73 | `createscript init` がファイルを作れない（既にある、書けない。S8.1） |
 
-64〜66 は `sysexits.h` の EX_USAGE・EX_DATAERR・EX_NOINPUT と同じ番号です。
+64〜66・73 は `sysexits.h` の EX_USAGE・EX_DATAERR・EX_NOINPUT・EX_CANTCREAT と同じ番号です。
+
+### 7.1 プロジェクトのファイル（S8.1。開発中）
+
+`createscript.json`（マニフェスト）と `createscript.lock`（ロックファイル）を扱うコマンドです。形式は [docs/packages.md](../docs/packages.md)（英語）にあります。
+パッケージのダウンロード・インストール・依存の解決は、まだありません。`run` は、これらのファイルを読みません。
+
+```text
+$ createscript init my-app                 # createscript.json と src/main.cscr を作る（名前の既定はディレクトリ名。--name で指定）
+$ createscript manifest check my-app       # マニフェストと、エントリーのファイルを確かめる
+$ createscript lock check my-app           # ロックファイルを、マニフェストと照らして確かめる（依存が無ければ不要）
+```
+
+- `init` は、既にあるファイルを上書きしません（どちらかがあれば何も作らず、終了コード 73）。途中で失敗したら、今回作ったファイル・ディレクトリだけを消します。
+- 診断は `createscript.json:行:列: error CS_PKG_… (引数)` の形で、終了コードは 65 です。ファイルが無いときは 66 です。
+- JSON は厳密な形だけを受け付けます（コメント・末尾のカンマは不可、重複キーはエラー、マニフェスト 64 KiB・ロックファイル 1 MiB まで）。
 
 ## 8. 実行の制限と安全対策
 
