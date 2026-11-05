@@ -18,17 +18,19 @@ import java.nio.file.LinkOption
 import java.nio.file.Path
 import java.nio.file.Paths
 import java.nio.file.StandardOpenOption
+import java.util.UUID
 
 // ファイルを壊さずに書く手順（S8.1）
 internal object SafeFiles {
     // 新しいファイルとして書く。同じ名前のファイルがあれば（書き始めた後に作られたものも）上書きせずに FileAlreadyExistsException。
     // 同じディレクトリの一時ファイルに書いて内容をディスクに書き出し（force）、ハードリンクで名前を付ける（リンクの作成は、名前が既にあれば失敗する。
-    // 途中で止まっても、目的の名前に書きかけのファイルは残らない）。ハードリンクを作れないファイルシステムでは、置き換えない移動を使う
+    // 途中で止まっても、目的の名前に書きかけのファイルは残らない）。ハードリンクを作れないファイルシステムでは、置き換えない移動を使う。
+    // 一時ファイルは CREATE_NEW で作る（Files.createTempFile は所有者だけが読める 0600 で作るため使わない。権限は通常のファイルと同じく umask に従う）
     fun writeNew(target: Path, text: String) {
         val directory = target.toAbsolutePath().parent
-        val temporary = Files.createTempFile(directory, ".createscript-", ".tmp")
+        val temporary = directory.resolve(".createscript-${UUID.randomUUID()}.tmp")
         try {
-            FileChannel.open(temporary, StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING).use { channel ->
+            FileChannel.open(temporary, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE).use { channel ->
                 val buffer = ByteBuffer.wrap(text.toByteArray(Charsets.UTF_8))
                 while (buffer.hasRemaining()) channel.write(buffer)
                 channel.force(true)
@@ -91,6 +93,12 @@ internal class ProjectCommands(
             if (Files.exists(existing, LinkOption.NOFOLLOW_LINKS)) throw Failure(ExitCode.CANNOT_CREATE, "$existing already exists; nothing was created")
         }
         if (Files.exists(directory) && !Files.isDirectory(directory)) throw Failure(ExitCode.CANNOT_CREATE, "$directory is not a directory; nothing was created")
+        // src がシンボリックリンク（プロジェクトの外を指しうる）か、ディレクトリでなければ、何も作らない（リンクの先に書かない）
+        val sourceDirectory = entryPath.parent
+        if (Files.isSymbolicLink(sourceDirectory)) throw Failure(ExitCode.CANNOT_CREATE, "$sourceDirectory is a symbolic link; nothing was created")
+        if (Files.exists(sourceDirectory, LinkOption.NOFOLLOW_LINKS) && !Files.isDirectory(sourceDirectory, LinkOption.NOFOLLOW_LINKS)) {
+            throw Failure(ExitCode.CANNOT_CREATE, "$sourceDirectory is not a directory; nothing was created")
+        }
         val created = ArrayList<Path>()
         try {
             createDirectories(entryPath.parent, created)

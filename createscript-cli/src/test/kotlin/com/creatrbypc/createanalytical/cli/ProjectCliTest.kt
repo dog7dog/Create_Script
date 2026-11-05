@@ -137,6 +137,70 @@ class ProjectCliTest {
         assertFalse(Files.exists(existing.resolve("main.cscr")))
     }
 
+    // S8.1 の最終検証: シンボリックリンク・既存のファイルを壊さず、リンクの先にも書かない
+    @Test
+    fun initDoesNotFollowOrBreakLinks() {
+        // src がプロジェクトの外を指すシンボリックリンク: 何も作らず、リンクの先にも書かない
+        val outside = Files.createDirectories(directory.resolve("outside"))
+        val linked = Files.createDirectories(directory.resolve("linked-src"))
+        Files.createSymbolicLink(linked.resolve("src"), outside)
+        val result = cli("init", linked.toString())
+        assertEquals(ExitCode.CANNOT_CREATE, result.code)
+        assertTrue(result.err.contains("is a symbolic link; nothing was created"), result.err)
+        assertEquals(emptyList<String>(), Files.list(outside).use { files -> files.map { it.fileName.toString() }.toList() })
+        assertFalse(Files.exists(linked.resolve("createscript.json"), java.nio.file.LinkOption.NOFOLLOW_LINKS))
+        assertTrue(Files.isSymbolicLink(linked.resolve("src")))
+        // 壊れたリンクの src も同じ
+        val dangling = Files.createDirectories(directory.resolve("dangling-src"))
+        Files.createSymbolicLink(dangling.resolve("src"), directory.resolve("nowhere"))
+        assertEquals(ExitCode.CANNOT_CREATE, cli("init", dangling.toString()).code)
+        assertFalse(Files.exists(directory.resolve("nowhere")))
+        // src が通常のファイル
+        val fileSrc = Files.createDirectories(directory.resolve("file-src"))
+        write(fileSrc.resolve("src"), "not a directory")
+        assertEquals(ExitCode.CANNOT_CREATE, cli("init", fileSrc.toString()).code)
+        assertEquals("not a directory", Files.readString(fileSrc.resolve("src")))
+        assertEquals(listOf("src"), Files.list(fileSrc).use { files -> files.map { it.fileName.toString() }.toList() })
+        // createscript.json がファイルへのシンボリックリンク: リンクも、その先のファイルも変えない
+        val target = write(directory.resolve("real.json"), "original")
+        val manifestLink = Files.createDirectories(directory.resolve("manifest-link"))
+        Files.createSymbolicLink(manifestLink.resolve("createscript.json"), target)
+        assertEquals(ExitCode.CANNOT_CREATE, cli("init", manifestLink.toString()).code)
+        assertEquals("original", Files.readString(target))
+        assertTrue(Files.isSymbolicLink(manifestLink.resolve("createscript.json")))
+        // プロジェクトのディレクトリが壊れたシンボリックリンク: 何も作らない
+        val brokenProject = Files.createSymbolicLink(directory.resolve("broken-project"), directory.resolve("missing-dir"))
+        assertEquals(ExitCode.CANNOT_CREATE, cli("init", brokenProject.toString(), "--name", "broken").code)
+        assertFalse(Files.exists(directory.resolve("missing-dir")))
+        // createscript.json という名前のディレクトリ
+        val dirManifest = Files.createDirectories(directory.resolve("dir-manifest/createscript.json"))
+        assertEquals(ExitCode.CANNOT_CREATE, cli("init", dirManifest.parent.toString()).code)
+        assertTrue(Files.isDirectory(dirManifest))
+        // どの場合も一時ファイル（.createscript-*.tmp）を残さない
+        val leftovers = Files.walk(directory).use { files -> files.filter { it.fileName.toString().startsWith(".createscript-") }.toList() }
+        assertEquals(emptyList<Path>(), leftovers)
+    }
+
+    // 作るファイルの権限は、通常のファイルと同じ（umask に従う。一時ファイルの 0600 のままにしない）
+    @Test
+    fun initUsesNormalPermissions() {
+        val project = directory.resolve("perms")
+        assertEquals(ExitCode.OK, cli("init", project.toString()).code)
+        val reference = write(directory.resolve("reference.txt"), "x")
+        val expected = Files.getPosixFilePermissions(reference)
+        assertEquals(expected, Files.getPosixFilePermissions(project.resolve("createscript.json")))
+        assertEquals(expected, Files.getPosixFilePermissions(project.resolve("src/main.cscr")))
+    }
+
+    // 最初の書き込みで失敗しても、作ったディレクトリを消す
+    @Test
+    fun initRollsBackWhenTheFirstWriteFails() {
+        val project = directory.resolve("deep/new/app")
+        val failing: (Path, String) -> Unit = { _, _ -> throw IOException("read-only file system (simulated)") }
+        assertThrows(ProjectCommands.Failure::class.java) { ProjectCommands(PrintStream(ByteArrayOutputStream()), PrintStream(ByteArrayOutputStream()), failing).init(project.toString(), null) }
+        assertFalse(Files.exists(directory.resolve("deep")))
+    }
+
     // 新しいファイルとしてだけ書く（既にあれば上書きしない。一時ファイルは残らない）
     @Test
     fun writesFilesSafely() {

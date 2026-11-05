@@ -24,6 +24,7 @@ class Lockfile private constructor(val root: LockRoot, val packages: List<Locked
             val sorted = packages.map { it.copy(dependencies = it.dependencies.sorted()) }.sortedBy { it.name }
             val names = sorted.map { it.name }
             require(names.distinct().size == names.size) { "duplicate package names" }
+            require(root.name !in names) { "a package must not have the name of the project" }
             for (entry in sorted) {
                 require(ProjectRules.isValidName(entry.name) && ProjectRules.isValidVersion(entry.version)) { "invalid package: ${entry.name}" }
                 require(ProjectRules.isValidSource(entry.source) && ProjectRules.isValidSha256(entry.sha256)) { "invalid package: ${entry.name}" }
@@ -140,6 +141,8 @@ object Lockfiles {
                 if (packageVersion != null && source != null && sha256 != null) packages.add(LockedPackage(name.value, packageVersion.value, source.value, sha256.value, dependencies))
             }
         }
+        // プロジェクト自身と同じ名前のパッケージは使えない（マニフェストで自分自身に依存できないのと同じ）
+        lockRoot?.let { rootInfo -> positions[rootInfo.name]?.let { diagnostics.add(ProjectDiagnosticCode.DEPENDS_ON_ITSELF, it, rootInfo.name) } }
         // 参照と循環は、パッケージの一覧がそろってから確かめる
         for (entry in packages) {
             for (dependency in entry.dependencies) {

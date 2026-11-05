@@ -63,17 +63,37 @@ data class ProjectDiagnostic(val code: ProjectDiagnosticCode, val line: Int, val
     fun format(file: String): String =
         "$file:$line:$column: error ${code.id}" + if (arguments.isEmpty()) "" else arguments.joinToString(", ", " (", ")") { "\"${escape(it)}\"" }
 
+    // 引数はファイルの中の文字列（信頼できない）なので、端末の表示を変えうる文字を \uXXXX にする: C0・C1 の制御文字と DEL（ESC・CSI による端末の操作）、
+    // 書式の制御文字（Unicode の Cf。双方向テキストの制御文字 U+202A〜U+202E・U+2066〜U+2069 などによる表示の入れ替え）、行・段落の区切り、対にならないサロゲート。
+    // 長い引数は MAX_ARGUMENT_LENGTH 単位で切る（サロゲートの対は分けない）
     private fun escape(text: String): String {
-        val shown = if (text.length > MAX_ARGUMENT_LENGTH) text.take(MAX_ARGUMENT_LENGTH) + "…" else text
+        var end = minOf(text.length, MAX_ARGUMENT_LENGTH)
+        if (end < text.length && end > 0 && text[end - 1].isHighSurrogate()) end--
+        val shown = if (end < text.length) text.substring(0, end) + "…" else text
         return buildString {
-            for (c in shown) {
+            var i = 0
+            while (i < shown.length) {
+                val c = shown[i]
+                val paired = c.isHighSurrogate() && i + 1 < shown.length && shown[i + 1].isLowSurrogate()
                 when {
+                    paired -> {
+                        append(c).append(shown[i + 1])
+                        i += 2
+                        continue
+                    }
                     c == '"' || c == '\\' -> append('\\').append(c)
-                    c < ' ' || c == '\u007f' -> append("\\u%04x".format(c.code))
+                    unsafe(c) -> append("\\u%04x".format(c.code))
                     else -> append(c)
                 }
+                i++
             }
         }
+    }
+
+    private fun unsafe(c: Char): Boolean {
+        if (c < ' ' || c.code in 0x7f..0x9f || c.isSurrogate()) return true
+        val type = Character.getType(c).toByte()
+        return type == Character.FORMAT || type == Character.LINE_SEPARATOR || type == Character.PARAGRAPH_SEPARATOR
     }
 
     companion object {

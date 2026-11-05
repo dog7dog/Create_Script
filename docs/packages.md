@@ -36,15 +36,18 @@ my-app/createscript.lock: not needed (no dependencies)
   valid package name. It never overwrites a file: if either file (or a link with that name) exists, nothing
   is created (exit code 73). Each file is written to a temporary file in the same directory and then given its
   name with a hard link, which fails instead of replacing a file that appeared meanwhile, so a file is never
-  left half-written. If a later step fails, `init` removes only the files and directories it created. It does
-  not create a lock file.
+  left half-written; the files get the normal permissions (as set by the umask). If `src` is a symbolic link or
+  not a directory, nothing is created, so `init` never writes through a link. If a later step fails, `init`
+  removes only the files and directories it created. It does not create a lock file.
 - `createscript manifest check [directory]` checks `createscript.json` and that the entry file exists, is a
   regular file and, after following symbolic links, is inside the project directory.
 - `createscript lock check [directory]` checks the manifest, then `createscript.lock` against it. A project
   without dependencies needs no lock file; a project with dependencies and no lock file is an error.
 
 The checks only read files. Problems are reported like compile errors, `file:line:column: error CODE
-("arguments")`, with exit code 65 (66 when a file is missing or unreadable, 64 for usage errors).
+("arguments")`, with exit code 65 (66 when a file is missing or unreadable, 64 for usage errors). Arguments
+come from the files, so characters that could change what a terminal shows (control characters, bidirectional
+and other format characters, line separators, unpaired surrogates) are shown as `\uXXXX`.
 
 ## `createscript.json` (schema version 1)
 
