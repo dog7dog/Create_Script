@@ -247,7 +247,7 @@ class CreateScriptCli(private val out: PrintStream, private val err: PrintStream
         }
         val local = ProjectModules(localRoot, entryPath.parent?.toString(), entryPath.fileName.toString().removeSuffix(EXTENSION))
         val program = ProjectProgram(local, packages, project.manifest.dependencies.map { it.name }.toSet(), project.shownRoot)
-        val compiled = CreateScript.compile(source, program, program.entryModule, CliLimits.COMPILE_OPTIONS, program)
+        val compiled = CreateScript.compileScoped(source, program, program.entryModule, CliLimits.COMPILE_OPTIONS)
         return execute(command, compiled, entry, program::displayName)
     }
 

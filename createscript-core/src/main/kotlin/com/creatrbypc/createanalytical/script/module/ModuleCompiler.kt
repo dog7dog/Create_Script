@@ -61,7 +61,40 @@ fun interface ModuleAccess {
     }
 }
 
-// module はファイルのモジュール名（エントリーのファイルは null）。diagnostic の位置は、そのファイルの中の位置
+// import 元ごとにモジュールを探す resolver（S8.2 の H-1）。importer は import を書いたファイルのモジュールの ID（エントリーのファイルは null）、
+// name は import に書いた名前。Found の id はモジュールを区別する ID で、同じ ID は同じモジュール（1 回だけ読み込む）。
+// 別のパッケージの同じ名前のモジュールに別の ID を付ければ、両方を 1 つのプログラムに入れられる（関数の名前は "ID.関数名"）。
+// 同じ import 元と名前については 1 回だけ呼ぶ。import できない（公開されていない・推移的な依存）なら NotVisible（CS_MODULE_NOT_VISIBLE）。
+// 循環は ID で確かめる（resolver に問い合わせた後）。エントリーのファイル自身を指す名前には、ID が entryModule の Found を返すと CS_MODULE_CYCLE になる
+fun interface ScopedModuleResolver {
+    fun resolve(importer: String?, name: String): ScopedModuleLookup
+}
+
+sealed interface ScopedModuleLookup {
+    // id は 1〜128 文字の英数字と _ / : @ + -（"." と空白は使えない。"." は関数の名前の区切りのため）。先頭は英数字か _
+    data class Found(val id: String, val source: String) : ScopedModuleLookup {
+        init {
+            require(isValidId(id)) { "invalid module id: $id" }
+        }
+    }
+
+    // 見つからない・曖昧・読めないなど（ModuleLookup.Found 以外）
+    data class Failed(val lookup: ModuleLookup) : ScopedModuleLookup {
+        init {
+            require(lookup !is ModuleLookup.Found) { "Failed needs a failure, not Found" }
+        }
+    }
+
+    data object NotVisible : ScopedModuleLookup
+
+    companion object {
+        private val ID = Regex("[A-Za-z0-9_][A-Za-z0-9_/:@+-]{0,127}")
+
+        fun isValidId(id: String): Boolean = ID.matches(id)
+    }
+}
+
+// module はファイルのモジュール名（エントリーのファイルは null。compileScoped ではモジュールの ID）。diagnostic の位置は、そのファイルの中の位置
 data class ModuleDiagnostic(val module: String?, val diagnostic: Diagnostic)
 
 // program はエラーが無いときだけ返す。modules は解決したモジュール（プログラムに入れた順: import されるものが先）
@@ -104,11 +137,14 @@ class ModuleCompileResult internal constructor(
 // - 各ファイルの位置の offset に、ファイルごとの始まり（前のファイルの長さ + 1 の合計）を足し、診断・命令の位置からファイルを決める。
 //   エントリーのファイルの始まりは 0 のため、import の無いプログラムは CreateScript.compile(source) と同じ命令になる
 // - 同じモジュールは 1 回だけ解決する。import の循環・見つからないモジュールなどは診断にする（解決できない import があれば意味解析しない）
+// - compileScoped（ScopedModuleResolver）では、モジュールを ID で区別し、ファイルごとに import した名前 → ID を記録して、意味解析で読み替える。
+//   ModuleResolver を使うコンパイルは、名前がそのまま ID で（読み替えなし）、命令・診断・ハッシュはこれまでと同じ
 internal class ModuleCompiler private constructor(
     private val resolver: ModuleResolver,
     private val entryModule: String?,
     private val options: CompileOptions,
     private val access: ModuleAccess,
+    private val scoped: ScopedModuleResolver?,
 ) {
     private class SourceUnit(val module: String?, val base: Int, val program: Program?)
 
@@ -123,9 +159,18 @@ internal class ModuleCompiler private constructor(
     private var totalSourceLength = 0
     private var totalTokens = 0
 
+    // compileScoped のときだけ: ファイルのモジュールの ID（エントリーは null）→ import した名前 → ID
+    // （resolver の問い合わせは、各ファイルの import をたどるときに 1 回ずつ。同じファイルの同じ import は Parser が 1 つにまとめる）
+    private val aliases = HashMap<String?, HashMap<String, String>>()
+
     companion object {
         fun compile(source: String, resolver: ModuleResolver, entryModule: String?, options: CompileOptions, access: ModuleAccess = ModuleAccess.ALL): ModuleCompileResult =
-            ModuleCompiler(resolver, entryModule, options, access).run(source)
+            ModuleCompiler(resolver, entryModule, options, access, null).run(source)
+
+        fun compileScoped(source: String, resolver: ScopedModuleResolver, entryModule: String?, options: CompileOptions): ModuleCompileResult {
+            require(entryModule == null || ScopedModuleLookup.isValidId(entryModule)) { "invalid entry module id: $entryModule" }
+            return ModuleCompiler({ ModuleLookup.NotFound }, entryModule, options, ModuleAccess.ALL, resolver).run(source)
+        }
     }
 
     private fun run(source: String): ModuleCompileResult {
@@ -137,7 +182,7 @@ internal class ModuleCompiler private constructor(
         } else {
             val functions = main.functions + resolved.flatMap { unit -> unit.program!!.functions.map { it.copy(name = "${unit.module}.${it.name}") } }
             val merged = Program(main.statements, functions, main.classes)
-            Compiler.compile(SemanticAnalyzer.analyze(ParseResult(merged, diagnostics.diagnostics, diagnostics.isTruncated, diagnostics.hasErrors), options.maxPropertyTypeChain), options)
+            Compiler.compile(SemanticAnalyzer.analyze(ParseResult(merged, diagnostics.diagnostics, diagnostics.isTruncated, diagnostics.hasErrors), options.maxPropertyTypeChain, aliases), options)
         }
         val all = compiled?.diagnostics ?: diagnostics.diagnostics
         return ModuleCompileResult(
@@ -203,57 +248,87 @@ internal class ModuleCompiler private constructor(
                 report(DiagnosticCode.MODULE_BUILTIN_NAME, declaration, name)
                 continue
             }
-            // import できる範囲（S8.2 Phase 4。ModuleAccess.ALL では常に許すので、既存の compile の診断・順序は変わらない）
-            if (!access.allows(top.unit?.module, name)) {
-                report(DiagnosticCode.MODULE_NOT_VISIBLE, declaration, name)
-                continue
+            // モジュールの ID。既存の compile では名前のまま。compileScoped では、import 元ごとに resolver が決める（循環・重複の確認より前）
+            val id: String
+            var scopedSource: String? = null
+            if (scoped == null) {
+                // import できる範囲（S8.2 Phase 4。ModuleAccess.ALL では常に許すので、既存の compile の診断・順序は変わらない）
+                if (!access.allows(top.unit?.module, name)) {
+                    report(DiagnosticCode.MODULE_NOT_VISIBLE, declaration, name)
+                    continue
+                }
+                id = name
+            } else {
+                val importer = top.unit?.module
+                when (val lookup = scoped.resolve(importer, name)) {
+                    is ScopedModuleLookup.Found -> {
+                        id = lookup.id
+                        scopedSource = lookup.source
+                    }
+                    ScopedModuleLookup.NotVisible -> {
+                        report(DiagnosticCode.MODULE_NOT_VISIBLE, declaration, name)
+                        continue
+                    }
+                    is ScopedModuleLookup.Failed -> {
+                        reportFailure(lookup.lookup, declaration, name)
+                        continue
+                    }
+                }
+                aliases.getOrPut(importer) { HashMap() }[name] = id
             }
-            val cycleStart = onPath[name]
+            val cycleStart = onPath[id]
             if (cycleStart != null) {
-                report(DiagnosticCode.MODULE_CYCLE, declaration, cyclePath(path, cycleStart, name))
+                report(DiagnosticCode.MODULE_CYCLE, declaration, cyclePath(path, cycleStart, id))
                 continue
             }
-            if (states[name] != null) continue
+            if (states[id] != null) continue
             if (states.size >= options.maxModules) {
                 report(DiagnosticCode.MODULE_TOO_MANY, declaration, name, options.maxModules)
                 continue
             }
-            val source = when (val lookup = resolver.resolve(name)) {
+            val source = scopedSource ?: when (val lookup = resolver.resolve(name)) {
                 is ModuleLookup.Found -> lookup.source
-                ModuleLookup.NotFound -> null.also { report(DiagnosticCode.MODULE_NOT_FOUND, declaration, name) }
-                ModuleLookup.Ambiguous -> null.also { report(DiagnosticCode.MODULE_AMBIGUOUS, declaration, name) }
-                ModuleLookup.OutsideProject -> null.also { report(DiagnosticCode.MODULE_OUTSIDE_PROJECT, declaration, name) }
-                is ModuleLookup.Unreadable -> null.also { report(DiagnosticCode.MODULE_UNREADABLE, declaration, name, lookup.reason) }
+                else -> null.also { reportFailure(lookup, declaration, name) }
             }
             if (source == null) {
-                states[name] = State.FAILED
+                states[id] = State.FAILED
                 continue
             }
             // すべてのファイルの長さの合計の上限（第8.0.1段階。1 つのファイルの上限とは別に、プログラム全体の大きさを抑える）
             if (source.length > options.maxTotalSourceLength - totalSourceLength) {
                 report(DiagnosticCode.MODULE_PROGRAM_TOO_LARGE, declaration, name, "characters", options.maxTotalSourceLength)
-                states[name] = State.FAILED
+                states[id] = State.FAILED
                 continue
             }
-            val unit = load(name, source)
+            val unit = load(id, source)
             if (unit == null) {
                 // トークン数の合計の上限（第8.0.1段階）。構文解析の前に止め、AST を作らない
                 report(DiagnosticCode.MODULE_PROGRAM_TOO_LARGE, declaration, name, "tokens", options.maxTotalTokens)
-                states[name] = State.FAILED
+                states[id] = State.FAILED
                 continue
             }
-            states[name] = State.RESOLVING
-            moduleSources[name] = source
+            states[id] = State.RESOLVING
+            moduleSources[id] = source
             val program = unit.program
             if (program == null) {
-                states[name] = State.DONE
+                states[id] = State.DONE
                 resolved.add(unit)
                 continue
             }
             checkContents(program)
-            onPath[name] = path.size
-            path.add(name)
+            onPath[id] = path.size
+            path.add(id)
             stack.add(Pending(unit, program.imports.iterator()))
+        }
+    }
+
+    private fun reportFailure(lookup: ModuleLookup, declaration: ImportDeclaration, name: String) {
+        when (lookup) {
+            is ModuleLookup.Found -> error("not a failure")
+            ModuleLookup.NotFound -> report(DiagnosticCode.MODULE_NOT_FOUND, declaration, name)
+            ModuleLookup.Ambiguous -> report(DiagnosticCode.MODULE_AMBIGUOUS, declaration, name)
+            ModuleLookup.OutsideProject -> report(DiagnosticCode.MODULE_OUTSIDE_PROJECT, declaration, name)
+            is ModuleLookup.Unreadable -> report(DiagnosticCode.MODULE_UNREADABLE, declaration, name, lookup.reason)
         }
     }
 

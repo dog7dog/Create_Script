@@ -8,6 +8,7 @@ import com.creatrbypc.createanalytical.script.module.ModuleAccess
 import com.creatrbypc.createanalytical.script.module.ModuleCompileResult
 import com.creatrbypc.createanalytical.script.module.ModuleCompiler
 import com.creatrbypc.createanalytical.script.module.ModuleResolver
+import com.creatrbypc.createanalytical.script.module.ScopedModuleResolver
 import com.creatrbypc.createanalytical.script.scheduler.Scheduler
 import com.creatrbypc.createanalytical.script.vm.CompiledProgram
 import com.creatrbypc.createanalytical.script.vm.CsVm
@@ -32,6 +33,13 @@ object CreateScript {
     // 上の compile は変えない（新しい関数として足す。既定の引数を持たせないので、既存の呼び出しがこちらに変わることは無い）
     fun compile(source: String, resolver: ModuleResolver, entryModule: String?, options: CompileOptions, access: ModuleAccess): ModuleCompileResult =
         ModuleCompiler.compile(source, resolver, entryModule, options, access)
+
+    // import 元ごとにモジュールを探すコンパイル（S8.2 の H-1）。モジュールを ScopedModuleLookup.Found の id で区別するので、別のパッケージの
+    // 同じ名前の（公開しない）モジュールを 1 つのプログラムに入れられる。import の書き方は同じ。entryModule はエントリーのファイルのモジュールの ID。
+    // ModuleCompileResult の modules・ModuleDiagnostic の module・sourceFingerprint はモジュールの ID を使う。
+    // 既存の compile（ModuleResolver）と区別するため、別の名前にする（ラムダで resolver を渡す既存の呼び出しが曖昧にならない）
+    fun compileScoped(source: String, resolver: ScopedModuleResolver, entryModule: String?, options: CompileOptions): ModuleCompileResult =
+        ModuleCompiler.compileScoped(source, resolver, entryModule, options)
 
     // onPrint は println の出力を1行ずつ受け取る（履歴の 32 行を超えた分も含む）。tick の中の VM の処理が終わった後に呼ぶ
     fun start(program: CompiledProgram, options: RunOptions, onPrint: ((String) -> Unit)? = null): ScriptRun =

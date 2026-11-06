@@ -392,6 +392,9 @@ class SemanticAnalyzer private constructor(private val diagnostics: DiagnosticCo
     // 名前だけの呼び出しは同じモジュールの関数、"他のモジュール名.関数名" はそのモジュールが import したモジュールの関数（Parser が作る）
     private var currentModule: String? = null
 
+    // ファイルごとの import の読み替え（userFunction。S8.2）。空なら読み替えない
+    private var moduleAliases: Map<String?, Map<String, String>> = emptyMap()
+
     // いま本体を解析している関数・メソッド（トップレベルの文・初期化式では null）
     private var currentFunction: FunctionDeclaration? = null
 
@@ -480,7 +483,10 @@ class SemanticAnalyzer private constructor(private val diagnostics: DiagnosticCo
         fun analyze(parseResult: ParseResult): SemanticResult = analyze(parseResult, null)
 
         // 型の注釈の無いプロパティの連鎖の上限を指定する（第8.0.1段階。CompileOptions.maxPropertyTypeChain から使う）
-        fun analyze(parseResult: ParseResult, maxPropertyTypeChain: Int?): SemanticResult {
+        fun analyze(parseResult: ParseResult, maxPropertyTypeChain: Int?): SemanticResult = analyze(parseResult, maxPropertyTypeChain, emptyMap())
+
+        // ModuleCompiler（モジュールの ID を使うコンパイル）から。moduleAliases は userFunction の読み替え
+        internal fun analyze(parseResult: ParseResult, maxPropertyTypeChain: Int?, moduleAliases: Map<String?, Map<String, String>>): SemanticResult {
             require(maxPropertyTypeChain == null || maxPropertyTypeChain > 0) { "maxPropertyTypeChain must be positive or null: $maxPropertyTypeChain" }
             val diagnostics = DiagnosticCollector()
             diagnostics.merge(parseResult.diagnostics, parseResult.diagnosticsTruncated, parseResult.hasErrors)
@@ -495,7 +501,7 @@ class SemanticAnalyzer private constructor(private val diagnostics: DiagnosticCo
                 return SemanticResult(null, diagnostics.diagnostics, diagnostics.isTruncated, diagnostics.hasErrors)
             }
             // 構文エラーがあれば AST が無いため、意味解析しない（A8）
-            val analyzed = parseResult.program?.let { SemanticAnalyzer(diagnostics, maxPropertyTypeChain).run(it) }
+            val analyzed = parseResult.program?.let { SemanticAnalyzer(diagnostics, maxPropertyTypeChain).also { a -> a.moduleAliases = moduleAliases }.run(it) }
             return SemanticResult(
                 analyzed.takeUnless { diagnostics.hasErrors },
                 diagnostics.diagnostics,
@@ -599,9 +605,16 @@ class SemanticAnalyzer private constructor(private val diagnostics: DiagnosticCo
     private fun moduleOf(function: FunctionDeclaration): String? = function.name.substringBeforeLast('.', "").ifEmpty { null }
 
     // 呼び出せるユーザー定義関数。"." を含む名前は import したモジュールの関数（Parser が作る）、含まない名前はモジュールの中では同じモジュールの関数
+    // モジュールの ID を使うコンパイル（CreateScript.compileScoped: S8.2）では、"import した名前.関数名" を、そのファイルの import が指す
+    // モジュールの ID の関数に読み替える（moduleAliases: ファイルのモジュールの ID〈エントリーは null〉→ import した名前 → ID）。
+    // 既存のコンパイル（ModuleResolver）では moduleAliases は空で、これまでと同じ（import した名前がモジュールの ID）
     private fun userFunction(name: String): FunctionDeclaration? {
         val module = currentModule
-        return if (module == null || '.' in name) functions[name] else functions["$module.$name"]
+        if ('.' in name) {
+            val target = moduleAliases[module]?.get(name.substringBefore('.')) ?: return functions[name]
+            return functions["$target.${name.substringAfter('.')}"]
+        }
+        return if (module == null) functions[name] else functions["$module.$name"]
     }
 
     // クラス（モジュールの中からは、エントリーのファイルのクラスは見えない。モジュールにはクラスを書けない）

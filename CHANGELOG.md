@@ -45,8 +45,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   network. Before compiling, the lock file is checked as by `lock check` and every installed package must match its
   marker and the lock file (SHA-256 of the archive, its manifest and dependencies); otherwise nothing is run (exit
   code 65). The project and each package can import the public modules of their direct dependencies and their own
-  modules; private modules of other packages and transitive dependencies give `CS_MODULE_NOT_VISIBLE`, and a module
-  name that exists in more than one place gives `CS_MODULE_AMBIGUOUS`. `createscript run <file>.cscr` is unchanged.
+  modules; private modules of other packages and transitive dependencies give `CS_MODULE_NOT_VISIBLE`. Each import
+  is looked up in the scope of its file, so modules with the same name in different packages (private modules
+  included) or a local module and a private package module can be used together; only a name that exists twice in
+  one scope gives `CS_MODULE_AMBIGUOUS`. A package module named like the entry file is no longer reported as an
+  import cycle. `createscript run <file>.cscr` is unchanged.
+- Core: `ScopedModuleResolver`, `ScopedModuleLookup` and `CreateScript.compileScoped(source, resolver,
+  entryModule, options)`: modules are named by an id from the resolver, which is asked for each importing file;
+  functions are named `id.function`. The existing `compile` functions, `ModuleResolver` and `ModuleAccess` are
+  unchanged and give the same instructions, diagnostics and fingerprints as before.
 - Core: `ModuleAccess` and `CreateScript.compile(source, resolver, entryModule, options, access)`, checked for every
   `import` before the resolver; the diagnostic `CS_MODULE_NOT_VISIBLE`. The existing `compile` functions and
   `ModuleResolver` are unchanged (code compiled against the earlier Core runs unchanged; a regression test runs

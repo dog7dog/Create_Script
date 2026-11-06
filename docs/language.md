@@ -211,21 +211,40 @@ or in the packages listed in `createscript.lock` and installed in `.createscript
   dependencies. It cannot import the project's local modules.
 - A package that is only a dependency of a dependency (a transitive dependency) cannot be imported directly; add
   it to `dependencies` to use it.
-- Module names are one namespace for the whole program, because functions are named `module.function`. If the
-  same module name exists in more than one place (a local file and a package, or two packages, private modules
-  included), importing it is an error (`CS_MODULE_AMBIGUOUS`); nothing is chosen for you.
+- Each file sees its own **scope**: for the project, its local modules and the public modules of its direct
+  dependencies; for a package, its own modules and the public modules of its direct dependencies. An `import` is
+  looked up only in the scope of the file that contains it, so modules with the same name in different packages
+  (for example a private `util` in two packages), or a local module and a private module of a package, can be used
+  in one program. Only a name that exists twice in one scope (a local file and a public module of a direct
+  dependency, two direct dependencies with the same public module, or a package's own module and a public module of
+  its dependency) is an error (`CS_MODULE_AMBIGUOUS`); nothing is chosen for you. As for local files, names that
+  differ only in case count as the same name.
+- A package module with the name of the entry file (for example a private `main`) is a different module, not an
+  import cycle. Cycles are reported with the modules in the path, package modules as `package/module`.
 - Private only limits `import`; the source of private modules is in the package archive and can be read by
   anyone who has the package.
 
 | Code | Example |
 |---|---|
 | `CS_MODULE_NOT_VISIBLE` | `import vm_internal` (a private module of a package), or `import numbers` when `numbers` is only a dependency of a dependency |
-| `CS_MODULE_AMBIGUOUS` | `src/vector_math.cscr` exists and an installed package also has a module `vector_math` |
+| `CS_MODULE_AMBIGUOUS` | `src/vector_math.cscr` exists and a direct dependency also has a public module `vector_math` |
 
-For hosts, the Core has `CreateScript.compile(source, resolver, entryModule, options, access)` with a
-`ModuleAccess` (`allows(importer, module)`, where `importer` is the module that contains the `import`, or `null`
-for the entry file). It is checked for every `import` before the resolver is asked. The other `compile`
-functions and `ModuleResolver` are unchanged and allow every import.
+For hosts, the Core has two ways to control imports; the existing `compile` functions and `ModuleResolver` are
+unchanged and allow every import.
+
+- `CreateScript.compileScoped(source, resolver, entryModule, options)` with a `ScopedModuleResolver`
+  (`resolve(importer, name)`, used by `createscript run [directory]`). `importer` is the id of the module that
+  contains the `import` (`null` for the entry file). The result is `ScopedModuleLookup.Found(id, source)`,
+  `Failed(lookup)` (a `ModuleLookup` failure: not found, ambiguous, outside the project, unreadable) or
+  `NotVisible` (`CS_MODULE_NOT_VISIBLE`). The id names the module in the program: modules with the same id are one
+  module, and functions are named `id.function`, so different ids let modules with the same name coexist. An id is
+  1 to 128 characters `A-Z a-z 0-9 _ / : @ + -` starting with a letter, digit or `_` (no `.`). Cycles are checked
+  by id after the resolver is asked; return the id `entryModule` for a name that means the entry file itself.
+  `ModuleCompileResult.modules`, `ModuleDiagnostic.module` and `sourceFingerprint` use the ids. With ids equal to
+  the names, the result is the same as the existing `compile` (instructions, diagnostics and fingerprints).
+- `CreateScript.compile(source, resolver, entryModule, options, access)` with a `ModuleAccess`
+  (`allows(importer, module)`, where `importer` is the module that contains the `import`, or `null` for the entry
+  file). It is checked for every `import` before the resolver is asked; module names stay one namespace.
 
 ## Classes
 

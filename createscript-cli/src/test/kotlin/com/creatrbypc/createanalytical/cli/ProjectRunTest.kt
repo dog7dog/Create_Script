@@ -137,29 +137,82 @@ class ProjectRunTest {
         assertEquals("$file:1:8: error CS_MODULE_NOT_VISIBLE (\"other\")\n$file:2:8: error CS_MODULE_NOT_VISIBLE (\"helpers\")\n", result.err)
     }
 
-    // ---- 名前の衝突 ----
+    // ---- 名前の衝突（名前空間: S8.2 の H-1） ----
 
+    // 同じスコープ（プロジェクトから見えるもの）に同じ名前が 2 つあるときだけ曖昧
     @Test
-    fun refusesModuleNameCollisions() {
-        // ローカルのモジュールとパッケージの公開モジュール
-        Files.writeString(app.resolve("src/vector_math.cscr"), "fun length2(x: Int, y: Int): Int {\n    return 0\n}\n")
-        val local = run()
-        assertEquals(ExitCode.COMPILE_ERROR, local.code)
-        assertTrue(local.err.contains("main.cscr:1:8: error CS_MODULE_AMBIGUOUS (\"vector_math\")"), local.err)
-        Files.delete(app.resolve("src/vector_math.cscr"))
-        // ローカルのモジュールとパッケージの公開しないモジュール（パッケージの中の import も曖昧になる）
-        Files.writeString(app.resolve("src/vm_internal.cscr"), "fun square(x: Int): Int {\n    return 0\n}\n")
-        val hidden = run()
-        assertEquals(ExitCode.COMPILE_ERROR, hidden.code)
-        assertTrue(hidden.err.contains("vector_math.cscr:1:8: error CS_MODULE_AMBIGUOUS (\"vm_internal\")"), hidden.err)
-        Files.delete(app.resolve("src/vm_internal.cscr"))
-        // 2 つのパッケージが同じ名前のモジュールを持つ
+    fun refusesNamesThatAreAmbiguousInOneScope() {
+        // ローカルのモジュールと、直接の依存の公開モジュール（大文字・小文字だけが違うファイルも同じ名前）
+        for (file in listOf("vector_math.cscr", "Vector_Math.cscr")) {
+            Files.writeString(app.resolve("src/$file"), "fun length2(x: Int, y: Int): Int {\n    return 0\n}\n")
+            val local = run()
+            assertEquals(ExitCode.COMPILE_ERROR, local.code, file)
+            assertTrue(local.err.contains("main.cscr:1:8: error CS_MODULE_AMBIGUOUS (\"vector_math\")"), local.err)
+            Files.delete(app.resolve("src/$file"))
+        }
+        // 2 つの直接の依存が、同じ名前の公開モジュールを持つ
         library("copycat", "1.0.0", mapOf("vector_math" to "fun length2(x: Int, y: Int): Int {\n    return 1\n}\n"), listOf("vector_math"))
         install(app, "github:owner/copycat@v1.0.0")
         val packages = run()
         assertEquals(ExitCode.COMPILE_ERROR, packages.code)
         assertTrue(packages.err.contains("main.cscr:1:8: error CS_MODULE_AMBIGUOUS (\"vector_math\")"), packages.err)
         assertEquals("", packages.out)
+        // パッケージの中: 自分のモジュールと、自分の直接の依存の公開モジュールが同じ名前
+        val other = project("other", "import mixer\nprintln(mixer.m())\n")
+        library("shared", "1.0.0", mapOf("util" to "fun v(): Int {\n    return 1\n}\n"), listOf("util"))
+        library("mixer", "1.0.0", mapOf("mixer" to "import util\nfun m(): Int {\n    return util.v()\n}\n", "util" to "fun v(): Int {\n    return 2\n}\n"), listOf("mixer"), mapOf("shared" to "1.0.0"))
+        install(other, "github:owner/mixer@v1.0.0")
+        val inside = run(other)
+        assertEquals(ExitCode.COMPILE_ERROR, inside.code)
+        assertTrue(inside.err.contains("${other.resolve(".createscript/packages/mixer/1.0.0/modules/mixer.cscr")}:1:8: error CS_MODULE_AMBIGUOUS (\"util\")"), inside.err)
+    }
+
+    // 別のパッケージの、同じ名前の公開しないモジュールが共存する。ローカルのモジュールとパッケージの公開しないモジュールも共存する
+    @Test
+    fun samePrivateModuleNamesCoexist() {
+        library("alpha", "1.0.0", mapOf("alpha" to "import util\nfun a(): Int {\n    return util.v()\n}\n", "util" to "fun v(): Int {\n    return 1\n}\n"), listOf("alpha"))
+        library("beta", "1.0.0", mapOf("beta" to "import util\nfun b(): Int {\n    return util.v()\n}\n", "util" to "fun v(): Int {\n    return 20\n}\n"), listOf("beta"))
+        val root = project("two", "import alpha\nimport beta\nimport util\nimport vm_internal\nimport vector_math\nprintln(alpha.a() + beta.b() + util.v())\nprintln(vm_internal.square(3))\nprintln(vector_math.length2(3, 4))\n")
+        Files.writeString(root.resolve("src/util.cscr"), "fun v(): Int {\n    return 300\n}\n")
+        Files.writeString(root.resolve("src/vm_internal.cscr"), "fun square(x: Int): Int {\n    return -1\n}\n")
+        install(root, "github:owner/alpha@v1.0.0")
+        install(root, "github:owner/beta@v1.0.0")
+        install(root, "github:owner/vector-math@v1.2.0")
+        val result = run(root)
+        assertEquals(ExitCode.OK, result.code, result.err)
+        // ローカルの vm_internal は -1、パッケージの中の vm_internal は 2 乗
+        assertEquals("321\n-1\n25\n", result.out)
+        // 公開モジュールの名前が推移的な依存と同じでも、プロジェクトから見えるのは直接の依存だけ（wrapper の中からは copycat のもの）
+        library("copycat", "1.0.0", mapOf("vector_math" to "fun length2(x: Int, y: Int): Int {\n    return 1000\n}\n"), listOf("vector_math"))
+        library("wrapper", "1.0.0", mapOf("wrapper" to "import vector_math\nfun w(): Int {\n    return vector_math.length2(0, 0)\n}\n"), listOf("wrapper"), mapOf("copycat" to "1.0.0"))
+        install(app, "github:owner/wrapper@v1.0.0")
+        writeMain("import wrapper\nimport vector_math\nprintln(wrapper.w() + vector_math.length2(3, 4))\n")
+        val layered = run()
+        assertEquals("1025\n", layered.out, layered.err)
+    }
+
+    // エントリーと同じ名前の、パッケージの中のモジュールは別のモジュール（以前は誤って CS_MODULE_CYCLE: S8.2 の L-1）。本当の循環は報告する
+    @Test
+    fun entryNameAndCycles() {
+        library("gamma", "1.0.0", mapOf("gamma" to "import main\nfun g(): Int {\n    return main.m()\n}\n", "main" to "fun m(): Int {\n    return 3\n}\n"), listOf("gamma"))
+        install(app, "github:owner/gamma@v1.0.0")
+        writeMain("import gamma\nprintln(gamma.g())\n")
+        val result = run()
+        assertEquals(ExitCode.OK, result.code, result.err)
+        assertEquals("3\n", result.out)
+        // ローカルのモジュールからエントリーへ
+        Files.writeString(app.resolve("src/back.cscr"), "import main\nfun b(): Int {\n    return 0\n}\n")
+        writeMain("import back\nprintln(back.b())\n")
+        val local = run()
+        assertEquals(ExitCode.COMPILE_ERROR, local.code)
+        assertEquals("${app.resolve("src/back.cscr")}:1:8: error CS_MODULE_CYCLE (\"main -> back -> main\")\n", local.err)
+        // パッケージの中の循環
+        library("loop", "1.0.0", mapOf("loop" to "import inner\nfun l(): Int {\n    return 0\n}\n", "inner" to "import loop\nfun i(): Int {\n    return 0\n}\n"), listOf("loop"))
+        install(app, "github:owner/loop@v1.0.0")
+        writeMain("import loop\nprintln(loop.l())\n")
+        val inPackage = run()
+        assertEquals(ExitCode.COMPILE_ERROR, inPackage.code)
+        assertEquals("${app.resolve(".createscript/packages/loop/1.0.0/modules/inner.cscr")}:1:8: error CS_MODULE_CYCLE (\"loop/loop -> loop/inner -> loop/loop\")\n", inPackage.err)
     }
 
     // ---- 実行の前の確認 ----

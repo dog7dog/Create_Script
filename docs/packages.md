@@ -487,9 +487,11 @@ When a step fails, the installation is undone at once. When the process stops (a
 
 `createscript run [directory]` checks the installed packages against `createscript.lock` before compiling (see
 [Running a project](cli.md#running-a-project)) and gives their sources to the compiler through the existing
-`ModuleResolver`, so the Core still reads no files and no network. Which modules can be imported is checked by the
-Core with a `ModuleAccess` (see [Modules from packages](language.md#modules-from-packages)). A program's identity for
-saving and restoring runs includes all package sources (`ModuleCompileResult.sourceFingerprint`).
+`ScopedModuleResolver` (`CreateScript.compileScoped`), so the Core still reads no files and no network. Each
+`import` is looked up in the scope of the file that contains it, and package modules get the id
+`package/module`, so the same module name in different packages does not collide (see
+[Modules from packages](language.md#modules-from-packages)). A program's identity for saving and restoring runs
+includes all package sources (`ModuleCompileResult.sourceFingerprint`).
 
 The marker of a package directory was written when it was installed; it is not compared with the archive again.
 A change of both the files and the marker in the same way is therefore not found (anyone who can do that can also
