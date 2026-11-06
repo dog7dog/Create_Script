@@ -315,8 +315,8 @@ internal object ManifestEditor {
 internal sealed interface PackageState {
     data object Absent : PackageState
 
-    // 印と中身が完全に一致する。files はパス（印を含む）の同一性
-    class Valid(val marker: Marker, val markerSha256: String, val files: Map<String, Identity>) : PackageState
+    // 印と中身が完全に一致する。files はパス（印を含む）の同一性、contents は確かめたときに読んだ中身（keepContents のときだけ。印を除く）
+    class Valid(val marker: Marker, val markerSha256: String, val files: Map<String, Identity>, val contents: Map<String, ByteArray> = emptyMap()) : PackageState
 
     class Invalid(val reason: String) : PackageState
 }
@@ -326,7 +326,8 @@ internal object PackageDirectories {
 
     // ディレクトリが、印（.createscript-package.json）と完全に一致するか。リンクでないディレクトリ・通常のファイルだけで、印に無いもの・足りないもの・
     // SHA-256 の違うものがあれば Invalid。ディレクトリと印は、このユーザーのものであること
-    fun inspect(directory: Path, owner: Owner): PackageState {
+    // keepContents なら、確かめたバイト列を返す（S8.2 Phase 4: 実行では、確かめたものと同じバイト列をコンパイルする。確かめた後の差し替えを使わない）
+    fun inspect(directory: Path, owner: Owner, keepContents: Boolean = false): PackageState {
         val attributes = SafeIo.attributes(directory) ?: return PackageState.Absent
         if (attributes.isSymbolicLink) return PackageState.Invalid("it is a symbolic link")
         if (!attributes.isDirectory) return PackageState.Invalid("it is not a directory")
@@ -340,6 +341,7 @@ internal object PackageDirectories {
         if (!owner.owns(markerPath)) return PackageState.Invalid("its ${InstallLayout.MARKER} belongs to another user")
         val marker = Marker.parse(markerFile.bytes) ?: return PackageState.Invalid("its ${InstallLayout.MARKER} is damaged")
         val files = HashMap<String, Identity>()
+        val contents = HashMap<String, ByteArray>()
         files[InstallLayout.MARKER] = markerFile.identity
         var total = 0L
         fun check(path: Path, relative: String): String? {
@@ -353,6 +355,7 @@ internal object PackageDirectories {
             total += file.identity.size
             if (total > PackageArchives.MAX_TOTAL_BYTES) return "it is too large"
             files[relative] = file.identity
+            if (keepContents) contents[relative] = file.bytes
             return null
         }
         val hasModules = marker.files.keys.any { it.startsWith("$MODULES/") }
@@ -368,7 +371,7 @@ internal object PackageDirectories {
             check(path, name)?.let { return PackageState.Invalid(it) }
         }
         if (files.keys - InstallLayout.MARKER != marker.files.keys) return PackageState.Invalid("some installed files are missing")
-        return PackageState.Valid(marker, markerFile.identity.sha256, files)
+        return PackageState.Valid(marker, markerFile.identity.sha256, files, contents)
     }
 
     // 作業用のディレクトリ staging/<name>/<version>/ に展開し、印を書く。印の SHA-256 を返す

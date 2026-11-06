@@ -21,6 +21,15 @@ class BinaryCompatibilityTest {
         assertEquals(expected, results)
     }
 
+    // S8.2 Phase 4: ModuleAccess を足す前の Core（9f938b4）に対してコンパイルした ModuleResolver の実装と呼び出し（compat/s82phase3）が、そのまま動く
+    @Test
+    fun moduleCodeCompiledBeforeModuleAccessStillRuns() {
+        val user = Class.forName("compat.s82phase3.OldModuleUser")
+        @Suppress("UNCHECKED_CAST")
+        val results = user.getMethod("run").invoke(null) as List<String>
+        assertEquals(listOf("compile with defaults", "compile with options", "lambda resolver", "source fingerprint", "lookup results", "locate", "run and resume"), results)
+    }
+
     // v0.1.0-alpha の Program の JVM シグネチャ（javap で比べたもの）が残っている
     @Test
     fun keepsTheV010AlphaSignatures() {

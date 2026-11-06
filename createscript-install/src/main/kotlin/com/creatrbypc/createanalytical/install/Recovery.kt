@@ -29,11 +29,57 @@ internal class Recovery(private val layout: Layout, private val owner: Owner, pr
 
     private fun shown(path: Path): String = layout.root.relativize(path).toString()
 
-    private fun manual(reason: String): Nothing = unsafe(
-        "an earlier createscript install was interrupted, and it cannot be finished or undone safely: $reason. Nothing was changed. " +
-            "Check ${Manifests.FILE_NAME}, ${Lockfiles.FILE_NAME} and ${InstallLayout.DIRECTORY}/${InstallLayout.PACKAGES}, then remove " +
-            "${InstallLayout.DIRECTORY}/${InstallLayout.JOURNAL} and the ${InstallLayout.DIRECTORY}/${InstallLayout.TRANSACTION_PREFIX}* directories by hand, and run createscript install again",
-    )
+    // 読めたジャーナル（復旧できないときの説明に、残っているファイルと今の状態を示すために使う）
+    private var loaded: Journal? = null
+
+    // 復旧できないときの説明（S8.2 Phase 4 の条件: ジャーナルの無条件の削除を促さず、理由・残っているファイル・手で確かめる手順を示す）。何も変えない
+    private fun manual(reason: String): Nothing {
+        val lines = ArrayList<String>()
+        lines += "an earlier createscript install was interrupted, and it cannot be finished or undone safely: $reason. Nothing was changed."
+        lines += "Files left by the interrupted installation:"
+        lines += "  ${InstallLayout.DIRECTORY}/${InstallLayout.JOURNAL}"
+        val transactions = try {
+            SafeIo.list(layout.state, 1024).filter { it.startsWith(InstallLayout.TRANSACTION_PREFIX) }
+        } catch (failure: InstallFailure) {
+            emptyList()
+        }
+        for (name in transactions) {
+            val contents = try {
+                SafeIo.list(layout.state.resolve(name), 64).joinToString(", ")
+            } catch (failure: InstallFailure) {
+                "cannot be listed"
+            }
+            lines += "  ${InstallLayout.DIRECTORY}/$name/ ($contents)"
+        }
+        val journal = loaded
+        if (journal != null) {
+            fun state(path: Path, old: String?, new: String?, maxBytes: Int): String {
+                val sha = try {
+                    SafeIo.readRegular(path, maxBytes)?.identity?.sha256
+                } catch (failure: InstallFailure) {
+                    return "cannot be read"
+                }
+                return when {
+                    sha == null && old == null -> "missing, as before the installation"
+                    sha == null -> "missing"
+                    sha == new && sha == old -> "not changed by the installation"
+                    sha == new -> "the version after the installation"
+                    sha == old -> "the version before the installation"
+                    else -> "changed by another program (neither before nor after the installation)"
+                }
+            }
+            lines += "Current files:"
+            lines += "  ${Manifests.FILE_NAME}: ${state(layout.manifest, journal.manifestOld, journal.manifestNew, Manifests.MAX_BYTES)}"
+            lines += "  ${Lockfiles.FILE_NAME}: ${state(layout.lockfile, journal.lockOld, journal.lockNew, Lockfiles.MAX_BYTES)}"
+        }
+        val txn = journal?.let { "${InstallLayout.DIRECTORY}/${InstallLayout.TRANSACTION_PREFIX}${it.id}/" } ?: "the ${InstallLayout.DIRECTORY}/${InstallLayout.TRANSACTION_PREFIX}* directory"
+        lines += "To check by hand:"
+        lines += "  1. Compare ${Manifests.FILE_NAME} and ${Lockfiles.FILE_NAME} with the saved copies in $txn (*.old is the version before the installation, *.new the version after it), and keep the version you want."
+        lines += "  2. In ${InstallLayout.DIRECTORY}/${InstallLayout.PACKAGES}, directories whose ${InstallLayout.MARKER} names this transaction" +
+            (journal?.let { " (${it.id})" } ?: "") + " were added by the interrupted installation; they are used only if createscript.lock lists them."
+        lines += "  3. Only when both files are as you want them, move ${InstallLayout.DIRECTORY}/${InstallLayout.JOURNAL} and $txn out of the project (keep them until you are sure), and run createscript install again; it checks every package again."
+        unsafe(lines.joinToString("\n"))
+    }
 
     // ジャーナルを読む（リンク・通常のファイルでない・ほかのユーザーのもの・壊れたものは使わない）
     private fun load(): Journal {
@@ -72,6 +118,7 @@ internal class Recovery(private val layout: Layout, private val owner: Owner, pr
 
     fun recover(preferForward: Boolean): RecoveryOutcome {
         val journal = load()
+        loaded = journal
         if (journal.state == Journal.State.COMMITTED) {
             val kept = cleanup(journal)
             return RecoveryOutcome("finished cleaning up an installation that had completed", kept)

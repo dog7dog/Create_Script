@@ -4,6 +4,7 @@ import com.creatrbypc.createanalytical.script.compiler.CompileOptions
 import com.creatrbypc.createanalytical.script.compiler.CompileResult
 import com.creatrbypc.createanalytical.script.compiler.Compiler
 import com.creatrbypc.createanalytical.script.diagnostic.Diagnostic
+import com.creatrbypc.createanalytical.script.module.ModuleAccess
 import com.creatrbypc.createanalytical.script.module.ModuleCompileResult
 import com.creatrbypc.createanalytical.script.module.ModuleCompiler
 import com.creatrbypc.createanalytical.script.module.ModuleResolver
@@ -26,6 +27,11 @@ object CreateScript {
     // import の無いプログラムは compile(source, options) と同じ命令・診断になる。options の既定は compile(source) と同じ 4096 命令
     fun compile(source: String, resolver: ModuleResolver, entryModule: String? = null, options: CompileOptions = CompileOptions.DEFAULT): ModuleCompileResult =
         ModuleCompiler.compile(source, resolver, entryModule, options)
+
+    // import できる範囲を制御するコンパイル（S8.2 Phase 4）。access が許さない import は CS_MODULE_NOT_VISIBLE になる。それ以外は上の compile と同じ。
+    // 上の compile は変えない（新しい関数として足す。既定の引数を持たせないので、既存の呼び出しがこちらに変わることは無い）
+    fun compile(source: String, resolver: ModuleResolver, entryModule: String?, options: CompileOptions, access: ModuleAccess): ModuleCompileResult =
+        ModuleCompiler.compile(source, resolver, entryModule, options, access)
 
     // onPrint は println の出力を1行ずつ受け取る（履歴の 32 行を超えた分も含む）。tick の中の VM の処理が終わった後に呼ぶ
     fun start(program: CompiledProgram, options: RunOptions, onPrint: ((String) -> Unit)? = null): ScriptRun =

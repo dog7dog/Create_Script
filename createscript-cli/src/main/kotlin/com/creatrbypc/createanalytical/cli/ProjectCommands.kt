@@ -1,5 +1,6 @@
 package com.creatrbypc.createanalytical.cli
 
+import com.creatrbypc.createanalytical.project.Lockfile
 import com.creatrbypc.createanalytical.project.Lockfiles
 import com.creatrbypc.createanalytical.project.Manifest
 import com.creatrbypc.createanalytical.project.ManifestResult
@@ -158,7 +159,15 @@ internal class ProjectCommands(
 
         // library のモジュールのディレクトリ（プロジェクト・パッケージアーカイブで同じ。S8.2 Phase 1）
         const val MODULES_DIRECTORY = "modules"
+
+        // init が、.gitignore が無いときだけ作る内容（S8.2 Phase 4）。インストールしたパッケージ（.createscript/）をコミットしないため
+        const val GITIGNORE = ".gitignore"
+        const val GITIGNORE_CONTENTS = "/.createscript/\n"
     }
+
+    // createscript run のプロジェクトモードに使うもの（S8.2 Phase 4）。root はプロジェクトのルート、shownEntry はエントリーのファイルの表示用のパス
+    // （作業ディレクトリからのパスとしても使える）、lock は依存が無くロックファイルも無ければ null
+    class RunnableProject(val root: Path, val shownRoot: String?, val manifest: Manifest, val lock: Lockfile?, val shownEntry: String)
 
     // ---- init ----
 
@@ -187,10 +196,22 @@ internal class ProjectCommands(
             throw Failure(ExitCode.CANNOT_CREATE, "$sourceDirectory is not a directory; nothing was created")
         }
         val created = ArrayList<Created>()
+        val gitignorePath = directory.resolve(GITIGNORE)
+        var gitignoreCreated = false
         try {
             createDirectories(entryPath.parent, created)
             created.add(Created.File(manifestPath, write(manifestPath, Manifests.write(Manifest(name, INITIAL_VERSION, ENTRY)))))
             created.add(Created.File(entryPath, write(entryPath, HELLO)))
+            // .gitignore は無いときだけ作る（S8.2 Phase 4）。既にあるもの（シンボリックリンク・ディレクトリを含む）には触れない。
+            // 確かめた後に作られていたら（置き換えない書き込みが失敗する）、それも残して作らない
+            if (!Files.exists(gitignorePath, LinkOption.NOFOLLOW_LINKS)) {
+                try {
+                    created.add(Created.File(gitignorePath, write(gitignorePath, GITIGNORE_CONTENTS)))
+                    gitignoreCreated = true
+                } catch (error: FileAlreadyExistsException) {
+                    // 別のプロセスが作った .gitignore を使う
+                }
+            }
         } catch (error: Exception) {
             val kept = rollBack(created)
             val reason = if (error is FileAlreadyExistsException) "${error.file} already exists" else (error.message ?: error.javaClass.simpleName)
@@ -198,6 +219,7 @@ internal class ProjectCommands(
         }
         out.println("Created $manifestPath")
         out.println("Created $entryPath")
+        if (gitignoreCreated) out.println("Created $gitignorePath")
         out.println("Run it with: createscript run $entryPath")
         return ExitCode.OK
     }
@@ -325,25 +347,53 @@ internal class ProjectCommands(
         val root = projectRoot(directoryArgument)
         val loaded = loadManifest(root) ?: return ExitCode.INVALID_INPUT
         val manifest = loaded.manifest!!
+        val shownLock = shown(root, Lockfiles.FILE_NAME)
+        val (ok, lock) = loadLock(root, manifest)
+        if (!ok) return ExitCode.INVALID_INPUT
+        if (lock == null) {
+            out.println("$shownLock: not needed (no dependencies)")
+            return ExitCode.OK
+        }
+        out.println("$shownLock: ok (${lock.packages.size} packages, consistent with ${Manifests.FILE_NAME})")
+        return ExitCode.OK
+    }
+
+    // ロックファイルを読み、正規形・マニフェストとの整合を確かめる（lock check と run のプロジェクトモードで同じ）。
+    // 依存が無くロックファイルも無ければ (true, null)。問題があれば報告して (false, null)
+    private fun loadLock(root: Path, manifest: Manifest): Pair<Boolean, Lockfile?> {
         val lockPath = root.resolve(Lockfiles.FILE_NAME)
         val shownLock = shown(root, Lockfiles.FILE_NAME)
         if (!Files.exists(lockPath, LinkOption.NOFOLLOW_LINKS)) {
-            if (manifest.dependencies.isEmpty()) {
-                out.println("$shownLock: not needed (no dependencies)")
-                return ExitCode.OK
-            }
+            if (manifest.dependencies.isEmpty()) return true to null
             report(shownLock, listOf(ProjectDiagnostic(ProjectDiagnosticCode.LOCK_MISSING, 1, 1, listOf(Lockfiles.FILE_NAME))))
-            return ExitCode.INVALID_INPUT
+            return false to null
         }
-        val bytes = readProjectFile(root, Lockfiles.FILE_NAME, shownLock, Lockfiles.MAX_BYTES) ?: return ExitCode.INVALID_INPUT
+        val bytes = readProjectFile(root, Lockfiles.FILE_NAME, shownLock, Lockfiles.MAX_BYTES) ?: return false to null
         val parsed = Lockfiles.parse(bytes)
         val diagnostics = Lockfiles.check(bytes, parsed, manifest)
         if (diagnostics.isNotEmpty()) {
             report(shownLock, diagnostics, parsed.truncated)
-            return ExitCode.INVALID_INPUT
+            return false to null
         }
-        out.println("$shownLock: ok (${parsed.lockfile!!.packages.size} packages, consistent with ${Manifests.FILE_NAME})")
-        return ExitCode.OK
+        return true to parsed.lockfile!!
+    }
+
+    // ---- run のプロジェクトモード（S8.2 Phase 4） ----
+
+    // createscript run [ディレクトリ] の準備: manifest check と lock check と同じ検査をし、マニフェストの entry を返す。
+    // 中断したインストールがあれば止まる（loadManifest）。問題があれば報告して null（終了コード 65）
+    fun projectForRun(directoryArgument: String?): RunnableProject? {
+        val root = projectRoot(directoryArgument)
+        val loaded = loadManifest(root) ?: return null
+        val manifest = loaded.manifest!!
+        val entry = manifest.entry ?: throw Failure(
+            ExitCode.INVALID_INPUT,
+            "${shown(root, Manifests.FILE_NAME)} has no entry; a library cannot be run as a project (run a file with createscript run <file>)",
+        )
+        val (ok, lock) = loadLock(root, manifest)
+        if (!ok) return null
+        val shownRoot = root.toString().takeUnless { it.isEmpty() || it == "." }
+        return RunnableProject(root, shownRoot, manifest, lock, shown(root, entry))
     }
 
     // マニフェストを読んで確かめ、エントリーのファイルがルートの中の通常のファイルであることも確かめる。問題があれば報告して null

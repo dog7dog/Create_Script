@@ -83,6 +83,15 @@ internal class Owner private constructor(private val user: UserPrincipal?) {
     }
 
     companion object {
+        // 既にあるファイル・ディレクトリの所有者（S8.2 Phase 4: 実行の前の確認では、ファイルを書かずに、.createscript と同じ所有者であることを確かめる）
+        fun of(path: Path): Owner = try {
+            Owner(Files.getOwner(path, LinkOption.NOFOLLOW_LINKS))
+        } catch (error: UnsupportedOperationException) {
+            Owner(null)
+        } catch (error: IOException) {
+            throw InstallFailure(InstallFailure.Kind.UNSAFE, "cannot read the owner of $path")
+        }
+
         // 今のユーザー: ディレクトリに新しいファイルを作り、その所有者を読む（ユーザー名の環境変数・プロパティを信用しない）
         fun probe(directory: Path): Owner {
             val probe = directory.resolve(".owner-${UUID.randomUUID()}")

@@ -32,7 +32,8 @@ my-app/createscript.lock: not needed (no dependencies)
 ```
 
 - `createscript init [directory] [--name <name>]` creates `createscript.json` and `src/main.cscr` (a "Hello"
-  program). The package name defaults to the directory name; use `--name` when the directory name is not a
+  program), and a `.gitignore` with the line `/.createscript/` when the directory has no `.gitignore` (an existing
+  `.gitignore`, also a link or a directory with that name, is never changed). The package name defaults to the directory name; use `--name` when the directory name is not a
   valid package name. It never overwrites a file: if either file (or a link with that name) exists, nothing
   is created (exit code 73). Each file is written to a temporary file in the same directory and then given its
   name with a hard link, which fails instead of replacing a file that appeared meanwhile, so a file is never
@@ -160,8 +161,8 @@ a Kotlin hard keyword and not a built-in function that cannot be redefined (`pri
 
 - **Public modules** are the ones listed in `modules`. Projects that depend on the package can `import` them.
 - **Private modules** are the other `.cscr` files in `modules/`. Only the package's own modules are meant to
-  import them; a project that depends on the package cannot. This visibility rule is enforced from S8.2 Phase 4
-  (until then nothing installs packages, so nothing imports them).
+  import them; a project that depends on the package cannot. This rule is checked by `createscript run [directory]`
+  (S8.2 Phase 4; see [Modules from packages](language.md#modules-from-packages)).
 - **Private does not mean secret.** Private modules are in the package archive like the public ones, so anyone
   who downloads the package can read their source. "Private" only limits what other packages and projects can
   `import`; it is not a way to hide code, keys or data.
@@ -374,9 +375,8 @@ know it; we did not run them for S8.1.
 
 ## Installing packages (S8.2 Phase 3)
 
-> **In development.** Programs cannot `import` installed packages yet: `createscript run` reads only the local
-> modules. Using installed packages, and the rule that only public modules of direct dependencies can be
-> imported, come in S8.2 Phase 4.
+> **In development.** Installed packages are used by `createscript run [directory]` (S8.2 Phase 4; see
+> [Running a project](cli.md#running-a-project) and [Modules from packages](language.md#modules-from-packages)).
 
 ```text
 $ createscript install github:owner/vector-math@v1.2.0
@@ -433,8 +433,9 @@ $ createscript install --offline    # the same without the network (from the cac
   txn-<id>/                          the prepared files of that installation
 ```
 
-- `.createscript/` should not be committed; `install` suggests adding `/.createscript/` to `.gitignore` when it is
-  missing. It does not change `.gitignore`.
+- `.createscript/` should not be committed. `createscript init` creates a `.gitignore` with `/.createscript/` when the
+  directory has none; an existing `.gitignore` (or a link or directory with that name) is never changed. `install`
+  suggests adding the line when it is missing and does not change `.gitignore` itself.
 - An existing `packages/<name>/<version>/` is used only if its marker and files match the package exactly (no
   missing, extra or changed files, no symbolic links). Otherwise the installation stops before changing anything
   and asks you to remove the directory.
@@ -471,11 +472,29 @@ When a step fails, the installation is undone at once. When the process stops (a
 - **Files changed by someone else are never overwritten or removed.** A manifest or lock file that is neither the
   old nor the new one, and package directories that do not match, are left as they are; the installation is
   undone otherwise and stops with a list of what was left.
-- **When neither is safe** (a damaged journal, or missing or changed copies), nothing is changed and the command
-  explains how to check the files and remove `.createscript/transaction.json` and `.createscript/txn-*` by hand.
+- **When neither is safe** (a damaged journal, or missing or changed copies), nothing is changed. The command gives
+  the reason, lists the files that the installation left (`transaction.json` and `txn-<id>/` with its contents),
+  says whether `createscript.json` and `createscript.lock` are the version before or after the installation or were
+  changed by someone else, and lists the steps to check them by hand: compare them with the saved copies (`*.old`
+  before, `*.new` after), check the package directories of that transaction, and only then move the journal and
+  `txn-<id>/` out of the project (keeping them until you are sure) and run `createscript install` again. It never
+  asks to delete the journal before the files are checked.
 - `manifest check`, `lock check` and `pack` stop with exit code 65 while a journal exists.
 - An installation that stopped before step 4 has changed nothing; its `txn-<id>` directory is reported and can be
   removed.
+
+### Running installed packages (S8.2 Phase 4)
+
+`createscript run [directory]` checks the installed packages against `createscript.lock` before compiling (see
+[Running a project](cli.md#running-a-project)) and gives their sources to the compiler through the existing
+`ModuleResolver`, so the Core still reads no files and no network. Which modules can be imported is checked by the
+Core with a `ModuleAccess` (see [Modules from packages](language.md#modules-from-packages)). A program's identity for
+saving and restoring runs includes all package sources (`ModuleCompileResult.sourceFingerprint`).
+
+The marker of a package directory was written when it was installed; it is not compared with the archive again.
+A change of both the files and the marker in the same way is therefore not found (anyone who can do that can also
+change `createscript.lock`). Running `createscript install` again after removing `.createscript/packages` checks
+the archives against the lock file again.
 
 Known limits: checks and renames are separate steps, so a program that changes a file in the moment between them
 is not always noticed (Java names files by path); a file whose contents and size stay the same after a change
@@ -483,10 +502,5 @@ cannot be told apart where the file system has no `fileKey`. Windows has not bee
 
 ### Still planned
 
-- S8.2 Phase 4: `createscript run` for projects, with the installed packages as modules, and the visibility of
-  public and private modules.
 - An official registry (reviewed through pull requests) and direct GitHub URLs (not reviewed); the `source`
   field will grow new forms with a new schema or lock version.
-- Package sources will be given to the compiler through the existing `ModuleResolver`, so the Core still reads
-  no files and no network, and a program's identity for saving and restoring runs will include all package
-  sources (`ModuleCompileResult.sourceFingerprint`).

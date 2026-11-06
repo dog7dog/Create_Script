@@ -1,11 +1,14 @@
 package com.creatrbypc.createanalytical.cli
 
+import com.creatrbypc.createanalytical.install.InstallFailure
+import com.creatrbypc.createanalytical.install.InstalledPackages
 import com.creatrbypc.createanalytical.script.api.CreateScript
 import com.creatrbypc.createanalytical.script.api.RunOptions
 import com.creatrbypc.createanalytical.script.compiler.CompileOptions
 import com.creatrbypc.createanalytical.script.diagnostic.Diagnostic
 import com.creatrbypc.createanalytical.script.diagnostic.DiagnosticArgument
 import com.creatrbypc.createanalytical.script.diagnostic.DiagnosticSeverity
+import com.creatrbypc.createanalytical.script.module.ModuleCompileResult
 import com.creatrbypc.createanalytical.script.module.ModuleDiagnostic
 import com.creatrbypc.createanalytical.script.vm.VmState
 import java.io.BufferedReader
@@ -66,8 +69,9 @@ class CreateScriptCli(private val out: PrintStream, private val err: PrintStream
     // 入力のファイルを読めない（code は終了コード）
     private class InputError(val code: Int, message: String) : Exception(message)
 
-    // projectRoot は --project-root の値（省略時は null。ファイルのあるディレクトリ: 第8.0段階）
-    private class RunCommand(val file: String, val seed: Long, val instructionsPerTick: Int, val maxTicks: Int, val projectRoot: String?)
+    // projectRoot は --project-root の値（省略時は null。ファイルのあるディレクトリ: 第8.0段階）。
+    // file が null かディレクトリなら、プロジェクトモード（S8.2 Phase 4）
+    private class RunCommand(val file: String?, val seed: Long, val instructionsPerTick: Int, val maxTicks: Int, val projectRoot: String?)
 
     fun execute(args: List<String>): Int {
         try {
@@ -188,7 +192,7 @@ class CreateScriptCli(private val out: PrintStream, private val err: PrintStream
             }
         }
         return RunCommand(
-            file ?: throw UsageError("missing script file (expected a $EXTENSION file)"),
+            file,
             values["--seed"]?.let { it.toLongOrNull() ?: throw UsageError("--seed must be an integer between ${Long.MIN_VALUE} and ${Long.MAX_VALUE}: $it") }
                 ?: CliLimits.DEFAULT_SEED,
             positive(values, "--instructions-per-tick", CliLimits.DEFAULT_INSTRUCTIONS_PER_TICK, CliLimits.MAX_INSTRUCTIONS_PER_TICK),
@@ -208,12 +212,50 @@ class CreateScriptCli(private val out: PrintStream, private val err: PrintStream
     // import の無いプログラムの命令・診断は CreateScript.compile(source, CompileOptions.STANDALONE) と同じ。
     // 独立版のコマンドなので、プログラムの命令の数に上限を設けない（第8.0.1段階。入力の上限・実行時の上限はそのまま）
     private fun run(command: RunCommand): Int {
-        val source = readSource(command.file)
-        val project = openProject(command)
+        val file = command.file
+        if (file == null || isDirectory(file)) return runProject(command, file)
+        val source = readSource(file)
+        val project = openProject(command, file)
         val compiled = CreateScript.compile(source, project, project.entryModule, CliLimits.COMPILE_OPTIONS)
-        fun show(located: ModuleDiagnostic) = format(located.module?.let(project::displayName) ?: command.file, located.diagnostic)
+        return execute(command, compiled, file, project::displayName)
+    }
+
+    private fun isDirectory(file: String): Boolean = try {
+        Files.isDirectory(Paths.get(file))
+    } catch (error: InvalidPathException) {
+        false
+    }
+
+    // createscript run [ディレクトリ]（S8.2 Phase 4）: createscript.json の entry を、確かめたインストール済みのパッケージとともに実行する。
+    // 通信しない。マニフェスト・ロックファイル・インストール済みのパッケージのどれかが合わなければ、コンパイルせずに終了コード 65
+    private fun runProject(command: RunCommand, directory: String?): Int {
+        if (command.projectRoot != null) throw UsageError("--project-root cannot be used when running a project; the modules are found from createscript.json")
+        val project = ProjectCommands(out, err).projectForRun(directory) ?: return ExitCode.INVALID_INPUT
+        val packages = try {
+            project.lock?.let { InstalledPackages.verify(project.root, it) } ?: emptyList()
+        } catch (failure: InstallFailure) {
+            err.println("createscript: ${failure.message}")
+            return if (failure.kind == InstallFailure.Kind.NO_PROJECT) ExitCode.NO_INPUT else ExitCode.INVALID_INPUT
+        }
+        val entry = project.shownEntry
+        val source = readSource(entry)
+        val entryPath = Paths.get(entry)
+        val localRoot = try {
+            entryPath.toAbsolutePath().parent.toRealPath()
+        } catch (error: IOException) {
+            throw InputError(ExitCode.NO_INPUT, "cannot read file: $entry")
+        }
+        val local = ProjectModules(localRoot, entryPath.parent?.toString(), entryPath.fileName.toString().removeSuffix(EXTENSION))
+        val program = ProjectProgram(local, packages, project.manifest.dependencies.map { it.name }.toSet(), project.shownRoot)
+        val compiled = CreateScript.compile(source, program, program.entryModule, CliLimits.COMPILE_OPTIONS, program)
+        return execute(command, compiled, entry, program::displayName)
+    }
+
+    // コンパイルの結果を表示して実行する（ファイルの実行とプロジェクトモードで同じ）。file は表示するエントリーのファイルの名前
+    private fun execute(command: RunCommand, compiled: ModuleCompileResult, file: String, displayName: (String) -> String): Int {
+        fun show(located: ModuleDiagnostic) = format(located.module?.let(displayName) ?: file, located.diagnostic)
         compiled.diagnostics.forEach { err.println(show(it)) }
-        if (compiled.diagnosticsTruncated) err.println("${command.file}: more diagnostics were omitted")
+        if (compiled.diagnosticsTruncated) err.println("$file: more diagnostics were omitted")
         val program = compiled.program ?: return ExitCode.COMPILE_ERROR
 
         val run = CreateScript.start(program, RunOptions(command.instructionsPerTick, command.seed)) { out.println(it) }
@@ -224,7 +266,7 @@ class CreateScriptCli(private val out: PrintStream, private val err: PrintStream
         }
         out.flush()
         if (!run.isFinished) {
-            err.println("${command.file}: stopped after ${command.maxTicks} ticks (--max-ticks); the program did not finish")
+            err.println("$file: stopped after ${command.maxTicks} ticks (--max-ticks); the program did not finish")
             return ExitCode.MAX_TICKS_EXCEEDED
         }
         if (run.state == VmState.ERROR) {
@@ -257,8 +299,8 @@ class CreateScriptCli(private val out: PrintStream, private val err: PrintStream
     }
 
     // プロジェクトのルート（第8.0段階）。--project-root か、省略時はファイルのあるディレクトリ。ファイルはルートの中になければならない
-    private fun openProject(command: RunCommand): ProjectModules {
-        val file = Paths.get(command.file)
+    private fun openProject(command: RunCommand, fileName: String): ProjectModules {
+        val file = Paths.get(fileName)
         val shown = command.projectRoot ?: file.parent?.toString()
         val root = try {
             (command.projectRoot?.let { Paths.get(it) } ?: file.toAbsolutePath().parent).toRealPath()
@@ -272,9 +314,9 @@ class CreateScriptCli(private val out: PrintStream, private val err: PrintStream
         val directory = try {
             file.toAbsolutePath().parent.toRealPath()
         } catch (error: IOException) {
-            throw InputError(ExitCode.NO_INPUT, "cannot read file: ${command.file}")
+            throw InputError(ExitCode.NO_INPUT, "cannot read file: $fileName")
         }
-        if (!directory.startsWith(root)) throw InputError(ExitCode.USAGE, "${command.file} is not inside the project root ${command.projectRoot}")
+        if (!directory.startsWith(root)) throw InputError(ExitCode.USAGE, "$fileName is not inside the project root ${command.projectRoot}")
         return ProjectModules(root, shown, if (directory == root) file.fileName.toString().removeSuffix(EXTENSION) else null)
     }
 
@@ -286,6 +328,7 @@ class CreateScriptCli(private val out: PrintStream, private val err: PrintStream
             |Usage:
             |  createscript                      start the interactive mode
             |  createscript run <file$EXTENSION> [options]
+            |  createscript run [directory] [options]          run the entry of createscript.json with the installed packages
             |  createscript init [directory] [--name <name>]   create createscript.json and src/main$EXTENSION
             |  createscript manifest check [directory]       check createscript.json
             |  createscript lock check [directory]           check createscript.lock against createscript.json

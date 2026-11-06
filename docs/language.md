@@ -117,8 +117,8 @@ Parameters and return values can use the other types too, for example `Double`, 
 ## Modules (local `import`)
 
 A program can use functions from other `.cscr` files of the same project. This feature is in development
-and is not in v0.1.0-alpha. This is a first, local-only version: the files must already be on your disk. There is no package manager, no download and no
-`createscript install` yet.
+and is not in v0.1.0-alpha. Modules are files of your project, or modules of packages installed with
+`createscript install` (see [Modules from packages](#modules-from-packages)).
 
 ```text
 my-project/
@@ -187,6 +187,7 @@ Errors (shown with the file, line and column):
 | `CS_MODULE_BUILTIN_NAME` | `import println` |
 | `CS_MODULE_TOP_LEVEL_STATEMENT` / `CS_MODULE_CLASS_UNSUPPORTED` | a module with `println(1)` or `class Point` at the top level |
 | `CS_MODULE_IMPORT_UNAVAILABLE` | `import` where modules cannot be loaded (the interactive mode, `CreateScript.compile(source)`) |
+| `CS_MODULE_NOT_VISIBLE` | an `import` that the host does not allow (a private or transitive package module; see [Modules from packages](#modules-from-packages)) |
 | `CS_PARSE_INVALID_IMPORT` | `import geometry.square`, `import geometry as g`, `import "../geometry"` |
 | `CS_PARSE_MISPLACED_IMPORT` | `import` after another statement, or inside a block |
 | `CS_PARSE_DUPLICATE_IMPORT` (warning) | the same `import` twice in one file |
@@ -195,6 +196,36 @@ Errors (shown with the file, line and column):
 
 Type errors in calls use the usual codes, for example `geometry.square("5")` gives
 `CS_SEM_ARGUMENT_TYPE_MISMATCH` and `geometry.cube(2)` gives `CS_SEM_UNKNOWN_FUNCTION`.
+
+### Modules from packages
+
+In development (S8.2 Phase 4, not in v0.1.0-alpha). When a project is run with `createscript run [directory]`
+(see [cli.md](cli.md#running-a-project)), `import name` finds `name` in the directory of the entry file, as above,
+or in the packages listed in `createscript.lock` and installed in `.createscript/packages/`
+(see [Installing packages](packages.md#installing-packages-s82-phase-3)).
+
+- A package's **public modules** are the ones in its `modules` list; its other files in `modules/` are **private**.
+- The project (its entry file and local modules) can import the public modules of its **direct** dependencies,
+  the packages in its own `dependencies`.
+- A package can import its own modules (public and private) and the public modules of its own direct
+  dependencies. It cannot import the project's local modules.
+- A package that is only a dependency of a dependency (a transitive dependency) cannot be imported directly; add
+  it to `dependencies` to use it.
+- Module names are one namespace for the whole program, because functions are named `module.function`. If the
+  same module name exists in more than one place (a local file and a package, or two packages, private modules
+  included), importing it is an error (`CS_MODULE_AMBIGUOUS`); nothing is chosen for you.
+- Private only limits `import`; the source of private modules is in the package archive and can be read by
+  anyone who has the package.
+
+| Code | Example |
+|---|---|
+| `CS_MODULE_NOT_VISIBLE` | `import vm_internal` (a private module of a package), or `import numbers` when `numbers` is only a dependency of a dependency |
+| `CS_MODULE_AMBIGUOUS` | `src/vector_math.cscr` exists and an installed package also has a module `vector_math` |
+
+For hosts, the Core has `CreateScript.compile(source, resolver, entryModule, options, access)` with a
+`ModuleAccess` (`allows(importer, module)`, where `importer` is the module that contains the `import`, or `null`
+for the entry file). It is checked for every `import` before the resolver is asked. The other `compile`
+functions and `ModuleResolver` are unchanged and allow every import.
 
 ## Classes
 

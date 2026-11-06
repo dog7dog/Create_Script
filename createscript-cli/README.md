@@ -83,7 +83,7 @@ createscript --version
 - モジュールの中の診断と実行時エラーは、そのモジュールのファイルの名前・行・列で表示します。
 - すべてのファイルを 1 つのプログラムにまとめて 1 台の VM で実行するので、`--instructions-per-tick`・`--max-ticks`・言語の上限は、プログラム全体に働きます。
 - 対話モードでは `import` を使えません（`CS_MODULE_IMPORT_UNAVAILABLE`）。
-- `createscript install`（7.1）でインストールしたパッケージは、まだ import できません（S8.2 Phase 4）。言語の規則は [docs/language.md](../docs/language.md#modules-local-import)（英語）にあります。
+- `createscript install`（7.1）でインストールしたパッケージは、`createscript run [ディレクトリ]`（プロジェクトモード）で import できます。import できるのは、直接の依存の公開モジュールだけです（S8.2 Phase 4）。言語の規則は [docs/language.md](../docs/language.md#modules-local-import)（英語）にあります。
 
 ## 5.1 対話モード（REPL）
 
@@ -249,7 +249,7 @@ createscript-cli/samples/infinite_loop.cscr: stopped after 1000 ticks (--max-tic
 ### 7.1 プロジェクトのファイル（S8.1。開発中）
 
 `createscript.json`（マニフェスト）と `createscript.lock`（ロックファイル）を扱うコマンドです。形式は [docs/packages.md](../docs/packages.md)（英語）にあります。
-`run` は、これらのファイルを読みません。
+`run <ファイル>.cscr` は、これらのファイルを読みません。`run [ディレクトリ]` は、マニフェストの entry を、インストール済みのパッケージとともに実行します（S8.2 Phase 4）。
 
 ```text
 $ createscript init my-app                 # createscript.json と src/main.cscr を作る（名前の既定はディレクトリ名。--name で指定）
@@ -258,7 +258,12 @@ $ createscript lock check my-app           # ロックファイルを、マニ�
 $ createscript install github:owner/vector-math@v1.2.0 my-app   # パッケージと依存をインストールし、createscript.json に足す（S8.2）
 $ createscript install my-app              # createscript.json・createscript.lock どおりにインストールする
 $ createscript install --offline my-app    # 通信しない（キャッシュだけを使う）
+$ createscript run my-app                  # entry を実行する（通信しない。パッケージがロックファイルと合わなければ実行しない）
 ```
+
+- `init` は、`.gitignore` が無いときだけ、`/.createscript/` の 1 行の `.gitignore` を作ります。既にある `.gitignore`（リンク・ディレクトリを含む）は変えません。
+- `run [ディレクトリ]` は、実行の前に、`lock check` と同じ検査と、`.createscript/packages/` の中身が印・ロックファイルと完全に一致することを確かめます。合わなければ、コンパイルせずに終了コード 65 です。
+  ローカルのモジュールと、パッケージのモジュールの名前が重なれば、どちらかを選ばずに `CS_MODULE_AMBIGUOUS` にします。公開しないモジュール・推移的な依存の import は `CS_MODULE_NOT_VISIBLE` です。
 
 - `install` は、GitHub Releases の `createscript-package.zip` を取得し、ロックファイルの SHA-256 と違うものは必ず拒否します。初回は、取得したものの SHA-256 を記録します（TOFU）。
   ダウンロードしたものは実行しません。`.createscript/packages/<名前>/<版>/` に置き、`createscript.json`・`createscript.lock` をジャーナルを使って安全に書き換えます。

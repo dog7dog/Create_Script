@@ -253,4 +253,8 @@ enum class DiagnosticCode(val id: String) {
     // モジュールのファイルに書けないもの（第8.0段階。モジュールに書けるのは import と関数だけ）。トップレベルの文（位置は文の先頭）・クラス（位置は class）
     MODULE_TOP_LEVEL_STATEMENT("CS_MODULE_TOP_LEVEL_STATEMENT"),
     MODULE_CLASS_UNSUPPORTED("CS_MODULE_CLASS_UNSUPPORTED"),
+
+    // import できない範囲のモジュール（S8.2 Phase 4。ModuleAccess を渡すコンパイルだけ。位置は import のモジュール名、引数: モジュール名）。
+    // 例: 直接の依存ではないパッケージのモジュール、パッケージの公開しないモジュール。末尾に足す（既存の値の順序を変えない）
+    MODULE_NOT_VISIBLE("CS_MODULE_NOT_VISIBLE"),
 }

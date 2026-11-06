@@ -53,8 +53,10 @@ class ProjectCliTest {
         val manifest = Files.readString(project.resolve("createscript.json"))
         assertEquals("{\n  \"schemaVersion\": 1,\n  \"name\": \"my-app\",\n  \"version\": \"0.1.0\",\n  \"entry\": \"src/main.cscr\",\n  \"dependencies\": {}\n}\n", manifest)
         assertEquals("println(\"Hello, CreateScript!\")\n", Files.readString(project.resolve("src/main.cscr")))
-        // ロックファイル・一時ファイルは作らない
-        assertEquals(listOf("createscript.json", "src"), Files.list(project).use { files -> files.map { it.fileName.toString() }.sorted().toList() })
+        // ロックファイル・一時ファイルは作らない。.gitignore が無かったので、/.createscript/ の 1 行で作る（S8.2 Phase 4）
+        assertEquals(listOf(".gitignore", "createscript.json", "src"), Files.list(project).use { files -> files.map { it.fileName.toString() }.sorted().toList() })
+        assertEquals("/.createscript/\n", Files.readString(project.resolve(".gitignore")))
+        assertTrue(result.out.contains("Created ${project.resolve(".gitignore")}"), result.out)
         assertTrue(result.out.contains("createscript run ${project.resolve("src/main.cscr")}"), result.out)
         // 作ったプロジェクトは、そのまま確かめられ、実行できる
         assertEquals(ExitCode.OK, cli("manifest", "check", project.toString()).code)

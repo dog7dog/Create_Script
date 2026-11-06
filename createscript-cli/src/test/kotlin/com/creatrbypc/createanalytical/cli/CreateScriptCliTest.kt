@@ -183,7 +183,6 @@ class CreateScriptCliTest {
         val cases = listOf(
             listOf("start", file),
             listOf("--verbose"),
-            listOf("run"),
             listOf("run", file, file),
             listOf("run", file, "--unknown", "1"),
             listOf("run", file, "--seed"),
@@ -197,6 +196,11 @@ class CreateScriptCliTest {
             listOf("run", file, "--max-ticks", "1000001"),
             listOf("--version", "extra"),
         )
+        // S8.2 Phase 4: ファイルを指定しない run は、今のディレクトリのプロジェクトを実行する（使い方の誤りではなくなった）。
+        // テストの作業ディレクトリには createscript.json が無いので、66
+        val project = cli("run")
+        assertEquals(ExitCode.NO_INPUT, project.code)
+        assertTrue(project.err.startsWith("createscript: createscript.json not found"), project.err)
         for (args in cases) {
             val result = cli(*args.toTypedArray())
             assertEquals(ExitCode.USAGE, result.code, "$args")

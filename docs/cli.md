@@ -48,6 +48,30 @@ The detailed Japanese manual is [createscript-cli/README.md](../createscript-cli
 | 66 | The file does not exist, is not a regular file or cannot be read; the project root does not exist or is not a directory |
 | 130 | Interrupted with Ctrl+C while running |
 
+### Running a project
+
+`createscript run [directory]` (in development, S8.2 Phase 4) runs the `entry` of the project's
+`createscript.json`; the directory defaults to the current directory. Use it to import installed packages.
+
+```text
+$ createscript install github:owner/vector-math@v1.2.0
+$ createscript run
+25
+```
+
+- Before compiling, the project is checked like `createscript manifest check` and `createscript lock check`, and
+  every package in `createscript.lock` must be installed exactly: the files in `.createscript/packages/<name>/<version>/`
+  must match their marker (no missing, extra or changed files, no symbolic links), the marker must name the
+  archive of the lock file (`sha256`), and the package's `createscript.json` must match the lock file. Otherwise
+  nothing is compiled or run (exit code 65) and `createscript install` is suggested. An interrupted installation
+  also stops it.
+- It uses no network and no cache, and writes no files. The sources that were checked are the ones compiled.
+- Local modules are found in the directory of the entry file. Which modules can be imported is described in
+  [Modules from packages](language.md#modules-from-packages).
+- `--seed`, `--instructions-per-tick` and `--max-ticks` work as for a file. `--project-root` cannot be used.
+- `createscript run <file>.cscr` is unchanged: it does not read `createscript.json` and does not use packages.
+- A library without `entry` cannot be run (exit code 65).
+
 ### Files with `import`
 
 A file can import other `.cscr` files of the same project (in development, not in v0.1.0-alpha; see
@@ -79,24 +103,25 @@ $ createscript run my-project/apps/tool.cscr --project-root my-project
   `--max-ticks` and the language limits apply to the whole program.
 - A file without `import` is compiled exactly as before.
 
-`createscript install` (in development) downloads and installs packages into `.createscript/packages/`, but
-`createscript run` does not read them yet (S8.2 Phase 4).
+`createscript install` (in development) downloads and installs packages into `.createscript/packages/`;
+`createscript run [directory]` uses them (see [Running a project](#running-a-project)).
 
 ## Project files
 
 In development (not in v0.1.0-alpha). See [Project files](packages.md) for the formats.
 
-- `createscript init [directory] [--name <name>]` creates `createscript.json` and `src/main.cscr`. It never
-  overwrites a file and, if it fails halfway, removes only what it created (exit code 73 when it cannot create
-  the files).
+- `createscript init [directory] [--name <name>]` creates `createscript.json` and `src/main.cscr`, and a
+  `.gitignore` with the line `/.createscript/` when there is no `.gitignore` (an existing one is never changed). It
+  never overwrites a file and, if it fails halfway, removes only what it created (exit code 73 when it cannot
+  create the files).
 - `createscript manifest check [directory]` checks `createscript.json` and its entry file.
 - `createscript lock check [directory]` checks `createscript.lock` against `createscript.json`.
 - `createscript pack [directory] [--output <file>]` makes `createscript-package.zip` from a library project
   (schema version 2). The same files always give the same bytes; an existing file is never overwritten.
 - `createscript install [github:<owner>/<repo>@v<version>] [directory] [--offline]` installs the dependencies
   and, with a package, adds it to `createscript.json` (see [Installing packages](packages.md#installing-packages-s82-phase-3)).
-- The directory defaults to the current directory. The checks only read files. `createscript run` does not read
-  these files yet.
+- The directory defaults to the current directory. The checks only read files. `createscript run [directory]`
+  reads them; `createscript run <file>.cscr` does not.
 
 | Exit code | Meaning |
 |---|---|

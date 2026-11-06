@@ -323,5 +323,18 @@ class RecoveryTest {
         assertTrue(failure.message!!.contains("cannot be finished or undone safely"), failure.message)
         assertEquals(before, snapshot(root))
         assertNotNull(Files.readString(txn.resolve("createscript.json.old")))
+        // 説明: 理由・残っているファイル・今のファイルの状態・手順（ジャーナルを消せとは言わず、確かめてから外へ移して残すよう示す）
+        val message = failure.message!!
+        val id = txn.fileName.toString()
+        for (expected in listOf(
+            "the saved copies in .createscript/$id are missing or were changed",
+            "Files left by the interrupted installation:\n  .createscript/transaction.json\n  .createscript/$id/ (",
+            "createscript.json.old",
+            "  createscript.json: the version after the installation",
+            "  createscript.lock: missing, as before the installation",
+            "To check by hand:\n  1. Compare createscript.json and createscript.lock with the saved copies in .createscript/$id/",
+            "  3. Only when both files are as you want them, move .createscript/transaction.json and .createscript/$id/ out of the project (keep them until you are sure)",
+        )) assertTrue(message.contains(expected), "missing <$expected> in:\n$message")
+        assertFalse(message.contains("remove .createscript/transaction.json"), message)
     }
 }

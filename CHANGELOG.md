@@ -41,6 +41,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   (`createscript-package.zip`): a strict ZIP reader (layout, no ZIP64, encryption, data descriptors, links or
   special files, size, count and ratio limits, CRC checks) and a deterministic writer. `createscript pack` makes a
   package archive from a library project. Schema version 1 is unchanged.
+- `createscript run [directory]`: runs the `entry` of `createscript.json` with the installed packages, without the
+  network. Before compiling, the lock file is checked as by `lock check` and every installed package must match its
+  marker and the lock file (SHA-256 of the archive, its manifest and dependencies); otherwise nothing is run (exit
+  code 65). The project and each package can import the public modules of their direct dependencies and their own
+  modules; private modules of other packages and transitive dependencies give `CS_MODULE_NOT_VISIBLE`, and a module
+  name that exists in more than one place gives `CS_MODULE_AMBIGUOUS`. `createscript run <file>.cscr` is unchanged.
+- Core: `ModuleAccess` and `CreateScript.compile(source, resolver, entryModule, options, access)`, checked for every
+  `import` before the resolver; the diagnostic `CS_MODULE_NOT_VISIBLE`. The existing `compile` functions and
+  `ModuleResolver` are unchanged (code compiled against the earlier Core runs unchanged; a regression test runs
+  such code).
+- `createscript init` creates a `.gitignore` with `/.createscript/` when the directory has none; an existing one is
+  never changed.
 - `createscript install [github:owner/repo@v1.2.0] [directory] [--offline]`: installs a package and its
   dependencies (exact versions, followed depth first in name order; conflicts, cycles and more than 256 packages,
   a depth of 32 or 128 MiB are errors) into `.createscript/packages/<name>/<version>/`, adds the package to
@@ -49,7 +61,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   `.createscript/install.lock` make the update of several files safe: a failed or interrupted installation is
   finished or undone, files changed by another program are never overwritten or removed, and a damaged journal
   stops with instructions. New exit codes 69 and 75. `manifest check`, `lock check` and `pack` stop while an
-  installation is interrupted. Installed packages cannot be imported yet.
+  installation is interrupted. When an interrupted installation cannot be finished or undone safely, the message
+  lists the files that are left, the state of the manifest and the lock file, and the steps to check them; it does
+  not ask to delete the journal first.
 - `createscript-install`: downloading package archives from GitHub Releases with the JDK HTTP client (HTTPS to fixed
   GitHub hosts only, checked redirects, the token only for `api.github.com`, size and time limits, retries and rate
   limits), SHA-256 checks against the lock file and GitHub's asset digest, and a cache keyed by SHA-256 that is

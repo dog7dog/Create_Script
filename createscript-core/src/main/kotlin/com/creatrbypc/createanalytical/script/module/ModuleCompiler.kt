@@ -49,6 +49,18 @@ fun interface ModuleResolver {
     fun resolve(name: String): ModuleLookup
 }
 
+// import できる範囲（S8.2 Phase 4）。importer は import を書いたモジュール（エントリーのファイルは null）、module は import するモジュール名。
+// Core は、各 import の宣言について、resolver を呼ぶ前に確かめる（同じモジュールを別のファイルから import するときも、宣言ごとに確かめる）。
+// 許されなければ CS_MODULE_NOT_VISIBLE。ModuleResolver とは別のインターフェースにして、ModuleResolver の形を変えない
+fun interface ModuleAccess {
+    fun allows(importer: String?, module: String): Boolean
+
+    companion object {
+        // すべてを許す（ModuleAccess を渡さない compile と同じ）
+        val ALL: ModuleAccess = ModuleAccess { _, _ -> true }
+    }
+}
+
 // module はファイルのモジュール名（エントリーのファイルは null）。diagnostic の位置は、そのファイルの中の位置
 data class ModuleDiagnostic(val module: String?, val diagnostic: Diagnostic)
 
@@ -92,7 +104,12 @@ class ModuleCompileResult internal constructor(
 // - 各ファイルの位置の offset に、ファイルごとの始まり（前のファイルの長さ + 1 の合計）を足し、診断・命令の位置からファイルを決める。
 //   エントリーのファイルの始まりは 0 のため、import の無いプログラムは CreateScript.compile(source) と同じ命令になる
 // - 同じモジュールは 1 回だけ解決する。import の循環・見つからないモジュールなどは診断にする（解決できない import があれば意味解析しない）
-internal class ModuleCompiler private constructor(private val resolver: ModuleResolver, private val entryModule: String?, private val options: CompileOptions) {
+internal class ModuleCompiler private constructor(
+    private val resolver: ModuleResolver,
+    private val entryModule: String?,
+    private val options: CompileOptions,
+    private val access: ModuleAccess,
+) {
     private class SourceUnit(val module: String?, val base: Int, val program: Program?)
 
     private enum class State { RESOLVING, DONE, FAILED }
@@ -107,8 +124,8 @@ internal class ModuleCompiler private constructor(private val resolver: ModuleRe
     private var totalTokens = 0
 
     companion object {
-        fun compile(source: String, resolver: ModuleResolver, entryModule: String?, options: CompileOptions): ModuleCompileResult =
-            ModuleCompiler(resolver, entryModule, options).run(source)
+        fun compile(source: String, resolver: ModuleResolver, entryModule: String?, options: CompileOptions, access: ModuleAccess = ModuleAccess.ALL): ModuleCompileResult =
+            ModuleCompiler(resolver, entryModule, options, access).run(source)
     }
 
     private fun run(source: String): ModuleCompileResult {
@@ -184,6 +201,11 @@ internal class ModuleCompiler private constructor(private val resolver: ModuleRe
             val name = declaration.name
             if (name in BuiltinFunctions.NAMES) {
                 report(DiagnosticCode.MODULE_BUILTIN_NAME, declaration, name)
+                continue
+            }
+            // import できる範囲（S8.2 Phase 4。ModuleAccess.ALL では常に許すので、既存の compile の診断・順序は変わらない）
+            if (!access.allows(top.unit?.module, name)) {
+                report(DiagnosticCode.MODULE_NOT_VISIBLE, declaration, name)
                 continue
             }
             val cycleStart = onPath[name]

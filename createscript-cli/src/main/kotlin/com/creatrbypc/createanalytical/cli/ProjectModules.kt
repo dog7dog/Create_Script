@@ -54,6 +54,18 @@ internal object SourceFiles {
 internal class ProjectModules(private val root: Path, private val shownRoot: String?, entry: String?) : ModuleResolver {
     val entryModule: String? = entry?.takeIf { NAME.matches(it) }
 
+    // その名前（大文字・小文字の違いを含む）のファイルがルートの直下にあるか（S8.2 Phase 4: パッケージのモジュールとの名前の衝突を見つけるため）。
+    // 一覧は 1 回だけ読む。読めなければ「ある」とみなす（衝突を見逃さない側に倒す）
+    private val names: Set<String>? by lazy {
+        try {
+            Files.list(root).use { entries -> entries.map { it.fileName.toString().lowercase() }.toList().toSet() }
+        } catch (error: IOException) {
+            null
+        }
+    }
+
+    fun exists(name: String): Boolean = NAME.matches(name) && names?.contains((name + CliLimits.EXTENSION).lowercase()) ?: true
+
     fun displayName(module: String): String = shownRoot?.let { Paths.get(it, module + CliLimits.EXTENSION).toString() } ?: (module + CliLimits.EXTENSION)
 
     override fun resolve(name: String): ModuleLookup {
