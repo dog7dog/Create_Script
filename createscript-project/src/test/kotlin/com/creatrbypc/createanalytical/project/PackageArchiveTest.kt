@@ -70,6 +70,58 @@ class PackageArchiveTest {
         assertEquals(setOf("createscript.json", "modules/vector_math.cscr"), archive!!.files.keys)
     }
 
+    // ---- 正規形（S8.2 M-1） ----
+
+    // write の出力は正規形で、読んだ中身から 1 バイトも違わずに作り直せる
+    @Test
+    fun rebuildsCanonicalArchivesByteForByte() {
+        val written = PackageArchives.write(files())
+        val archive = PackageArchives.read(written).archive!!
+        assertTrue(PackageArchives.isCanonical(written, archive))
+        assertArrayEquals(written, PackageArchives.rebuild(archive.files))
+        assertArrayEquals(written, PackageArchives.rebuild(LinkedHashMap(archive.files.entries.reversed().associate { it.key to it.value })))
+        // 1 ファイルの 1 バイト・ファイルの追加・削除で、作り直したものも変わる
+        val changed = HashMap(archive.files).also { it["LICENSE"] = "MIT License!\n".toByteArray() }
+        assertTrue(!written.contentEquals(PackageArchives.rebuild(changed)))
+        assertTrue(!written.contentEquals(PackageArchives.rebuild(archive.files + ("NOTICE" to ByteArray(0)))))
+        assertTrue(!written.contentEquals(PackageArchives.rebuild(archive.files - "LICENSE")))
+        // アーカイブに入れられないパス（ASCII でないものも）・空は作り直さない（例外にしない）
+        assertNull(PackageArchives.rebuild(archive.files + ("evil.txt" to ByteArray(0))))
+        assertNull(PackageArchives.rebuild(archive.files + ("modules/é.cscr" to ByteArray(0))))
+        assertNull(PackageArchives.rebuild(archive.files + ("modules/" to ByteArray(0))))
+        assertNull(PackageArchives.rebuild(emptyMap()))
+    }
+
+    // 読める（read に通る）が正規形でない ZIP: ほかのツールの形・項目の順・コメント・属性・フラグ
+    @Test
+    fun recognisesArchivesThatAreNotCanonical() {
+        fun base(configure: ZipBuilder.Entry.() -> Unit = {}) = ZipBuilder().add("createscript.json", ZipBuilder.MANIFEST, configure).add("modules/vector_math.cscr", ZipBuilder.MODULE, configure)
+        val cases = mapOf(
+            "deflated" to base { method = 8 }.build(),
+            "directory entry" to ZipBuilder().add("createscript.json", ZipBuilder.MANIFEST).add("modules/", ByteArray(0)) { external = 0x41EDL shl 16 }.add("modules/vector_math.cscr", ZipBuilder.MODULE).build(),
+            "unsorted" to ZipBuilder().add("modules/vector_math.cscr", ZipBuilder.MODULE).add("createscript.json", ZipBuilder.MANIFEST).build(),
+            "comment" to base().apply { comment = "hi".toByteArray() }.build(),
+            "made by MS-DOS" to base { madeBy = 20; external = 0 }.build(),
+            "UTF-8 flag" to base { flags = 0x0800 }.build(),
+            "java.util.zip" to java.io.ByteArrayOutputStream().also { bytes ->
+                java.util.zip.ZipOutputStream(bytes).use { zip ->
+                    for ((name, data) in sortedMapOf("createscript.json" to ZipBuilder.MANIFEST, "modules/vector_math.cscr" to ZipBuilder.MODULE)) {
+                        zip.putNextEntry(java.util.zip.ZipEntry(name).apply { method = java.util.zip.ZipEntry.STORED; size = data.size.toLong(); crc = java.util.zip.CRC32().apply { update(data) }.value })
+                        zip.write(data)
+                        zip.closeEntry()
+                    }
+                }
+            }.toByteArray(),
+        )
+        for ((label, bytes) in cases) {
+            val archive = PackageArchives.read(bytes).archive
+            assertNotNull(archive, label)
+            assertTrue(!PackageArchives.isCanonical(bytes, archive!!), label)
+            // 作り直した正規形は、同じ中身の write の出力
+            assertArrayEquals(PackageArchives.write(archive.files), PackageArchives.rebuild(archive.files), label)
+        }
+    }
+
     // ---- パスと種類 ----
 
     @Test

@@ -43,8 +43,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   package archive from a library project. Schema version 1 is unchanged.
 - `createscript run [directory]`: runs the `entry` of `createscript.json` with the installed packages, without the
   network. Before compiling, the lock file is checked as by `lock check` and every installed package must match its
-  marker and the lock file (SHA-256 of the archive, its manifest and dependencies); otherwise nothing is run (exit
-  code 65). The project and each package can import the public modules of their direct dependencies and their own
+  marker and the lock file (SHA-256 of the archive, its manifest and dependencies), and the canonical archive made
+  again from the installed files must have the SHA-256 of the lock file, so files changed together with their
+  marker are also refused; otherwise nothing is run (exit code 65). `install` accepts only archives in the
+  canonical form that `createscript pack` writes (other valid ZIP files are refused with exit code 65). The project and each package can import the public modules of their direct dependencies and their own
   modules; private modules of other packages and transitive dependencies give `CS_MODULE_NOT_VISIBLE`. Each import
   is looked up in the scope of its file, so modules with the same name in different packages (private modules
   included) or a local module and a private package module can be used together; only a name that exists twice in

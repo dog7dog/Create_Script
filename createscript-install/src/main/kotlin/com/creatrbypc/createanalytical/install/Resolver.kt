@@ -36,6 +36,7 @@ internal class ResolvedPackage(
 // - ロックファイルに同じ name・version・source があれば、その SHA-256 を必ず使う（違うアーカイブは PackageFetcher が拒否する）。
 //   その場合、アーカイブのマニフェストの依存とロックファイルの dependencies が違えば、ロックファイルが書き換えられたとみなしてエラー
 // - アーカイブは PackageArchives.read で検査する（library・name・version の一致・パス・ソース）。コードは実行しない
+// - アーカイブは正規形（createscript pack が書く形。PackageArchives.isCanonical）でなければならない（S8.2 M-1）
 internal class Resolver(private val fetcher: PackageFetcher, private val limits: InstallLimits, private val offline: Boolean) {
     private class Fetched(val sha256: String, val archive: PackageArchives.Archive, val summary: FetchSummary)
 
@@ -62,6 +63,10 @@ internal class Resolver(private val fetcher: PackageFetcher, private val limits:
             "$source $version is not a valid package:\n" + checked.diagnostics.joinToString("\n") { "  " + it.diagnostic.format(it.path ?: PackageArchives.FILE_NAME) },
         )
         if (archive.manifest.kind != PackageKind.LIBRARY) invalid("$source $version is not a library")
+        // 正規形だけを受け入れる（S8.2 M-1: 実行の前に、インストールしたファイルから作り直したアーカイブを、ロックファイルの SHA-256 と比べるため）
+        if (!PackageArchives.isCanonical(result.bytes, archive)) {
+            invalid("$source $version is a valid ZIP file but not in the canonical form that createscript pack writes; it was not installed. Make the archive with createscript pack")
+        }
         fetched[key] = Fetched(result.sha256, archive, FetchSummary(result.origin, result.locked, result.digest, result.immutable, result.warnings))
         return result.sha256 to archive
     }

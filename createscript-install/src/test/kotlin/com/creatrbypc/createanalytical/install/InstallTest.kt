@@ -5,6 +5,8 @@ import com.creatrbypc.createanalytical.project.JsonObject
 import com.creatrbypc.createanalytical.project.JsonParser
 import com.creatrbypc.createanalytical.project.Lockfiles
 import com.creatrbypc.createanalytical.project.Manifests
+import com.creatrbypc.createanalytical.project.PackageArchives
+import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
@@ -90,6 +92,12 @@ class InstallTest {
         assertEquals("fun one(): Int {\n    return 1\n}\n", Files.readString(directory.resolve("modules/vector_math.cscr")))
         val marker = Marker.parse(Files.readAllBytes(directory.resolve(".createscript-package.json")))!!
         assertEquals(GitHubReleases.sha256Hex(store.assets["$vectorMath@1.2.0"]!!), marker.sha256)
+        // 置いたファイル（印を除く）から、取得したアーカイブが 1 バイトも違わずに作り直せる（S8.2 M-1）
+        for ((name, version) in listOf("vector-math" to "1.2.0", "numbers" to "3.0.0")) {
+            val state = PackageDirectories.inspect(root.resolve(".createscript/packages/$name/$version"), Owner.of(root.resolve(".createscript")), keepContents = true) as PackageState.Valid
+            assertArrayEquals(store.assets["${Packages.source(name)}@$version"]!!, PackageArchives.rebuild(state.contents))
+            assertTrue(PackageDirectories.matchesArchive(state, GitHubReleases.sha256Hex(store.assets["${Packages.source(name)}@$version"]!!)))
+        }
         // 作業用のファイル・ジャーナルは残らない
         assertEquals(listOf("install.lock", "packages"), Files.list(root.resolve(".createscript")).use { s -> s.map { it.fileName.toString() }.sorted().toList() })
         assertEquals(emptyList<String>(), result.warnings)
@@ -189,6 +197,51 @@ class InstallTest {
         val before = snapshot(missing)
         assertTrue(failure(InstallFailure.Kind.INVALID) { installer(missing).install(null, false) }.message!!.contains("not found"))
         assertUnchanged(before, missing)
+    }
+
+    // 作り直せない中身（アーカイブに入れられないパス・空）は、一致しないものとする（S8.2 M-1。印の読み取りが先に拒否するが、念のため安全側にする）
+    @Test
+    fun aDirectoryThatCannotBeRebuiltDoesNotMatch() {
+        val archive = Packages.library("numbers", "3.0.0")
+        val files = PackageArchives.read(archive).archive!!.files
+        val sha = GitHubReleases.sha256Hex(archive)
+        val marker = Marker(java.util.UUID.randomUUID().toString(), "numbers", "3.0.0", numbers, sha, files.mapValues { GitHubReleases.sha256Hex(it.value) })
+        assertTrue(PackageDirectories.matchesArchive(PackageState.Valid(marker, "", emptyMap(), files), sha))
+        assertFalse(PackageDirectories.matchesArchive(PackageState.Valid(marker, "", emptyMap(), files + ("evil.txt" to ByteArray(0))), sha))
+        assertFalse(PackageDirectories.matchesArchive(PackageState.Valid(marker, "", emptyMap(), emptyMap()), sha))
+        assertFalse(PackageDirectories.matchesArchive(PackageState.Valid(marker, "", emptyMap(), files), "0".repeat(64)))
+    }
+
+    // ZIP として正しく中身も検査に通るが、createscript pack の正規形でないアーカイブは置かない（S8.2 M-1）。ロックファイル・キャッシュ・プロジェクトは変わらない
+    @Test
+    fun refusesArchivesThatAreNotCanonical() {
+        val canonical = Packages.library("numbers", "3.0.0")
+        val files = PackageArchives.read(canonical).archive!!.files
+        // 末尾のコメント（中央ディレクトリの終わりのコメントの長さを 2 にする）
+        val commented = canonical.copyOf(canonical.size + 2).also { it[canonical.size - 2] = 2; it[canonical.size] = 'h'.code.toByte(); it[canonical.size + 1] = 'i'.code.toByte() }
+        // java.util.zip の STORED（作成した OS・フラグ・時刻が違う）
+        val jdk = java.io.ByteArrayOutputStream().also { bytes ->
+            java.util.zip.ZipOutputStream(bytes).use { zip ->
+                for ((name, data) in files) {
+                    zip.putNextEntry(java.util.zip.ZipEntry(name).apply { method = java.util.zip.ZipEntry.STORED; size = data.size.toLong(); crc = java.util.zip.CRC32().apply { update(data) }.value })
+                    zip.write(data)
+                    zip.closeEntry()
+                }
+            }
+        }.toByteArray()
+        for ((label, bytes) in mapOf("comment" to commented, "java.util.zip" to jdk)) {
+            assertTrue(PackageArchives.read(bytes, "numbers", "3.0.0").archive != null, label)
+            store.publish(numbers, "3.0.0", bytes)
+            val project = createProject(temp.resolve("p-${label.replace(' ', '-').replace('.', '-')}"), manifestWith(dep("numbers", "3.0.0")))
+            val before = snapshot(project)
+            val failure = failure(InstallFailure.Kind.INVALID) { installer(project).install(null, false) }
+            assertTrue(failure.message!!.contains("not in the canonical form that createscript pack writes; it was not installed"), "$label: ${failure.message}")
+            assertUnchanged(before, project)
+        }
+        // 正規形なら置ける
+        store.publish(numbers, "3.0.0", canonical)
+        val project = createProject(temp.resolve("p-canonical"), manifestWith(dep("numbers", "3.0.0")))
+        assertTrue(installer(project).install(null, false).packages.single().installed)
     }
 
     @Test
@@ -343,6 +396,14 @@ class InstallTest {
             "extra file" to { Files.writeString(module.resolveSibling("extra.cscr"), "") },
             "missing file" to { Files.delete(root.resolve(".createscript/packages/numbers/3.0.0/LICENSE")) },
             "damaged marker" to { Files.writeString(root.resolve(".createscript/packages/numbers/3.0.0/.createscript-package.json"), "{}") },
+            // 中身と印を同じように書き換えたもの（S8.2 M-1: 作り直したアーカイブがロックファイルと合わない）
+            "changed file and marker" to {
+                val markerPath = root.resolve(".createscript/packages/numbers/3.0.0/.createscript-package.json")
+                val forged = "fun one(): Int {\n    return 4\n}\n".toByteArray()
+                val marker = Marker.parse(Files.readAllBytes(markerPath))!!
+                Files.write(module, forged)
+                Files.write(markerPath, marker.copy(files = marker.files + ("modules/numbers.cscr" to GitHubReleases.sha256Hex(forged))).write())
+            },
         )
         val original = snapshot(root)
         for ((label, change) in changes) {
@@ -350,6 +411,7 @@ class InstallTest {
             val before = snapshot(root)
             val failure = failure(InstallFailure.Kind.UNSAFE) { installer().install(null, false) }
             assertTrue(failure.message!!.contains("Remove it by hand"), "$label: ${failure.message}")
+            if (label == "changed file and marker") assertTrue(failure.message!!.contains("does not match the archive of numbers 3.0.0"), failure.message)
             assertEquals(before, snapshot(root), label)
             // 元に戻す
             deleteTree(root.resolve(".createscript/packages/numbers/3.0.0"))

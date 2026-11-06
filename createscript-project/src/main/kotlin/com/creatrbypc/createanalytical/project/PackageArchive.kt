@@ -66,6 +66,19 @@ object PackageArchives {
         return out.toByteArray()
     }
 
+    // ---- 正規形（S8.2 M-1） ----
+    // 正規形のアーカイブは、write がその中身から作るものと 1 バイトも違わないもの（createscript pack の出力）。
+    // 中身から正規形のアーカイブが 1 つに決まるので、インストールしたファイルから作り直したアーカイブの SHA-256 を、ロックファイルの値と比べられる
+
+    // read に通ったアーカイブ archive（bytes を読んだもの）が正規形か
+    fun isCanonical(bytes: ByteArray, archive: Archive): Boolean = write(archive.files).contentEquals(bytes)
+
+    // ファイル（パス → 中身）から正規形のアーカイブを作り直す。アーカイブに入れられないパスがある・ファイルが無いなら null
+    fun rebuild(files: Map<String, ByteArray>): ByteArray? {
+        if (files.isEmpty() || files.keys.any { pathProblem(it) != null }) return null
+        return write(files)
+    }
+
     private fun java.io.ByteArrayOutputStream.int16(value: Int) {
         write(value and 0xFF); write((value shr 8) and 0xFF)
     }

@@ -62,7 +62,9 @@ $ createscript run
 - Before compiling, the project is checked like `createscript manifest check` and `createscript lock check`, and
   every package in `createscript.lock` must be installed exactly: the files in `.createscript/packages/<name>/<version>/`
   must match their marker (no missing, extra or changed files, no symbolic links), the marker must name the
-  archive of the lock file (`sha256`), and the package's `createscript.json` must match the lock file. Otherwise
+  archive of the lock file (`sha256`), the canonical archive made again from the files must have that SHA-256 (so a
+  change of the files together with the marker is found; see
+  [Canonical form](packages.md#canonical-form)), and the package's `createscript.json` must match the lock file. Otherwise
   nothing is compiled or run (exit code 65) and `createscript install` is suggested. An interrupted installation
   also stops it.
 - It uses no network and no cache, and writes no files. The sources that were checked are the ones compiled.

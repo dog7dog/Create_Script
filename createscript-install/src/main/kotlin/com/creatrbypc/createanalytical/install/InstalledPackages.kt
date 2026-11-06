@@ -27,10 +27,12 @@ class VerifiedPackage(
 // lock は lock check（Lockfiles.check）に通ったもの。ロックファイルの各パッケージについて、次のすべてを確かめる:
 // - .createscript/packages/<name>/<version>/ が、リンクでないディレクトリで、印（.createscript-package.json）と中身が完全に一致する（足りない・余分・変わったファイルが無い）
 // - 印の name・version・source・sha256 が、ロックファイルと同じ（sha256 は、インストールしたアーカイブのもの）
+// - 確かめたファイル（印を除く）から作り直した正規形のアーカイブの SHA-256 が、ロックファイルの sha256 と同じ（S8.2 M-1。インストールは正規形のアーカイブだけを受け入れる）
 // - パッケージの createscript.json が library で、name・version が同じ。依存の name・version・source が、ロックファイルの dependencies と、その各パッケージと同じ
 // - .cscr が正しい UTF-8 で、ソースの上限以下。公開するモジュールのファイルがある
 // 返すソースは、確かめたときに読んだバイト列から作る（確かめた後に差し替えられたファイルは使わない）。
-// 限界: 印はインストールのときに書いたもので、アーカイブとの照合ではない。印と中身を同じように書き換えたものは見分けられない（docs/packages.md）
+// 印と中身を同じように書き換えたものは、作り直したアーカイブがロックファイルと合わないので使わない。
+// 限界: 信頼の元はロックファイル。ロックファイルも合わせて書き換えたものは見分けられない（docs/packages.md）
 object InstalledPackages {
     private fun invalid(message: String): Nothing = throw InstallFailure(InstallFailure.Kind.INVALID, message)
 
@@ -61,6 +63,10 @@ object InstalledPackages {
             val marker = state.marker
             if (marker.name != entry.name || marker.version != entry.version || marker.source != entry.source || marker.sha256 != entry.sha256) {
                 invalid("$shown was installed from another archive (${marker.source} ${marker.version}, SHA-256 ${marker.sha256}) than createscript.lock says; remove it and run createscript install")
+            }
+            // 確かめたファイル（印を除く）から正規形のアーカイブを作り直し、ロックファイルの SHA-256 と比べる（S8.2 M-1。印と中身を同じように書き換えたものも見つける）
+            if (!PackageDirectories.matchesArchive(state, entry.sha256)) {
+                invalid("$shown does not match the archive in createscript.lock (SHA-256 ${entry.sha256}); its files were changed after the installation. Remove it and run createscript install")
             }
             val manifest = Manifests.parse(state.contents.getValue(Manifests.FILE_NAME)).manifest
                 ?: invalid("$shown/${Manifests.FILE_NAME} is not valid; remove the directory and run createscript install")

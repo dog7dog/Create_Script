@@ -205,18 +205,22 @@ class Installer internal constructor(
                 .toByteArray(Charsets.UTF_8)
         }
 
-        // 置き場所の状態（既にあるものは、印と中身がこのパッケージと完全に同じときだけ使う。違えば触らずに止まる）
+        // 置き場所の状態（既にあるものは、印と中身がこのパッケージと完全に同じで、中身から作り直したアーカイブが取得したものと同じときだけ使う。
+        // 違えば触らずに止まる）
         if (packages.isNotEmpty()) SafeIo.directory(layout.packages, create = false)
         val toCreate = ArrayList<ResolvedPackage>()
         for (p in packages) {
             SafeIo.directory(layout.packages.resolve(p.name), create = false)
             val directory = layout.packageDirectory(p.name, p.version)
-            when (val state = PackageDirectories.inspect(directory, owner)) {
+            when (val state = PackageDirectories.inspect(directory, owner, keepContents = true)) {
                 PackageState.Absent -> toCreate.add(p)
                 is PackageState.Valid -> {
                     val m = state.marker
                     if (m.name != p.name || m.version != p.version || m.source != p.source || m.sha256 != p.sha256) {
                         unsafe("${relative(layout, directory)} holds another package (${m.source} ${m.version}, SHA-256 ${m.sha256}); nothing was changed. Remove it by hand and run createscript install again")
+                    }
+                    if (!PackageDirectories.matchesArchive(state, p.sha256)) {
+                        unsafe("${relative(layout, directory)} does not match the archive of ${p.name} ${p.version} (SHA-256 ${p.sha256}); its files were changed after the installation. Nothing was changed. Remove it by hand and run createscript install again")
                     }
                 }
                 is PackageState.Invalid -> unsafe("${relative(layout, directory)} exists but cannot be used (${state.reason}); nothing was changed. Remove it by hand and run createscript install again")
@@ -372,6 +376,13 @@ internal object PackageDirectories {
         }
         if (files.keys - InstallLayout.MARKER != marker.files.keys) return PackageState.Invalid("some installed files are missing")
         return PackageState.Valid(marker, markerFile.identity.sha256, files, contents)
+    }
+
+    // 確かめたディレクトリ（keepContents で読んだもの）のファイル（印を除く）から正規形のアーカイブを作り直すと、SHA-256 が sha256 になるか（S8.2 M-1）。
+    // インストールは正規形のアーカイブだけを受け入れ、その中身をそのまま置くので、変わっていなければ必ず同じになる。印は使わない（印と中身を同じように書き換えても見つかる）
+    fun matchesArchive(state: PackageState.Valid, sha256: String): Boolean {
+        val rebuilt = PackageArchives.rebuild(state.contents) ?: return false
+        return SafeIo.sha256Hex(rebuilt) == sha256
     }
 
     // 作業用のディレクトリ staging/<name>/<version>/ に展開し、印を書く。印の SHA-256 を返す

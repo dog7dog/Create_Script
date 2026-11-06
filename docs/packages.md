@@ -190,8 +190,32 @@ compression, with the time 1980-01-01 00:00 and mode 0644, and without directory
 fields, so the same files always give the same bytes. It checks the result with the same rules as an
 installation, prints its SHA-256 and never overwrites a file (exit code 73). It does not run or compile any code.
 
-An archive is accepted only in this strict form (other tools may write `DEFLATED` entries and a `modules/` directory
-entry; both are accepted):
+### Canonical form
+
+The bytes that `pack` writes are the **canonical form** of the archive: they are fully determined by the paths and
+contents of its files, with nothing taken from the machine, the file system or the time. For each file, in order of
+path (the paths are ASCII, so byte order and character order are the same):
+
+- a local header: signature `PK\3\4`, version needed 10, flags 0, method 0 (STORED), time 0 and date
+  1980-01-01 (`0x0021`), the CRC-32, the size twice, the length of the name, no extra field; then the name and the
+  contents;
+
+then a central directory entry for each file in the same order (version made by `0x0314`: Unix, ZIP 2.0; version needed 10,
+flags 0, method 0, the same time, date, CRC-32 and sizes, no extra field, comment, disk number or internal
+attributes, external attributes `0100644 << 16` (a regular file, mode 0644), the offset of the local header, the
+name), and an end of central directory record without a comment. All numbers are little-endian. There is no
+directory entry, data descriptor, ZIP64 record or anything else.
+
+So the files of a package and its canonical archive determine each other exactly. `install` accepts only canonical
+archives (an archive that is a valid ZIP file with the right contents but was made by another tool, for example
+with compression, a `modules/` directory entry, other times or attributes, or a comment, is refused with exit code
+65; make the archive with `createscript pack`). Because of this, the archive can be made again from the installed
+files, and its SHA-256 compared with `createscript.lock` (see
+[Running installed packages](#running-installed-packages-s82-phase-4)).
+
+`PackageArchives.read` (used by `pack` to check its result and by `install`) accepts an archive only in this strict
+form; it also accepts the `DEFLATED` entries and the `modules/` directory entry that other tools write, but `install`
+then also requires the canonical form above:
 
 - **Layout:** the end of central directory record at the end (a comment is allowed), the central directory right
   before it, and the local headers and data from the first byte on, one after another without gaps or overlaps.
@@ -437,8 +461,9 @@ $ createscript install --offline    # the same without the network (from the cac
   directory has none; an existing `.gitignore` (or a link or directory with that name) is never changed. `install`
   suggests adding the line when it is missing and does not change `.gitignore` itself.
 - An existing `packages/<name>/<version>/` is used only if its marker and files match the package exactly (no
-  missing, extra or changed files, no symbolic links). Otherwise the installation stops before changing anything
-  and asks you to remove the directory.
+  missing, extra or changed files, no symbolic links) and the canonical archive made again from its files has the
+  SHA-256 of the package. Otherwise the installation stops before changing anything and asks you to remove the
+  directory.
 - Directories of versions that are no longer used are not removed (removing packages is planned for S8.3).
 - `createscript.json`, `createscript.lock`, `.createscript` and everything in it must not be symbolic links:
   `install` does not write through links.
@@ -493,10 +518,19 @@ When a step fails, the installation is undone at once. When the process stops (a
 [Modules from packages](language.md#modules-from-packages)). A program's identity for saving and restoring runs
 includes all package sources (`ModuleCompileResult.sourceFingerprint`).
 
-The marker of a package directory was written when it was installed; it is not compared with the archive again.
-A change of both the files and the marker in the same way is therefore not found (anyone who can do that can also
-change `createscript.lock`). Running `createscript install` again after removing `.createscript/packages` checks
-the archives against the lock file again.
+Before compiling, `run` reads each package directory once and checks, in this order: the directory and its files
+match the marker exactly (no missing, extra or changed files, no symbolic links or special files); the marker names
+the package, version, source and SHA-256 of `createscript.lock`; and the canonical archive made again in memory from
+the files that were read (all files except the marker) has the SHA-256 of `createscript.lock`. The sources that are
+compiled are the bytes that were checked. Any difference stops the run with exit code 65 before anything is
+compiled. The marker alone is therefore not trusted: a change of both the files and the marker in the same way is
+found, because the files no longer make the archive in the lock file. `run` does not use the network or the cache
+and writes no files.
+
+The lock file is what is trusted: a change of the files, the marker and `createscript.lock` together cannot be told
+apart from installing another archive (review changes of `createscript.lock` like changes of code). Running
+`createscript install` again after removing `.createscript/packages` checks the archives against the lock file
+again.
 
 Known limits: checks and renames are separate steps, so a program that changes a file in the moment between them
 is not always noticed (Java names files by path); a file whose contents and size stay the same after a change

@@ -3,10 +3,15 @@ package com.creatrbypc.createanalytical.cli
 import com.creatrbypc.createanalytical.install.ArchiveCache
 import com.creatrbypc.createanalytical.install.FetchFailure
 import com.creatrbypc.createanalytical.install.GitHubReleases
+import com.creatrbypc.createanalytical.install.InstallFailure
 import com.creatrbypc.createanalytical.install.Installer
 import com.creatrbypc.createanalytical.install.PackageFetcher
 import com.creatrbypc.createanalytical.install.PackageSpec
 import com.creatrbypc.createanalytical.install.ReleaseStore
+import com.creatrbypc.createanalytical.project.LockRoot
+import com.creatrbypc.createanalytical.project.LockedPackage
+import com.creatrbypc.createanalytical.project.Lockfile
+import com.creatrbypc.createanalytical.project.Lockfiles
 import com.creatrbypc.createanalytical.project.PackageArchives
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -239,6 +244,182 @@ class ProjectRunTest {
         val elsewhere = Files.createDirectories(directory.resolve("elsewhere"))
         Files.createSymbolicLink(app.resolve(".createscript/packages/vector-math/1.2.0"), elsewhere)
         assertTrue(run().err.contains("it is a symbolic link"))
+    }
+
+    // ---- 印と中身の同時の書き換え（S8.2 M-1） ----
+
+    private val vectorMathDirectory get() = app.resolve(".createscript/packages/vector-math/1.2.0")
+    private val vectorMathSha get() = GitHubReleases.sha256Hex(releases.assets.getValue("github:owner/vector-math@1.2.0"))
+
+    private fun sha(path: Path) = GitHubReleases.sha256Hex(Files.readAllBytes(path))
+
+    // 印の files を、今のディレクトリの中身（直下のファイルと modules/ のファイル。リンクは先の中身）に合わせて書き直す（印の改ざん）
+    private fun forgeMarker(dir: Path = vectorMathDirectory) {
+        val markerPath = dir.resolve(".createscript-package.json")
+        val paths = java.util.TreeSet<String>()
+        Files.list(dir).use { s -> s.forEach { if (it != markerPath && !Files.isDirectory(it, java.nio.file.LinkOption.NOFOLLOW_LINKS)) paths += it.fileName.toString() } }
+        Files.list(dir.resolve("modules")).use { s -> s.forEach { paths += "modules/${it.fileName}" } }
+        val entries = paths.joinToString(", ") { "{\"path\": \"$it\", \"sha256\": \"${sha(dir.resolve(it))}\"}" }
+        Files.writeString(markerPath, Files.readString(markerPath).substringBefore("\"files\"") + "\"files\": [$entries]}\n")
+    }
+
+    private fun assertRefusedAsChanged(result: Result, label: String) {
+        assertEquals(ExitCode.INVALID_INPUT, result.code, label)
+        assertEquals("", result.out, label)
+        assertEquals(
+            "createscript: .createscript/packages/vector-math/1.2.0 does not match the archive in createscript.lock (SHA-256 $vectorMathSha); " +
+                "its files were changed after the installation. Remove it and run createscript install\n",
+            result.err, label,
+        )
+    }
+
+    // 置き直す（キャッシュとロックファイルから）
+    private fun reinstall() {
+        vectorMathDirectory.toFile().deleteRecursively()
+        install(app)
+        assertEquals("25\n", run().out)
+    }
+
+    // 安定化レビューで再現した攻撃: 公開しないモジュールに FORGED を出力するコードを入れ、印の SHA-256 も合わせる。修正の前は FORGED を出力して終了コード 0 だった
+    @Test
+    fun refusesSourcesAndMarkerChangedTogether() {
+        assertEquals("25\n", run().out)
+        val module = vectorMathDirectory.resolve("modules/vm_internal.cscr")
+        val original = Files.readAllBytes(module)
+        val forged = "fun square(x: Int): Int {\n    println(\"FORGED\")\n    return x * x\n}\n".toByteArray()
+        val marker = vectorMathDirectory.resolve(".createscript-package.json")
+        val markerOriginal = Files.readString(marker)
+        // ソースだけ
+        Files.write(module, forged)
+        val sourceOnly = run()
+        assertEquals(ExitCode.INVALID_INPUT, sourceOnly.code)
+        assertEquals("", sourceOnly.out)
+        assertEquals("createscript: .createscript/packages/vector-math/1.2.0 cannot be used (modules/vm_internal.cscr was changed); remove it and run createscript install\n", sourceOnly.err)
+        // ソースと印（レビューの再現と同じ書き換え）
+        Files.writeString(marker, markerOriginal.replace(GitHubReleases.sha256Hex(original), GitHubReleases.sha256Hex(forged)))
+        val both = run()
+        assertRefusedAsChanged(both, "source and marker")
+        assertFalse(both.out.contains("FORGED") || both.err.contains("FORGED"))
+        // install も、そのディレクトリを使わずに止まる（何も変えない）
+        val reinstall = org.junit.jupiter.api.Assertions.assertThrows(InstallFailure::class.java) { install(app) }
+        assertEquals(InstallFailure.Kind.UNSAFE, reinstall.kind)
+        assertTrue(reinstall.message!!.contains("does not match the archive of vector-math 1.2.0"), reinstall.message)
+        assertRefusedAsChanged(run(), "after install")
+        // 印だけ（中身は元のまま、印の SHA-256 だけが違う）
+        Files.write(module, original)
+        val markerOnly = run()
+        assertEquals(ExitCode.INVALID_INPUT, markerOnly.code)
+        assertEquals("createscript: .createscript/packages/vector-math/1.2.0 cannot be used (modules/vm_internal.cscr was changed); remove it and run createscript install\n", markerOnly.err)
+        // 印だけ（ファイルを 1 つ載せない）
+        Files.writeString(marker, markerOriginal.replace(Regex(""",\s*\{\s*"path": "modules/vm_internal\.cscr",\s*"sha256": "[0-9a-f]{64}"\s*}"""), ""))
+        assertTrue(run().err.contains("it has a file that was not installed: modules/vm_internal.cscr"))
+        // 印だけ（アーカイブの SHA-256）
+        Files.writeString(marker, markerOriginal.replace(vectorMathSha, "0".repeat(64)))
+        assertTrue(run().err.contains("was installed from another archive"))
+        // 元に戻せば動く
+        Files.writeString(marker, markerOriginal)
+        assertEquals("25\n", run().out)
+    }
+
+    // ファイルの追加・削除・リンクへの差し替えを、印も合わせて行ったもの
+    @Test
+    fun refusesAddedRemovedAndLinkedFilesWithAForgedMarker() {
+        val modules = vectorMathDirectory.resolve("modules")
+        val cases = listOf<Pair<String, () -> Unit>>(
+            "added module" to { Files.writeString(modules.resolve("extra.cscr"), "fun x(): Int {\n    return 1\n}\n") },
+            "added document" to { Files.writeString(vectorMathDirectory.resolve("LICENSE"), "forged\n") },
+            "removed module" to {
+                Files.delete(modules.resolve("vm_internal.cscr"))
+                Files.writeString(modules.resolve("vector_math.cscr"), "fun length2(x: Int, y: Int): Int {\n    println(\"FORGED\")\n    return 25\n}\n")
+            },
+            "changed manifest" to {
+                val manifest = vectorMathDirectory.resolve("createscript.json")
+                Files.writeString(manifest, Files.readString(manifest).replace("\"modules\": [\"vector_math\"]", "\"modules\": [\"vector_math\", \"vm_internal\"]"))
+            },
+        )
+        for ((label, change) in cases) {
+            change()
+            forgeMarker()
+            val result = run()
+            assertRefusedAsChanged(result, label)
+            assertFalse(result.out.contains("FORGED"), label)
+            reinstall()
+        }
+        // パッケージに入れられないファイル（印に載せると、印そのものが壊れているとみなす）
+        Files.writeString(vectorMathDirectory.resolve("evil.txt"), "x")
+        forgeMarker()
+        val evil = run()
+        assertEquals(ExitCode.INVALID_INPUT, evil.code)
+        assertEquals("createscript: .createscript/packages/vector-math/1.2.0 cannot be used (its .createscript-package.json is damaged); remove it and run createscript install\n", evil.err)
+        reinstall()
+        // 外のファイルへのリンクに差し替え、印をリンクの先の中身に合わせたもの（リンクはたどらない）
+        val outside = Files.writeString(directory.resolve("forged.cscr"), "fun square(x: Int): Int {\n    println(\"FORGED\")\n    return x * x\n}\n")
+        Files.delete(modules.resolve("vm_internal.cscr"))
+        Files.createSymbolicLink(modules.resolve("vm_internal.cscr"), outside)
+        forgeMarker()
+        val linked = run()
+        assertEquals(ExitCode.INVALID_INPUT, linked.code)
+        assertEquals("", linked.out)
+        assertEquals("createscript: .createscript/packages/vector-math/1.2.0 cannot be used (modules/vm_internal.cscr is not a regular file); remove it and run createscript install\n", linked.err)
+        reinstall()
+    }
+
+    // 実際の createscript pack の出力を、通信せずに（キャッシュとロックファイルから）インストールして実行する。アーカイブは置いたファイルから 1 バイトも違わずに作り直せる。
+    // 実行はファイルを書かない（キャッシュも作らない）
+    @Test
+    fun packInstallAndRunOffline() {
+        val lib = Files.createDirectories(directory.resolve("lib/modules")).parent
+        Files.writeString(lib.resolve("createscript.json"), """{"schemaVersion": 2, "kind": "library", "name": "geometry", "version": "2.0.0", "modules": ["geometry"]}""")
+        Files.writeString(lib.resolve("modules/geometry.cscr"), "import helper\nfun area(w: Int, h: Int): Int {\n    return helper.times(w, h)\n}\n")
+        Files.writeString(lib.resolve("modules/helper.cscr"), "fun times(a: Int, b: Int): Int {\n    return a * b\n}\n")
+        Files.write(lib.resolve("LICENSE"), "MIT License\n✓ utf-8\r\nno final newline".toByteArray())
+        Files.writeString(lib.resolve("README.md"), "# geometry\n")
+        val packed = cli("pack", lib.toString())
+        assertEquals(ExitCode.OK, packed.code, packed.err)
+        val zip = Files.readAllBytes(lib.resolve("createscript-package.zip"))
+        val sha = GitHubReleases.sha256Hex(zip)
+        assertTrue(packed.out.contains(sha), packed.out)
+        assertTrue(PackageArchives.isCanonical(zip, PackageArchives.read(zip).archive!!))
+        // キャッシュに置き、ロックファイルを書いて、通信できない取得でインストールする
+        val offlineCache = directory.resolve("offline-cache")
+        Files.createDirectories(offlineCache.resolve("archives/sha256"))
+        Files.write(offlineCache.resolve("archives/sha256/$sha.zip"), zip)
+        val root = project("geo", "import geometry\nprintln(geometry.area(6, 7))\n")
+        Files.writeString(
+            root.resolve("createscript.json"),
+            """{"schemaVersion": 1, "name": "geo", "version": "0.1.0", "entry": "src/main.cscr", "dependencies": {"geometry": {"version": "2.0.0", "source": "github:owner/geometry"}}}""",
+        )
+        Files.writeString(root.resolve("createscript.lock"), Lockfiles.write(Lockfile.of(LockRoot("geo", "0.1.0"), listOf(LockedPackage("geometry", "2.0.0", "github:owner/geometry", sha)))))
+        val noNetwork = object : ReleaseStore {
+            override fun download(source: String, version: String): ByteArray = error("the network was used")
+
+            override fun releaseInfo(source: String, version: String): GitHubReleases.ReleaseInfo = error("the network was used")
+        }
+        val out = ByteArrayOutputStream()
+        val err = ByteArrayOutputStream()
+        val installed = PrintStream(out, true, Charsets.UTF_8).use { o ->
+            PrintStream(err, true, Charsets.UTF_8).use { e -> InstallCommands(o, e) { PackageFetcher(noNetwork, ArchiveCache(offlineCache)) to null }.install(listOf(root.toString(), "--offline")) }
+        }
+        assertEquals(ExitCode.OK, installed, err.toString(Charsets.UTF_8))
+        assertTrue(out.toString(Charsets.UTF_8).contains("from the cache; matches createscript.lock"), out.toString(Charsets.UTF_8))
+        // 置いたファイルから作り直したアーカイブは、pack の出力と 1 バイトも違わない
+        val installedDir = root.resolve(".createscript/packages/geometry/2.0.0")
+        val files = java.util.TreeMap<String, ByteArray>()
+        for (name in listOf("LICENSE", "README.md", "createscript.json", "modules/geometry.cscr", "modules/helper.cscr")) files[name] = Files.readAllBytes(installedDir.resolve(name))
+        org.junit.jupiter.api.Assertions.assertArrayEquals(zip, PackageArchives.rebuild(files))
+        // キャッシュを消して実行する。実行の前後で、作業ディレクトリ全体のファイル（中身・時刻）は変わらず、キャッシュも作られない
+        offlineCache.toFile().deleteRecursively()
+        fun tree(): Map<String, String> = Files.walk(directory).use { s ->
+            s.filter { it != directory }.toList().associate { p ->
+                directory.relativize(p).toString() to (if (Files.isRegularFile(p, java.nio.file.LinkOption.NOFOLLOW_LINKS)) "${sha(p)} ${Files.getLastModifiedTime(p, java.nio.file.LinkOption.NOFOLLOW_LINKS)}" else "dir")
+            }
+        }
+        val before = tree()
+        val result = run(root)
+        assertEquals(ExitCode.OK, result.code, result.err)
+        assertEquals("42\n", result.out)
+        assertEquals(before, tree())
+        assertFalse(Files.exists(offlineCache))
     }
 
     @Test
