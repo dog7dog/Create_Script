@@ -85,6 +85,7 @@ class Installer internal constructor(
     private val fetcher: PackageFetcher,
     private val limits: InstallLimits,
     private val hooks: InstallHooks,
+    private val keys: DirectoryKeys = DirectoryKeys.FILE_KEY,
 ) {
     constructor(root: Path, fetcher: PackageFetcher) : this(root, fetcher, InstallLimits(), InstallHooks.NONE)
 
@@ -141,15 +142,25 @@ class Installer internal constructor(
     }
 
     private fun run(layout: Layout, owner: Owner, spec: PackageSpec?, offline: Boolean): InstallResult {
-        val warnings = ArrayList<String>()
         var recovery: String? = null
         if (SafeIo.exists(layout.journal)) {
-            val outcome = Recovery(layout, owner, limits, hooks).recover(preferForward = true)
+            val outcome = Recovery(layout, owner, limits, hooks, keys).recover(preferForward = true)
             recovery = outcome.message
             if (outcome.kept.isNotEmpty()) {
                 unsafe("${outcome.message}, but some files were changed by another program and were left as they are: ${outcome.kept.joinToString("; ")}. Check them and run createscript install again")
             }
         }
+        // 復旧した後の失敗でも、復旧したこと（createscript.json・createscript.lock が変わったかもしれないこと）を知らせる（S8.2 L-2）
+        if (recovery == null) return install(layout, owner, spec, offline, null)
+        try {
+            return install(layout, owner, spec, offline, recovery)
+        } catch (failure: InstallFailure) {
+            throw InstallFailure(failure.kind, "first $recovery (check ${Manifests.FILE_NAME} and ${Lockfiles.FILE_NAME}); then this installation failed: ${failure.message}")
+        }
+    }
+
+    private fun install(layout: Layout, owner: Owner, spec: PackageSpec?, offline: Boolean, recovery: String?): InstallResult {
+        val warnings = ArrayList<String>()
         // ジャーナルを書く前に止まったインストールの作業用のディレクトリ（プロジェクトのファイルは変わっていない）。照合できるジャーナルが無いので消さずに知らせる
         for (name in SafeIo.list(layout.state, 1024)) {
             if (name.startsWith(InstallLayout.TRANSACTION_PREFIX)) {
@@ -257,7 +268,10 @@ class Installer internal constructor(
         } catch (error: IOException) {
             unsafe("cannot create ${relative(layout, txn)}; nothing was changed")
         }
-        var journalWritten = false
+        // ジャーナルを書いた場所（S8.2 L-2）。fileKey が取れなくても、インストールはそのまま行う（中断したときの復旧が、手で確かめる手順になるだけ）
+        val binding = JournalBinding(layout.root.toString(), keys.of(layout.state), keys.of(txn))
+        // 書いたジャーナル（その場の取り消しでは、ディスクのジャーナルがこれと同じことを確かめて使う。書いた場所の確認は要らない）
+        var journalWritten: Journal? = null
         try {
             SafeIo.createFile(txn.resolve(Recovery.MANIFEST_OLD), manifestOld.bytes)
             SafeIo.createFile(txn.resolve(Recovery.MANIFEST_NEW), manifestNew)
@@ -266,7 +280,7 @@ class Installer internal constructor(
             val staged = create.map { JournalPackage(it.name, it.version, PackageDirectories.stage(txn.resolve(Recovery.STAGING), id, it)) }
             SafeIo.syncDirectory(txn)
             hooks.reached("staged")
-            val journal = Journal(id, Journal.State.PREPARED, manifestOld.identity.sha256, SafeIo.sha256Hex(manifestNew), lockOld?.identity?.sha256, lockNew?.let(SafeIo::sha256Hex), staged)
+            val journal = Journal(id, Journal.State.PREPARED, manifestOld.identity.sha256, SafeIo.sha256Hex(manifestNew), lockOld?.identity?.sha256, lockNew?.let(SafeIo::sha256Hex), staged, binding)
             // ジャーナルは、書き終えた一時ファイルに、置き換えないリンクで名前を付ける（書きかけのジャーナルは残らない）
             val temporary = txn.resolve(Recovery.JOURNAL_TEMP)
             SafeIo.createFile(temporary, journal.write())
@@ -275,19 +289,20 @@ class Installer internal constructor(
             } catch (error: FileAlreadyExistsException) {
                 unsafe("${relative(layout, layout.journal)} appeared during the installation; nothing was changed")
             }
-            journalWritten = true
+            journalWritten = journal
             SafeIo.syncDirectory(layout.state)
             java.nio.file.Files.deleteIfExists(temporary)
             hooks.reached("journal")
-            return Recovery(layout, owner, limits, hooks).forward(journal, manifestOld.identity, lockOld?.identity)
+            return Recovery(layout, owner, limits, hooks, keys).forward(journal, manifestOld.identity, lockOld?.identity)
         } catch (error: Exception) {
             val reason = (error as? InstallFailure)?.message ?: (error.message ?: error.javaClass.simpleName)
-            if (!journalWritten) {
+            val written = journalWritten
+            if (written == null) {
                 SafeIo.deleteOwnTree(txn)
                 throw (error as? InstallFailure) ?: InstallFailure(InstallFailure.Kind.UNSAFE, "cannot prepare the installation: $reason; nothing was changed")
             }
             val undo = try {
-                Recovery(layout, owner, limits, hooks).recover(preferForward = false)
+                Recovery(layout, owner, limits, hooks, keys).recover(preferForward = false, trusted = written)
             } catch (failure: InstallFailure) {
                 unsafe("$reason. The installation could not be undone automatically (${failure.message}); ${InstallLayout.DIRECTORY}/${InstallLayout.JOURNAL} was kept")
             }

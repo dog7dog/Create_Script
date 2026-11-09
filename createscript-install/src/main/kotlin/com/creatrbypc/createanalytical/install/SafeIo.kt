@@ -113,6 +113,16 @@ internal class Owner private constructor(private val user: UserPrincipal?) {
     }
 }
 
+// ディレクトリの同一性（S8.2 L-2: ジャーナルを書いた場所の確認に使う）。リンクでないディレクトリの fileKey の文字列で、取れなければ null
+// （Windows の NTFS など、Java が fileKey を返さないファイルシステム）。テストは、取れない場合を渡す
+internal fun interface DirectoryKeys {
+    fun of(path: Path): String?
+
+    companion object {
+        val FILE_KEY = DirectoryKeys { path -> SafeIo.attributes(path)?.takeIf { it.isDirectory && !it.isSymbolicLink }?.fileKey()?.toString() }
+    }
+}
+
 // インストールのファイルの操作（S8.2 Phase 3）。どれもシンボリックリンクをたどらない
 internal object SafeIo {
     fun sha256Hex(bytes: ByteArray): String = GitHubReleases.sha256Hex(bytes)

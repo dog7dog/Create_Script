@@ -34,9 +34,20 @@ private object Strict {
 // ジャーナルに書く、加えるパッケージ（marker は、そのディレクトリの印のファイルの SHA-256）
 internal data class JournalPackage(val name: String, val version: String, val marker: String)
 
-// .createscript/transaction.json（S8.2 Phase 3）。複数のファイルにまたがる更新の、前と後の状態を記録する。
+// ジャーナルを書いた場所（S8.2 L-2）。root はプロジェクトのルートの実パス、directory・transaction は .createscript と txn-<id> の
+// fileKey（BasicFileAttributes.fileKey の文字列。取れないファイルシステムでは null）。
+// 自動の復旧は、今の場所と完全に同じときだけ行う（コピー・展開・移動・復元したプロジェクトでは、ディレクトリが作り直されて fileKey が変わる）。
+// 認証ではない: 同じユーザーとして書き込めるプログラムは、値を読んで合わせられる。別の場所から持ち込まれたジャーナルを使わないための確認
+internal data class JournalBinding(val root: String, val directory: String?, val transaction: String?) {
+    companion object {
+        const val MAX_LENGTH = 4096
+    }
+}
+
+// .createscript/transaction.json（S8.2 Phase 3。L-2 で version 2）。複数のファイルにまたがる更新の、前と後の状態を記録する。
 // manifest・lock の old・new は SHA-256（lock の null は「ファイルが無い」）。ジャーナルは信用しない: 読むときに形・値をすべて確かめ、
-// 復旧では、今のファイルがジャーナルの old・new のどちらかと同じことを確かめてからでなければ書き換えない
+// 書いた場所（binding）が今の場所と同じことを確かめ、今のファイルがジャーナルの old・new のどちらかと同じことを確かめ、
+// 書き込む写しの内容を確かめてからでなければ書き換えない（Recovery）
 internal data class Journal(
     val id: String,
     val state: State,
@@ -45,6 +56,7 @@ internal data class Journal(
     val lockOld: String?,
     val lockNew: String?,
     val packages: List<JournalPackage>,
+    val binding: JournalBinding,
 ) {
     enum class State(val id: String) { PREPARED("prepared"), COMMITTED("committed") }
 
@@ -60,13 +72,20 @@ internal data class Journal(
             "packages" to JsonWriter.array(
                 packages.map { JsonWriter.obj("name" to JsonWriter.string(it.name), "version" to JsonWriter.string(it.version), "marker" to JsonWriter.string(it.marker)) },
             ),
+            "binding" to JsonWriter.obj(
+                "root" to JsonWriter.string(binding.root),
+                "directory" to Strict.optional(binding.directory),
+                "transaction" to Strict.optional(binding.transaction),
+            ),
         ),
     ).toByteArray(Charsets.UTF_8)
 
     companion object {
-        const val VERSION = 1L
+        // 2: S8.2 L-2 で binding を加えた（version 1 のジャーナルは自動では復旧しない）
+        const val VERSION = 2L
         const val MAX_BYTES = 1024 * 1024
-        private val FIELDS = setOf("journalVersion", "id", "state", "manifest", "lock", "packages")
+        private val FIELDS = setOf("journalVersion", "id", "state", "manifest", "lock", "packages", "binding")
+        private val BINDING = setOf("root", "directory", "transaction")
         private val PAIR = setOf("old", "new")
         private val PACKAGE = setOf("name", "version", "marker")
 
@@ -95,7 +114,13 @@ internal data class Journal(
                 if (packages.any { it.name == name }) return bad("duplicate package $name")
                 packages.add(JournalPackage(name, version, marker))
             }
-            return Journal(id, state, manifestOld, manifestNew, lockOld, lockNew, packages) to null
+            val binding = Strict.obj(root.members["binding"], BINDING) ?: return bad("invalid binding field")
+            fun fits(value: String?) = value == null || (value.isNotEmpty() && value.length <= JournalBinding.MAX_LENGTH)
+            val boundRoot = Strict.string(binding, "root")?.takeIf { it.isNotEmpty() && fits(it) } ?: return bad("invalid binding root")
+            val boundDirectory = Strict.optionalString(binding, "directory").getOrElse { return bad("invalid binding directory") }
+            val boundTransaction = Strict.optionalString(binding, "transaction").getOrElse { return bad("invalid binding transaction") }
+            if (!fits(boundDirectory) || !fits(boundTransaction)) return bad("invalid binding")
+            return Journal(id, state, manifestOld, manifestNew, lockOld, lockNew, packages, JournalBinding(boundRoot, boundDirectory, boundTransaction)) to null
         }
     }
 }

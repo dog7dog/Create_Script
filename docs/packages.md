@@ -490,6 +490,21 @@ When a step fails, the installation is undone at once. When the process stops (a
 
 - **The journal is not trusted.** It must be a regular file of this user with exactly the expected fields and
   valid values; package names, versions and the id are checked, so it cannot name paths outside `.createscript`.
+- **It must have been written here.** The journal records where it was written: the real path of the project and
+  the file identity (`fileKey`) of `.createscript` and of `txn-<id>`. It is used automatically only when all three
+  are the same now. A project that was copied, unpacked, downloaded, moved or restored from a backup has new
+  directories (or another path), so a journal that came with it is never used automatically; the command stops as
+  described below. Where the file system has no `fileKey` (Java reports none on Windows NTFS, for example), an
+  interrupted installation is never finished or undone automatically; installations that are not interrupted, and
+  failures that are undone at once by the same process, work as usual. Journals of the earlier version (without
+  this record) are not used automatically either.
+- **What is written is checked, every time.** The recorded place is not a proof (see below), so before finishing,
+  the new manifest must be the old one or the old one with one dependency added or changed (the only change
+  `install` makes), the new lock file must pass `lock check` against it, a package that the old lock file has
+  with the same name, version and source must keep its SHA-256 and dependencies, and every package to be put in
+  place must make again the canonical archive with the SHA-256 of the new lock file. Before undoing, the saved
+  old manifest and lock file must be valid and fit the new ones in the same way. When a check fails, nothing is
+  changed and the command stops as described below (it does not switch to the other direction).
 - **Finish** when the new manifest and lock file are in place or their copies are intact, and every package is
   in place with this installation's marker or its prepared copy is intact.
 - **Undo** otherwise: a manifest or lock file whose SHA-256 is the new one is put back from its copy (or removed if
@@ -507,6 +522,17 @@ When a step fails, the installation is undone at once. When the process stops (a
 - `manifest check`, `lock check` and `pack` stop with exit code 65 while a journal exists.
 - An installation that stopped before step 4 has changed nothing; its `txn-<id>` directory is reported and can be
   removed.
+- When the installation that runs after a recovery fails (for example, `--offline` and a package not in the cache),
+  its message still says that an interrupted installation was finished or undone first.
+
+What this protects against: a project that someone else made, with a `.createscript` directory that contains a
+journal and saved copies chosen by them, so that the next `createscript install` would replace the
+`createscript.json` and `createscript.lock` that you reviewed. Such a journal is not used, because its directories
+were not created on your computer at that path. What it does not protect against: a program that runs as your user
+and can change the files in the project. It can read the file identities and write a matching journal, together
+with saved copies that look like adding or changing a dependency; it could also change `createscript.lock`
+directly. The file identities are not a secret or a signature; they only tell a journal written here from one that
+came with the files.
 
 ### Running installed packages (S8.2 Phase 4)
 

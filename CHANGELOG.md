@@ -72,7 +72,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   stops with instructions. New exit codes 69 and 75. `manifest check`, `lock check` and `pack` stop while an
   installation is interrupted. When an interrupted installation cannot be finished or undone safely, the message
   lists the files that are left, the state of the manifest and the lock file, and the steps to check them; it does
-  not ask to delete the journal first.
+  not ask to delete the journal first. The journal records the real path of the project and the file identity of
+  `.createscript` and of the transaction directory, and is used automatically only where it was written (a journal
+  in a copied, downloaded, moved or restored project, or on a file system without file identities, stops with
+  these instructions). Before a recovery writes the manifest or the lock file, it checks that the manifest is the
+  old one with at most one dependency added or changed, that the lock file passes `lock check` and keeps the
+  SHA-256 of packages that did not change, and that every package makes again the canonical archive of the lock
+  file; saved copies used to undo are checked too. A failure after a recovery still reports the recovery.
 - `createscript-install`: downloading package archives from GitHub Releases with the JDK HTTP client (HTTPS to fixed
   GitHub hosts only, checked redirects, the token only for `api.github.com`, size and time limits, retries and rate
   limits), SHA-256 checks against the lock file and GitHub's asset digest, and a cache keyed by SHA-256 that is

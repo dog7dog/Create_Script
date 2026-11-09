@@ -1,6 +1,8 @@
 package com.creatrbypc.createanalytical.install
 
+import com.creatrbypc.createanalytical.project.Lockfile
 import com.creatrbypc.createanalytical.project.Lockfiles
+import com.creatrbypc.createanalytical.project.Manifest
 import com.creatrbypc.createanalytical.project.Manifests
 import java.nio.file.FileAlreadyExistsException
 import java.nio.file.Path
@@ -15,7 +17,21 @@ internal class RecoveryOutcome(val message: String, val kept: List<String>)
 // - 取り消し（backward）: 今回書いたもの（SHA-256 が new のマニフェスト・ロックファイル、このトランザクションの印があり中身が一致するパッケージ）だけを戻す・消す。
 //   ほかのプログラムが変えたファイル（old でも new でもない）は、上書きも削除もせずに残す
 // - どちらも安全にできなければ、何も変えずに止まり、手で確かめる手順を示す
-internal class Recovery(private val layout: Layout, private val owner: Owner, private val limits: InstallLimits, private val hooks: InstallHooks) {
+// S8.2 L-2（中断した後の install が、持ち込まれた・書き換えられたジャーナルで、利用者が確かめたファイルを置き換えないための確認）:
+// - ジャーナルを書いた場所（binding: ルートの実パスと、.createscript・txn-<id> の fileKey）が今と同じでなければ、自動では復旧しない。
+//   fileKey が取れないファイルシステムでも、自動では復旧しない（同じプロセスの中の取り消しは、書いたジャーナルを覚えているので確認は要らない）
+// - binding は認証ではないので、それだけでは信用しない。書き込む写しの内容も、必ず確かめる（checkForward・checkBackward）:
+//   マニフェストは、前のものと同じか、前のものに依存を 1 つ足した・変えたもの（install が書くもの）だけ。新しいロックファイルは lock check に通り、
+//   前のロックファイルと同じ name・version・source の項目は同じ SHA-256・依存。置くパッケージは、作り直した正規形のアーカイブがロックファイルの SHA-256 と同じ。
+//   前の版の写しは、正しい形のマニフェスト・ロックファイル
+// - 限界: 同じユーザーとして、このディレクトリのファイルを書き換えられるプログラムは、binding を合わせ、依存を変えたように見える写しを用意できる（docs/packages.md）
+internal class Recovery(
+    private val layout: Layout,
+    private val owner: Owner,
+    private val limits: InstallLimits,
+    private val hooks: InstallHooks,
+    private val keys: DirectoryKeys = DirectoryKeys.FILE_KEY,
+) {
     companion object {
         const val MANIFEST_OLD = "createscript.json.old"
         const val MANIFEST_NEW = "createscript.json.new"
@@ -31,6 +47,9 @@ internal class Recovery(private val layout: Layout, private val owner: Owner, pr
 
     // 読めたジャーナル（復旧できないときの説明に、残っているファイルと今の状態を示すために使う）
     private var loaded: Journal? = null
+
+    // 読めたジャーナルを、書いた場所の確認に通ったか（通らなければ、説明の「前・後の版」はジャーナルに書かれていることにすぎない）
+    private var confirmed = false
 
     // 復旧できないときの説明（S8.2 Phase 4 の条件: ジャーナルの無条件の削除を促さず、理由・残っているファイル・手で確かめる手順を示す）。何も変えない
     private fun manual(reason: String): Nothing {
@@ -68,7 +87,7 @@ internal class Recovery(private val layout: Layout, private val owner: Owner, pr
                     else -> "changed by another program (neither before nor after the installation)"
                 }
             }
-            lines += "Current files:"
+            lines += if (confirmed) "Current files:" else "Current files (compared with the journal, which could not be confirmed):"
             lines += "  ${Manifests.FILE_NAME}: ${state(layout.manifest, journal.manifestOld, journal.manifestNew, Manifests.MAX_BYTES)}"
             lines += "  ${Lockfiles.FILE_NAME}: ${state(layout.lockfile, journal.lockOld, journal.lockNew, Lockfiles.MAX_BYTES)}"
         }
@@ -81,8 +100,8 @@ internal class Recovery(private val layout: Layout, private val owner: Owner, pr
         unsafe(lines.joinToString("\n"))
     }
 
-    // ジャーナルを読む（リンク・通常のファイルでない・ほかのユーザーのもの・壊れたものは使わない）
-    private fun load(): Journal {
+    // ジャーナルを読む（リンク・通常のファイルでない・ほかのユーザーのもの・壊れたものは使わない）。trusted は、このプロセスが書いたジャーナル（ディスクのものが同じであること）
+    private fun load(trusted: Journal?): Journal {
         val attributes = SafeIo.attributes(layout.journal) ?: manual("the journal disappeared")
         if (attributes.isSymbolicLink || !attributes.isRegularFile) manual("${shown(layout.journal)} is not a regular file")
         if (!owner.owns(layout.journal)) manual("${shown(layout.journal)} belongs to another user")
@@ -92,33 +111,159 @@ internal class Recovery(private val layout: Layout, private val owner: Owner, pr
             manual(failure.message ?: "cannot read the journal")
         } ?: manual("the journal disappeared")
         val (journal, problem) = Journal.parse(file.bytes, limits.maxPackages)
-        return journal ?: manual("${shown(layout.journal)} is damaged ($problem)")
+        if (journal == null) manual("${shown(layout.journal)} is damaged ($problem)")
+        loaded = journal
+        if (trusted != null) {
+            if (journal != trusted && journal != trusted.committed()) manual("${shown(layout.journal)} was changed by another program during the installation")
+            confirmed = true
+            return journal
+        }
+        checkBinding(journal)
+        confirmed = true
+        return journal
     }
 
-    private fun currentSha(path: Path, maxBytes: Int): String? = try {
-        SafeIo.readRegular(path, maxBytes)?.identity?.sha256
+    // ジャーナルを書いた場所が、今の場所と同じか（S8.2 L-2）。違えば・確かめられなければ、何も変えずに止まる
+    private fun checkBinding(journal: Journal) {
+        val binding = journal.binding
+        val moved = "it may have come with a project that was copied, downloaded, moved or restored, so its saved copies are not used automatically"
+        if (binding.root != layout.root.toString()) manual("${shown(layout.journal)} was written for another directory (${binding.root}); $moved")
+        val txn = layout.transaction(journal.id)
+        // 済んだ（committed）インストールの片付けの途中なら、作業用のディレクトリはもう無いことがある（片付けは、プロジェクトのファイルを書き換えない）
+        val checkTransaction = journal.state == Journal.State.PREPARED || SafeIo.exists(txn)
+        val current = keys.of(layout.state)
+        val currentTransaction = if (checkTransaction) keys.of(txn) else null
+        if (binding.directory == null || current == null || (checkTransaction && (binding.transaction == null || currentTransaction == null))) {
+            manual("this file system does not report file identities (fileKey), so createscript cannot confirm that ${shown(layout.journal)} was written in this directory")
+        }
+        if (binding.directory != current || (checkTransaction && binding.transaction != currentTransaction)) {
+            manual("${shown(layout.journal)} was not written in this directory on this computer (${InstallLayout.DIRECTORY} or ${shown(txn)} is not the directory it was written in); $moved")
+        }
+    }
+
+    private fun current(path: Path, maxBytes: Int): ReadFile? = try {
+        SafeIo.readRegular(path, maxBytes)
     } catch (failure: InstallFailure) {
         manual(failure.message ?: "cannot read $path")
     }
 
-    // 作業用のディレクトリにある写しが、ジャーナルの SHA-256 と同じか
-    private fun saved(txn: Path, name: String, sha256: String?, maxBytes: Int): Boolean {
-        if (sha256 == null) return false
+    // 作業用のディレクトリにある写しが、ジャーナルの SHA-256 と同じならその中身
+    private fun copy(txn: Path, name: String, sha256: String?, maxBytes: Int): ByteArray? {
+        if (sha256 == null) return null
         val path = txn.resolve(name)
         return try {
-            SafeIo.readRegular(path, maxBytes)?.identity?.sha256 == sha256 && owner.owns(path)
+            SafeIo.readRegular(path, maxBytes)?.takeIf { it.identity.sha256 == sha256 && owner.owns(path) }?.bytes
         } catch (failure: InstallFailure) {
-            false
+            null
         }
+    }
+
+    private fun saved(txn: Path, name: String, sha256: String?, maxBytes: Int): Boolean = copy(txn, name, sha256, maxBytes) != null
+
+    // SHA-256 が sha256 の版の中身（今のファイルか、作業用のディレクトリの写し）
+    private fun version(file: ReadFile?, txn: Path, name: String, sha256: String?, maxBytes: Int): ByteArray? =
+        if (sha256 != null && file?.identity?.sha256 == sha256) file.bytes else copy(txn, name, sha256, maxBytes)
+
+    // ---- 書き込む写しの内容の確認（S8.2 L-2）。問題があれば理由を返す ----
+
+    // install が書くマニフェストは、前のものと同じか、前のものに依存を 1 つ足した・変えたもの（ManifestEditor.withDependency の出力）だけ
+    private fun manifestProblem(oldBytes: ByteArray, newBytes: ByteArray): String? {
+        val old = Manifests.parse(oldBytes).manifest ?: return "the saved ${Manifests.FILE_NAME} from before the installation is not a valid manifest"
+        val new = Manifests.parse(newBytes).manifest ?: return "the ${Manifests.FILE_NAME} from after the installation is not a valid manifest"
+        if (oldBytes.contentEquals(newBytes)) return null
+        val added = new.dependencies.filter { it !in old.dependencies }.singleOrNull()
+        val rebuilt = added?.let {
+            try {
+                ManifestEditor.withDependency(oldBytes, old, it)
+            } catch (failure: InstallFailure) {
+                null
+            }
+        }
+        if (rebuilt == null || !rebuilt.contentEquals(newBytes)) {
+            return "the ${Manifests.FILE_NAME} from after the installation is not the one from before it with one dependency added or changed, which is the only change createscript install makes"
+        }
+        return null
+    }
+
+    // 前のロックファイルと同じ name・version・source の項目は、install が必ず同じ SHA-256・依存にする（Resolver）
+    private fun pinProblem(old: Lockfile?, new: Lockfile): String? {
+        val byName = old?.packages?.associateBy { it.name }.orEmpty()
+        for (entry in new.packages) {
+            val previous = byName[entry.name] ?: continue
+            if (previous.version != entry.version || previous.source != entry.source) continue
+            if (previous.sha256 != entry.sha256 || previous.dependencies != entry.dependencies) {
+                return "the ${Lockfiles.FILE_NAME} from after the installation changes the SHA-256 or the dependencies of ${entry.name} ${entry.version}, which createscript install never does"
+            }
+        }
+        return null
+    }
+
+    private fun parseLock(bytes: ByteArray, label: String): Pair<Lockfile?, String?> {
+        val lock = Lockfiles.parse(bytes).lockfile ?: return null to "the $label ${Lockfiles.FILE_NAME} is not valid"
+        return lock to null
+    }
+
+    // 続行する前: 書き込む新しいマニフェスト・ロックファイルと、置くパッケージ
+    private fun checkForward(journal: Journal, txn: Path, manifest: ReadFile?, lock: ReadFile?): String? {
+        val newManifestBytes = version(manifest, txn, MANIFEST_NEW, journal.manifestNew, Manifests.MAX_BYTES) ?: return "the new ${Manifests.FILE_NAME} is missing"
+        val oldManifestBytes = version(manifest, txn, MANIFEST_OLD, journal.manifestOld, Manifests.MAX_BYTES)
+            ?: return "the saved ${Manifests.FILE_NAME} from before the installation is missing, so the new one cannot be checked"
+        manifestProblem(oldManifestBytes, newManifestBytes)?.let { return it }
+        val newManifest: Manifest = Manifests.parse(newManifestBytes).manifest!!
+        val oldLock = journal.lockOld?.let { sha ->
+            val bytes = version(lock, txn, LOCK_OLD, sha, Lockfiles.MAX_BYTES)
+                ?: return "the saved ${Lockfiles.FILE_NAME} from before the installation is missing, so the new one cannot be checked"
+            parseLock(bytes, "saved").let { (parsed, problem) -> parsed ?: return "$problem (from before the installation)" }
+        }
+        val newLockSha = journal.lockNew
+        if (newLockSha == null) {
+            if (journal.packages.isNotEmpty() || newManifest.dependencies.isNotEmpty()) return "the journal adds packages but no ${Lockfiles.FILE_NAME}"
+            return null
+        }
+        val newLockBytes = version(lock, txn, LOCK_NEW, newLockSha, Lockfiles.MAX_BYTES) ?: return "the new ${Lockfiles.FILE_NAME} is missing"
+        val parsed = Lockfiles.parse(newLockBytes)
+        val newLock = parsed.lockfile ?: return "the new ${Lockfiles.FILE_NAME} is not valid"
+        if (Lockfiles.check(newLockBytes, parsed, newManifest).isNotEmpty()) {
+            return "the new ${Lockfiles.FILE_NAME} does not match the new ${Manifests.FILE_NAME} (as createscript lock check would report)"
+        }
+        pinProblem(oldLock, newLock)?.let { return it }
+        val locked = newLock.packages.associateBy { it.name }
+        for (p in journal.packages) {
+            val entry = locked[p.name]?.takeIf { it.version == p.version } ?: return "${p.name} ${p.version} is not in the new ${Lockfiles.FILE_NAME}"
+            val target = layout.packageDirectory(p.name, p.version)
+            val placed = PackageDirectories.inspect(target, owner, keepContents = true)
+            val state = if (ours(placed, journal, p)) placed else PackageDirectories.inspect(txn.resolve(STAGING).resolve(p.name).resolve(p.version), owner, keepContents = true)
+            if (state !is PackageState.Valid || !ours(state, journal, p)) return "the prepared copy of ${p.name} ${p.version} is missing or was changed"
+            if (state.marker.source != entry.source || state.marker.sha256 != entry.sha256 || !PackageDirectories.matchesArchive(state, entry.sha256)) {
+                return "the prepared copy of ${p.name} ${p.version} does not match the archive in the new ${Lockfiles.FILE_NAME} (SHA-256 ${entry.sha256})"
+            }
+        }
+        return null
+    }
+
+    // 取り消す前: 書き戻す前の版の写し（書き戻すものだけ）
+    private fun checkBackward(journal: Journal, txn: Path, manifest: ReadFile?, lock: ReadFile?): String? {
+        if (journal.manifestOld != journal.manifestNew && manifest != null && manifest.identity.sha256 == journal.manifestNew) {
+            val old = copy(txn, MANIFEST_OLD, journal.manifestOld, Manifests.MAX_BYTES) ?: return "the saved ${Manifests.FILE_NAME} from before the installation is missing"
+            manifestProblem(old, manifest.bytes)?.let { return it }
+        }
+        val lockOld = journal.lockOld
+        if (lockOld != null && lockOld != journal.lockNew && lock != null && lock.identity.sha256 == journal.lockNew) {
+            val old = copy(txn, LOCK_OLD, lockOld, Lockfiles.MAX_BYTES) ?: return "the saved ${Lockfiles.FILE_NAME} from before the installation is missing"
+            val oldLock = parseLock(old, "saved").let { (parsed, problem) -> parsed ?: return "$problem (from before the installation)" }
+            val newLock = parseLock(lock.bytes, "current").let { (parsed, problem) -> parsed ?: return problem }
+            pinProblem(oldLock, newLock)?.let { return it }
+        }
+        return null
     }
 
     // このトランザクションが置いたパッケージか（印の transaction と、印の SHA-256 がジャーナルと同じ）
     private fun ours(state: PackageState, journal: Journal, p: JournalPackage): Boolean =
         state is PackageState.Valid && state.marker.transaction == journal.id && state.markerSha256 == p.marker && state.marker.name == p.name && state.marker.version == p.version
 
-    fun recover(preferForward: Boolean): RecoveryOutcome {
-        val journal = load()
-        loaded = journal
+    // trusted は、このプロセスが書いたジャーナル（インストールの途中の失敗を、その場で取り消すとき）。null なら、ディスクのジャーナルの書いた場所を確かめる
+    fun recover(preferForward: Boolean, trusted: Journal? = null): RecoveryOutcome {
+        val journal = load(trusted)
         if (journal.state == Journal.State.COMMITTED) {
             val kept = cleanup(journal)
             return RecoveryOutcome("finished cleaning up an installation that had completed", kept)
@@ -126,8 +271,10 @@ internal class Recovery(private val layout: Layout, private val owner: Owner, pr
         val txn = layout.transaction(journal.id)
         val txnAttributes = SafeIo.attributes(txn)
         if (txnAttributes != null && (txnAttributes.isSymbolicLink || !txnAttributes.isDirectory || !owner.owns(txn))) manual("${shown(txn)} is not a directory of this installation")
-        val manifest = currentSha(layout.manifest, Manifests.MAX_BYTES)
-        val lock = currentSha(layout.lockfile, Lockfiles.MAX_BYTES)
+        val manifestFile = current(layout.manifest, Manifests.MAX_BYTES)
+        val lockFile = current(layout.lockfile, Lockfiles.MAX_BYTES)
+        val manifest = manifestFile?.identity?.sha256
+        val lock = lockFile?.identity?.sha256
         val states = journal.packages.map { p ->
             if (SafeIo.attributes(layout.packages)?.let { it.isSymbolicLink || !it.isDirectory } == true) manual("${shown(layout.packages)} is not a directory")
             val target = PackageDirectories.inspect(layout.packageDirectory(p.name, p.version), owner)
@@ -141,12 +288,19 @@ internal class Recovery(private val layout: Layout, private val owner: Owner, pr
             states.all { (p, target, staged) -> ours(target, journal, p) || (target == PackageState.Absent && ours(staged, journal, p)) }
         val canBackward = (manifest != journal.manifestNew || journal.manifestOld == journal.manifestNew || saved(txn, MANIFEST_OLD, journal.manifestOld, Manifests.MAX_BYTES)) &&
             (lock != journal.lockNew || journal.lockOld == journal.lockNew || journal.lockOld == null || saved(txn, LOCK_OLD, journal.lockOld, Lockfiles.MAX_BYTES))
-        return when {
-            preferForward && canForward -> RecoveryOutcome("completed an interrupted installation", forward(journal, null, null))
-            canBackward -> RecoveryOutcome("undid an interrupted installation", backward(journal))
-            canForward -> RecoveryOutcome("completed an interrupted installation", forward(journal, null, null))
+        val direction = when {
+            preferForward && canForward -> true
+            canBackward -> false
+            canForward -> true
             else -> manual("the saved copies in ${shown(txn)} are missing or were changed")
         }
+        // 書き込む写しの内容を確かめる（どちらの向きでも。問題があれば、もう一方の向きにも切り替えずに止まる）
+        if (direction) {
+            checkForward(journal, txn, manifestFile, lockFile)?.let { manual("$it; the installation was not completed") }
+            return RecoveryOutcome("completed an interrupted installation", forward(journal, null, null))
+        }
+        checkBackward(journal, txn, manifestFile, lockFile)?.let { manual("$it; the installation was not undone") }
+        return RecoveryOutcome("undid an interrupted installation", backward(journal))
     }
 
     // 続行。expectedManifest・expectedLock は、インストールの最中なら読んだときの同一性（別のファイルへの差し替えを見分ける）

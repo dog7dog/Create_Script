@@ -261,10 +261,14 @@ class RecoveryTest {
             "path in id" to text.replace(id, "../../outside").toByteArray(),
             "unknown state" to text.replace("\"prepared\"", "\"done\"").toByteArray(),
             "invalid SHA-256" to text.replace(Journal.parse(good, 256).first!!.manifestOld, "abc").toByteArray(),
-            "unknown version" to text.replace("\"journalVersion\": 1", "\"journalVersion\": 2").toByteArray(),
+            "unknown version" to text.replace("\"journalVersion\": 2", "\"journalVersion\": 3").toByteArray(),
+            // S8.2 L-2 の前の形（binding が無い）。自動では復旧しない
+            "version 1" to text.replace("\"journalVersion\": 2", "\"journalVersion\": 1").toByteArray(),
+            "no binding" to Regex(",\\s*\"binding\": \\{[^}]*\\}").replace(text, "").toByteArray(),
             "duplicate keys" to text.replaceFirst("{", "{\n  \"id\": \"$id\",").toByteArray(),
         )
         for ((label, bytes) in cases) {
+            assertFalse(bytes.contentEquals(good), label)
             Files.write(journal, bytes)
             val before = snapshot(root)
             val failure = assertThrows(InstallFailure::class.java) { installer().install(null, false) }
