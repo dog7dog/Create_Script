@@ -486,7 +486,12 @@ $ createscript install --offline    # the same without the network (from the cac
 5. Move the packages into `packages/` (never replacing a directory), then replace `createscript.json` and
    `createscript.lock` (a rename). Before each replacement the current file must be the one read in step 2, with
    the same SHA-256 and, where the file system tells, the same file (`fileKey`): a file that another program
-   changed or replaced is never overwritten.
+   changed or replaced is never overwritten. Before each package is moved, every directory from the project to
+   `packages/<name>` must be a real directory (not a symbolic link) whose real path is where it should be. After the
+   move, the package must be there: `packages/<name>` is still that directory (the same `fileKey`), and the
+   package directory is the one that was moved (the same `fileKey`) with this installation's marker and files.
+   All packages are checked again just before `createscript.json` is replaced. If any check fails, the
+   installation is not completed and is undone; nothing behind a symbolic link is read, changed or removed.
 6. Mark the journal `committed`, then remove the prepared files and the journal.
 
 When a step fails, the installation is undone at once. When the process stops (a crash or `kill`), the next
@@ -577,6 +582,20 @@ stops with exit code 73; `run` refuses such files in package directories and nam
 Known limits: checks and renames are separate steps, so a program that changes a file in the moment between them
 is not always noticed (Java names files by path); a file whose contents and size stay the same after a change
 cannot be told apart where the file system has no `fileKey`. Windows has not been tried.
+
+Directories replaced by symbolic links during an installation: Java on macOS (JDK 21) has no way to move a file
+relative to a directory that is already open (`SecureDirectoryStream`, `openat` and `renameat` are not available),
+so every move names its target by path again. A program running as your user that replaces
+`.createscript/packages/<name>` (or another directory on the way) with a symbolic link in the moment between the
+check and the move makes the move put the package directory behind the link, outside the project. This cannot be
+prevented. What `createscript install` does: it finds this after the move, does not report success, does not
+write `createscript.json` or `createscript.lock`, undoes the installation, and does not read, change or remove
+anything behind the link (including the package that was moved there; the message says where it may be). In a
+test that replaced the directory again and again during 1,200 installations, packages were moved outside the
+project 92 times, no installation was reported as successful, and no other file outside the project was changed.
+A replacement after the last check (just before the lock file is written) is not noticed by `install`; `run`
+refuses symbolic links in `.createscript/packages`. Only programs that can already change the project can do
+this; keep projects in directories that only you can write to.
 
 ### Still planned
 

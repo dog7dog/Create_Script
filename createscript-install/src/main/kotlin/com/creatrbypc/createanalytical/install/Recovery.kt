@@ -271,13 +271,18 @@ internal class Recovery(
         val txn = layout.transaction(journal.id)
         val txnAttributes = SafeIo.attributes(txn)
         if (txnAttributes != null && (txnAttributes.isSymbolicLink || !txnAttributes.isDirectory || !owner.owns(txn))) manual("${shown(txn)} is not a directory of this installation")
+        // 置き場所の途中がリンクなら、リンクの先を読まず・書かない（S8.2 L-5）。中断の後の復旧は止まり、同じプロセスの中の取り消しは、
+        // そのパッケージに触らずに（残したものとして知らせて）ほかを取り消す
+        (SafeIo.chain(layout.root, txn) as? SafeIo.Chain.NotReal)?.let { manual(it.reason) }
+        val linked = journal.packages.associate { p -> p.name to (SafeIo.chain(layout.root, layout.packages.resolve(p.name)) as? SafeIo.Chain.NotReal) }
+        if (trusted == null) linked.values.firstOrNull { it != null }?.let { manual(it.reason) }
         val manifestFile = current(layout.manifest, Manifests.MAX_BYTES)
         val lockFile = current(layout.lockfile, Lockfiles.MAX_BYTES)
         val manifest = manifestFile?.identity?.sha256
         val lock = lockFile?.identity?.sha256
         val states = journal.packages.map { p ->
             if (SafeIo.attributes(layout.packages)?.let { it.isSymbolicLink || !it.isDirectory } == true) manual("${shown(layout.packages)} is not a directory")
-            val target = PackageDirectories.inspect(layout.packageDirectory(p.name, p.version), owner)
+            val target = linked[p.name]?.let { PackageState.Invalid(it.reason) } ?: PackageDirectories.inspect(layout.packageDirectory(p.name, p.version), owner)
             val staged = if (txnAttributes == null) PackageState.Absent else PackageDirectories.inspect(txn.resolve(STAGING).resolve(p.name).resolve(p.version), owner)
             Triple(p, target, staged)
         }
@@ -304,26 +309,80 @@ internal class Recovery(
     }
 
     // 続行。expectedManifest・expectedLock は、インストールの最中なら読んだときの同一性（別のファイルへの差し替えを見分ける）
+    // パッケージを置く場所が、プロジェクトの中の実際のディレクトリであること（S8.2 L-5）
+    private fun requireReal(directory: Path, what: String) {
+        when (val chain = SafeIo.chain(layout.root, directory)) {
+            SafeIo.Chain.Real -> {}
+            SafeIo.Chain.Missing -> unsafe("${shown(directory)} disappeared during the installation; $what")
+            is SafeIo.Chain.NotReal -> unsafe("${chain.reason}; another program changed it during the installation, so $what")
+        }
+    }
+
+    // 置いたパッケージが、置いた場所にあるか（S8.2 L-5）。parentKey・key は、移動の前に記録した packages/<name> と、パッケージのディレクトリの fileKey
+    // （取れなければ null。そのときは実パスと印で確かめる）。違えば理由
+    private fun placedProblem(p: JournalPackage, journal: Journal, target: Path, parentKey: Any?, key: Any?): String? {
+        when (val chain = SafeIo.chain(layout.root, target.parent)) {
+            SafeIo.Chain.Real -> {}
+            SafeIo.Chain.Missing -> return "${shown(target.parent)} disappeared"
+            is SafeIo.Chain.NotReal -> return chain.reason
+        }
+        if (parentKey != null && SafeIo.attributes(target.parent)?.fileKey() != parentKey) return "${shown(target.parent)} was replaced by another directory"
+        val attributes = SafeIo.attributes(target) ?: return "${shown(target)} is not there"
+        if (attributes.isSymbolicLink || !attributes.isDirectory) return "${shown(target)} is not a directory"
+        if (key != null && attributes.fileKey() != key) return "${shown(target)} is another directory"
+        if (SafeIo.chain(layout.root, target) != SafeIo.Chain.Real) return "${shown(target)} is not a directory inside the project"
+        if (!ours(PackageDirectories.inspect(target, owner), journal, p)) return "the files in ${shown(target)} do not match the prepared package"
+        return null
+    }
+
+    private fun escaped(p: JournalPackage, target: Path, problem: String): Nothing = unsafe(
+        "${p.name} ${p.version} was not found in ${shown(target)} after it was moved there: $problem. Another program changed the directories " +
+            "during the installation, so the package may have been written outside the project; nothing was removed there, and the installation was not completed",
+    )
+
     fun forward(journal: Journal, expectedManifest: Identity?, expectedLock: Identity?): List<String> {
         val txn = layout.transaction(journal.id)
+        // 置いたパッケージ（packages/<name> とパッケージのディレクトリの fileKey）。マニフェストを書き換える前に、もう一度すべてを確かめる
+        val placed = ArrayList<Triple<JournalPackage, Any?, Any?>>()
         for (p in journal.packages) {
             SafeIo.directory(layout.packages, create = true)
             SafeIo.directory(layout.packages.resolve(p.name), create = true)
             val target = layout.packageDirectory(p.name, p.version)
+            requireReal(target.parent, "${p.name} ${p.version} was not moved")
             when (val state = PackageDirectories.inspect(target, owner)) {
                 PackageState.Absent -> {}
-                is PackageState.Valid -> if (ours(state, journal, p)) continue else unsafe("${shown(target)} was created by another program during the installation")
+                is PackageState.Valid -> if (ours(state, journal, p)) {
+                    placed += Triple(p, SafeIo.attributes(target.parent)?.fileKey(), SafeIo.attributes(target)?.fileKey())
+                    continue
+                } else {
+                    unsafe("${shown(target)} was created by another program during the installation")
+                }
                 is PackageState.Invalid -> unsafe("${shown(target)} cannot be used (${state.reason})")
             }
             val staged = txn.resolve(STAGING).resolve(p.name).resolve(p.version)
+            requireReal(staged.parent, "${p.name} ${p.version} was not moved")
             if (!ours(PackageDirectories.inspect(staged, owner), journal, p)) unsafe("the prepared copy of ${p.name} ${p.version} is missing or was changed")
+            val parentKey = SafeIo.attributes(target.parent)?.fileKey()
+            val key = SafeIo.attributes(staged)?.fileKey()
+            hooks.reached("moving:${p.name}")
             try {
                 SafeIo.moveNew(staged, target)
             } catch (error: FileAlreadyExistsException) {
                 unsafe("${shown(target)} was created by another program during the installation")
             }
+            hooks.reached("moved:${p.name}")
+            // 移動は、確かめた後に途中のディレクトリがリンクに差し替えられると、リンクの先へ行く（防げない）。移動した後に、置いた場所にあることを確かめ、
+            // 無ければ成功扱いにしない（リンクの先は触らない）
+            placedProblem(p, journal, target, parentKey, key)?.let { escaped(p, target, it) }
+            placed += Triple(p, parentKey, key)
             SafeIo.syncDirectory(target.parent)
             hooks.reached("package:${p.name}")
+        }
+        // マニフェスト・ロックファイルを書き換える直前に、置いたすべてのパッケージを確かめ直す
+        hooks.reached("placed")
+        for ((p, parentKey, key) in placed) {
+            val target = layout.packageDirectory(p.name, p.version)
+            placedProblem(p, journal, target, parentKey, key)?.let { escaped(p, target, it) }
         }
         replaceFile(layout.manifest, journal.manifestOld, journal.manifestNew, txn.resolve(MANIFEST_NEW), expectedManifest, Manifests.MAX_BYTES)
         hooks.reached("manifest")
@@ -370,6 +429,13 @@ internal class Recovery(
         hooks.reached("rollback:lock")
         for (p in journal.packages.asReversed()) {
             val target = layout.packageDirectory(p.name, p.version)
+            // 途中がリンクなら、リンクの先を読まず・消さない（S8.2 L-5）
+            val chain = SafeIo.chain(layout.root, target.parent)
+            if (chain is SafeIo.Chain.NotReal) {
+                kept += "${shown(target)} (not touched: ${chain.reason})"
+                hooks.reached("rollback:package:${p.name}")
+                continue
+            }
             when (val state = PackageDirectories.inspect(target, owner)) {
                 PackageState.Absent -> {}
                 is PackageState.Valid -> if (ours(state, journal, p)) kept += PackageDirectories.delete(target, state)
@@ -405,6 +471,7 @@ internal class Recovery(
     // ジャーナルを書き換える（作業用のディレクトリの一時ファイルから、置き換える移動で）
     private fun writeJournal(journal: Journal) {
         val txn = layout.transaction(journal.id)
+        requireReal(txn, "the journal was not changed")
         val temporary = txn.resolve(JOURNAL_TEMP)
         deleteJournalTemp(temporary, journal.id)?.let { unsafe("${shown(temporary)} cannot be replaced ($it)") }
         SafeIo.createFile(temporary, journal.write())
@@ -428,8 +495,9 @@ internal class Recovery(
         val txn = layout.transaction(journal.id)
         val attributes = SafeIo.attributes(txn)
         if (attributes != null) {
-            if (attributes.isSymbolicLink || !attributes.isDirectory || !owner.owns(txn)) {
-                kept += "${shown(txn)} (it is not a directory of this installation)"
+            val chain = SafeIo.chain(layout.root, txn)
+            if (attributes.isSymbolicLink || !attributes.isDirectory || !owner.owns(txn) || chain is SafeIo.Chain.NotReal) {
+                kept += "${shown(txn)} (it is not a directory of this installation" + ((chain as? SafeIo.Chain.NotReal)?.let { ": ${it.reason}" } ?: "") + ")"
             } else {
                 for (name in SafeIo.list(txn, 64)) {
                     val path = txn.resolve(name)

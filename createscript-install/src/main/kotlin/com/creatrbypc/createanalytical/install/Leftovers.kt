@@ -35,6 +35,8 @@ internal class Leftovers(private val layout: Layout, private val owner: Owner, p
 
     fun clean(): List<String> {
         if (SafeIo.exists(layout.journal)) return emptyList()
+        // .createscript がリンクに差し替えられていれば、何もしない（S8.2 L-5）
+        if (SafeIo.chain(layout.root, layout.state) != SafeIo.Chain.Real) return emptyList()
         val notes = ArrayList<String>()
         for (name in SafeIo.list(layout.state, 1024)) {
             if (!name.startsWith(InstallLayout.TRANSACTION_PREFIX)) continue
@@ -47,6 +49,12 @@ internal class Leftovers(private val layout: Layout, private val owner: Owner, p
                 continue
             } catch (failure: InstallFailure) {
                 notes += "$shown was not removed: ${failure.message}. createscript does not use it; check it and remove it by hand"
+                continue
+            }
+            // 消す直前に、作業用のディレクトリが今もプロジェクトの中の実際のディレクトリであること（S8.2 L-5）
+            val chain = SafeIo.chain(layout.root, txn)
+            if (chain is SafeIo.Chain.NotReal) {
+                notes += "$shown was not removed: ${chain.reason}. createscript does not use it; check it and remove it by hand"
                 continue
             }
             val kept = remove(txn, plan)

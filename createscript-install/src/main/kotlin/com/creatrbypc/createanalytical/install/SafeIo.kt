@@ -148,6 +148,45 @@ internal object SafeIo {
 
     fun exists(path: Path) = attributes(path) != null
 
+    // root（プロジェクトのルートの実パス）から directory までの各ディレクトリの状態（S8.2 L-5）
+    sealed interface Chain {
+        // どれもリンクでない実際のディレクトリで、directory の実パスが directory そのもの
+        data object Real : Chain
+
+        // 途中か最後が無い（リンクではない）
+        data object Missing : Chain
+
+        // リンク・ディレクトリでないもの・ほかの場所に解決されるもの（理由）
+        class NotReal(val reason: String) : Chain
+    }
+
+    // Java は名前でファイルを扱うので、確かめた直後に、ほかのプログラムが途中のディレクトリをリンクに差し替えることは防げない
+    // （JDK 21 の macOS には、ディレクトリを開いたまま扱う SecureDirectoryStream・openat・renameat が無い）。確かめるのは、その時点の状態
+    fun chain(root: Path, directory: Path): Chain {
+        if (!directory.startsWith(root)) return Chain.NotReal("$directory is not inside $root")
+        var current = root
+        for (part in root.relativize(directory)) {
+            current = current.resolve(part.toString())
+            val attributes = attributes(current) ?: return Chain.Missing
+            if (attributes.isSymbolicLink) {
+                val link = try {
+                    " (it points to ${Files.readSymbolicLink(current)})"
+                } catch (error: IOException) {
+                    ""
+                }
+                return Chain.NotReal("${root.relativize(current)} is a symbolic link$link")
+            }
+            if (!attributes.isDirectory) return Chain.NotReal("${root.relativize(current)} is not a directory")
+        }
+        val real = try {
+            directory.toRealPath()
+        } catch (error: IOException) {
+            return Chain.Missing
+        }
+        if (real != directory) return Chain.NotReal("${root.relativize(directory)} resolves to $real")
+        return Chain.Real
+    }
+
     private fun unsafe(message: String): Nothing = throw InstallFailure(InstallFailure.Kind.UNSAFE, message)
 
     // リンクでない通常のファイルを最大 maxBytes まで読む。無ければ null。リンク・通常のファイルでない・大きすぎる・読む間に変わったものは UNSAFE

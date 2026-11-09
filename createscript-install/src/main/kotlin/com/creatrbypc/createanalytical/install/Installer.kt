@@ -263,6 +263,15 @@ class Installer internal constructor(
 
     private fun relative(layout: Layout, path: Path): String = layout.root.relativize(path).toString()
 
+    // .createscript と作業用のディレクトリが、プロジェクトの中の実際のディレクトリで、ジャーナルに記録した fileKey のままか（S8.2 L-5）。違えば理由
+    private fun placementProblem(layout: Layout, txn: Path, binding: JournalBinding): String? {
+        (SafeIo.chain(layout.root, txn) as? SafeIo.Chain.NotReal)?.let { return it.reason }
+        if (SafeIo.chain(layout.root, txn) == SafeIo.Chain.Missing) return "${relative(layout, txn)} disappeared"
+        if (binding.directory != null && keys.of(layout.state) != binding.directory) return "${InstallLayout.DIRECTORY} was replaced by another directory"
+        if (binding.transaction != null && keys.of(txn) != binding.transaction) return "${relative(layout, txn)} was replaced by another directory"
+        return null
+    }
+
     // ---- トランザクション ----
 
     // 残したもの（作業用のファイルを消せなかったもの）を返す
@@ -296,6 +305,12 @@ class Installer internal constructor(
             for (p in create) PackageDirectories.stage(txn.resolve(Recovery.STAGING), p, markers.getValue(p.name)) { hooks.reached("staging:${p.name}") }
             SafeIo.syncDirectory(txn)
             hooks.reached("staged")
+            // 書き込んだ .createscript と作業用のディレクトリが、今も同じ実際のディレクトリであること（S8.2 L-5: 途中でリンクに差し替えられたなら、
+            // 書いたものがプロジェクトの外へ行ったかもしれない。公開せずに止まり、どこも消さない）
+            placementProblem(layout, txn, binding)?.let {
+                uncertain = true
+                unsafe("$it; another program changed ${InstallLayout.DIRECTORY} during the installation, so the prepared files may have been written elsewhere. Nothing in the project was changed, and nothing was removed")
+            }
             // 書き終えた journal.tmp に transaction.json の名前を付けて公開する（S8.2 L-6: ハードリンク、作れなければ原子的な移動。写さない）
             try {
                 SafeIo.publishNew(temporary, layout.journal, fileSystem)
@@ -314,6 +329,9 @@ class Installer internal constructor(
                 throw error
             }
             journalWritten = journal
+            // 公開した後も、.createscript が同じ実際のディレクトリで、ジャーナルがそこにあること（違えば続けない。取り消しは、書いたジャーナルで行う）
+            placementProblem(layout, txn, binding)?.let { unsafe("$it; another program changed ${InstallLayout.DIRECTORY} while the journal was written") }
+            if (!SafeIo.exists(layout.journal)) unsafe("${relative(layout, layout.journal)} disappeared while it was written")
             SafeIo.syncDirectory(layout.state)
             java.nio.file.Files.deleteIfExists(temporary)
             hooks.reached("journal")
@@ -322,7 +340,8 @@ class Installer internal constructor(
             val reason = (error as? InstallFailure)?.message ?: (error.message ?: error.javaClass.simpleName)
             val written = journalWritten
             if (written == null) {
-                if (!uncertain) SafeIo.deleteOwnTree(txn)
+                // 作業用のディレクトリが、今もプロジェクトの中の実際のディレクトリであるときだけ消す（リンクの先は消さない。S8.2 L-5）
+                if (!uncertain && SafeIo.chain(layout.root, txn) == SafeIo.Chain.Real) SafeIo.deleteOwnTree(txn)
                 throw (error as? InstallFailure) ?: InstallFailure(InstallFailure.Kind.UNSAFE, "cannot prepare the installation: $reason; nothing was changed")
             }
             val undo = try {

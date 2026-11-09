@@ -84,6 +84,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   works. A `txn-*` directory that no journal refers to is removed by the next install only when everything in it
   matches that record (no links, this user's files, no other files); otherwise it is kept and reported with the
   reason. Drives that add `._` files (FAT and exFAT on macOS) are refused before anything changes.
+  Before each package is moved, the directories on the way must be real directories inside the project; after the
+  move and again before the manifest is written, each package must be where it was moved (same `fileKey`), or the
+  installation is not completed and is undone without touching anything behind a symbolic link. A move redirected
+  by a symbolic link that replaces a directory at that moment cannot be prevented and is documented.
 - `createscript-install`: downloading package archives from GitHub Releases with the JDK HTTP client (HTTPS to fixed
   GitHub hosts only, checked redirects, the token only for `api.github.com`, size and time limits, retries and rate
   limits), SHA-256 checks against the lock file and GitHub's asset digest, and a cache keyed by SHA-256 that is
