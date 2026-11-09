@@ -152,7 +152,9 @@ Rules:
 - `import name` loads the module `name` from the file `name.cscr` directly in the project root. With the
   `createscript` command the project root is the directory of the file you run, or `--project-root <dir>`
   (see [cli.md](cli.md)). The name is one identifier; the file name must match exactly, including upper and
-  lower case.
+  lower case. Names reserved on Windows (`con`, `prn`, `aux`, `nul`, `com0`–`com9`, `lpt0`–`lpt9`, in any case)
+  cannot be imported with the `createscript` command (`CS_MODULE_UNREADABLE`; see
+  [packages.md](packages.md#names-reserved-on-windows)).
 - `import` lines come first in a file, before any other statement or declaration.
 - Call a module's functions with the module name: `geometry.square(5)`. Imported functions are not added to
   your own names, so a `square` of your own and `geometry.square` are different functions.

@@ -98,7 +98,7 @@ object Lockfiles {
         rootSection?.let { section ->
             val reader = FieldReader(diagnostics, section, "root")
             reader.allowOnly(ROOT_FIELDS)
-            val name = reader.string("name")?.also { if (!ProjectRules.isValidName(it.value)) diagnostics.add(ProjectDiagnosticCode.INVALID_NAME, it, it.value) }
+            val name = reader.string("name")?.also { ProjectRules.nameCode(it.value, ProjectRules.isValidName(it.value), ProjectDiagnosticCode.INVALID_NAME)?.let { code -> diagnostics.add(code, it, it.value) } }
             val rootVersion = reader.string("version")?.also { if (!ProjectRules.isValidVersion(it.value)) diagnostics.add(ProjectDiagnosticCode.INVALID_VERSION, it, it.value) }
             if (name != null && rootVersion != null) lockRoot = LockRoot(name.value, rootVersion.value)
         }
@@ -115,7 +115,7 @@ object Lockfiles {
                 }
                 val reader = FieldReader(diagnostics, entry, path)
                 reader.allowOnly(PACKAGE_FIELDS)
-                val name = reader.string("name")?.also { if (!ProjectRules.isValidName(it.value)) diagnostics.add(ProjectDiagnosticCode.INVALID_NAME, it, it.value) }
+                val name = reader.string("name")?.also { ProjectRules.nameCode(it.value, ProjectRules.isValidName(it.value), ProjectDiagnosticCode.INVALID_NAME)?.let { code -> diagnostics.add(code, it, it.value) } }
                 val packageVersion = reader.string("version")?.also { if (!ProjectRules.isValidVersion(it.value)) diagnostics.add(ProjectDiagnosticCode.INVALID_VERSION, it, it.value) }
                 val source = reader.string("source")?.also { if (!ProjectRules.isValidSource(it.value)) diagnostics.add(ProjectDiagnosticCode.INVALID_SOURCE, it, it.value) }
                 val sha256 = reader.string("sha256")?.also { if (!ProjectRules.isValidSha256(it.value)) diagnostics.add(ProjectDiagnosticCode.INVALID_SHA256, it, it.value) }
@@ -126,7 +126,7 @@ object Lockfiles {
                         val text = dependency as? JsonString
                         when {
                             text == null -> diagnostics.add(ProjectDiagnosticCode.WRONG_TYPE, dependency, "$path.dependencies", "string")
-                            !ProjectRules.isValidName(text.value) -> diagnostics.add(ProjectDiagnosticCode.INVALID_NAME, text, text.value)
+                            !ProjectRules.isValidName(text.value) -> diagnostics.add(ProjectRules.nameCode(text.value, false, ProjectDiagnosticCode.INVALID_NAME)!!, text, text.value)
                             text.value in dependencies -> diagnostics.add(ProjectDiagnosticCode.LOCK_DUPLICATE_DEPENDENCY, text, name?.value ?: path, text.value)
                             else -> dependencies.add(text.value)
                         }

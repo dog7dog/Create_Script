@@ -29,10 +29,19 @@ object ProjectRules {
     // パスの区切りごとの文字
     private val SEGMENT = Regex("[A-Za-z0-9._-]+")
 
-    // Windows で使えない名前（拡張子を除いた名前。大文字・小文字を区別しない）
-    private val WINDOWS_RESERVED = setOf("con", "prn", "aux", "nul") + (1..9).flatMap { listOf("com$it", "lpt$it") }
+    // Windows の予約名（S8.2 L-7）: CON・PRN・AUX・NUL・COM0〜COM9・LPT0〜LPT9（COM0・LPT0 は Windows の版によって予約名なので、含める）
+    private val WINDOWS_RESERVED = setOf("con", "prn", "aux", "nul") + (0..9).flatMap { listOf("com$it", "lpt$it") }
 
-    fun isValidName(name: String) = name.length <= MAX_NAME_LENGTH && NAME.matches(name)
+    // Windows の予約名か（S8.2 L-7）。大文字・小文字を区別せず、拡張子が付いても（con.txt・NUL.tar.gz）予約名。Windows はパスの要素の末尾の
+    // . と空白を取り除いて扱うので、取り除いてから比べる（"con."・"con " も予約名。. と空白は、ほかの規則も拒否する）。
+    // パッケージ名・モジュール名・エントリーのパス・アーカイブの中のパス・プロジェクトのローカルの import に使う（どの OS でも拒否する: 同じプロジェクトを Windows でも使えるように）
+    fun isWindowsReserved(name: String): Boolean =
+        name.trimEnd('.', ' ').substringBefore('.').trimEnd(' ').lowercase() in WINDOWS_RESERVED
+
+    // 利用者に示す説明
+    fun reservedNameReason(name: String) = "'$name' is a reserved name on Windows (CON, PRN, AUX, NUL, COM0-COM9 and LPT0-LPT9, in any case and with any extension)"
+
+    fun isValidName(name: String) = name.length <= MAX_NAME_LENGTH && NAME.matches(name) && !isWindowsReserved(name)
 
     // ---- モジュール名（S8.2 Phase 1） ----
 
@@ -51,7 +60,14 @@ object ProjectRules {
     val BUILTIN_FUNCTIONS: Set<String> = setOf("println", "waitTicks", "listOf", "mutableListOf")
 
     fun isValidModuleName(name: String) = name.length <= MAX_MODULE_NAME_LENGTH && MODULE_NAME.matches(name) && !name.all { it == '_' } &&
-        name !in HARD_KEYWORDS && name !in BUILTIN_FUNCTIONS
+        name !in HARD_KEYWORDS && name !in BUILTIN_FUNCTIONS && !isWindowsReserved(name)
+
+    // 名前の診断（予約名なら RESERVED_NAME、ほかの規則に合わなければ invalid、正しければ null）
+    internal fun nameCode(name: String, valid: Boolean, invalid: ProjectDiagnosticCode): ProjectDiagnosticCode? = when {
+        valid -> null
+        isWindowsReserved(name) -> ProjectDiagnosticCode.RESERVED_NAME
+        else -> invalid
+    }
 
     // ---- ソースファイルの大きさ（S8.2 Phase 1） ----
 
@@ -89,7 +105,7 @@ object ProjectRules {
         segment == "." || segment == ".." -> "'.' and '..' are not allowed"
         !SEGMENT.matches(segment) -> "only letters, digits, '.', '_' and '-' are allowed in names"
         segment.endsWith(".") -> "names must not end with '.'"
-        segment.substringBefore('.').lowercase() in WINDOWS_RESERVED -> "'$segment' is a reserved name on Windows"
+        isWindowsReserved(segment) -> reservedNameReason(segment)
         else -> null
     }
 }

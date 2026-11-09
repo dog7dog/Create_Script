@@ -181,6 +181,7 @@ internal class ProjectCommands(
             ?: throw Failure(ExitCode.USAGE, "cannot use the directory name as a package name; use --name <name>")
         if (!ProjectRules.isValidName(name)) {
             val hint = if (nameOption == null) " (from the directory name); use --name <name>" else ""
+            if (ProjectRules.isWindowsReserved(name)) throw Failure(ExitCode.USAGE, "invalid package name: $name$hint; ${ProjectRules.reservedNameReason(name)}")
             throw Failure(ExitCode.USAGE, "invalid package name: $name$hint (lower-case letters, digits and single '-', starting with a letter, at most ${ProjectRules.MAX_NAME_LENGTH} characters)")
         }
         val manifestPath = directory.resolve(Manifests.FILE_NAME)

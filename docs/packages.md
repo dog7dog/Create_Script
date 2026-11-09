@@ -106,7 +106,7 @@ short parts of them in diagnostics.
 | Field | Required | Rule |
 |---|---|---|
 | `schemaVersion` | yes | The integer `1`. Another integer gives `CS_PKG_UNSUPPORTED_SCHEMA_VERSION`, and the other fields are not checked (their meaning may differ in another version). |
-| `name` | yes | Package name: lower-case ASCII letters and digits, with single `-` between them, starting with a letter, at most 64 characters (`vector-math`, `app2`). |
+| `name` | yes | Package name: lower-case ASCII letters and digits, with single `-` between them, starting with a letter, at most 64 characters (`vector-math`, `app2`). Not a [name reserved on Windows](#names-reserved-on-windows). |
 | `version` | yes | [Semantic Versioning 2.0.0](https://semver.org/), for example `1.2.0`, `0.1.0-alpha.1`, `1.0.0+build.5`. No leading zeros, at most 128 characters. |
 | `entry` | yes | The program to run, as a relative path inside the project (see below). |
 | `license` | no | An SPDX license expression such as `MIT` or `MIT OR Apache-2.0` (only the characters and the length are checked, not the SPDX list), at most 64 characters. |
@@ -120,9 +120,32 @@ short parts of them in diagnostics.
 - **Entry paths** use `/` between directories and must end in `.cscr`. These are rejected: an empty path,
   absolute paths (`/x`, `//server/x`), `\`, `:` (drive letters and URLs), empty names (`a//b`, a trailing `/`),
   `.` and `..`, characters other than ASCII letters, digits, `.`, `_` and `-`, names ending in `.`, names that
-  are reserved on Windows (`con`, `nul`, `com1`, …), and paths longer than 256 characters. `createscript
-  manifest check` also rejects an entry that is missing, is not a regular file, or leads outside the project
-  through a symbolic link.
+  are [reserved on Windows](#names-reserved-on-windows) (`con.cscr`, `src/NUL.backup.cscr`, `com1/main.cscr`),
+  and paths longer than 256 characters. `createscript manifest check` also rejects an entry that is missing, is
+  not a regular file, or leads outside the project through a symbolic link.
+
+### Names reserved on Windows
+
+Windows treats `CON`, `PRN`, `AUX`, `NUL`, `COM0` to `COM9` and `LPT0` to `LPT9` as devices, in any case and with
+any extension (`con.cscr`, `Nul.txt` and `com1.tar.gz` are all devices), and it ignores dots and spaces at the
+end of a name (`con.` and `con ` too). Such files cannot be created there, or open a device instead of a file.
+So that a project and its packages work on every system, these names are rejected everywhere, also on macOS and
+Linux (S8.2):
+
+- package names in `createscript.json` (`name`, `dependencies`) and `createscript.lock`, and `createscript init`
+  (also a name taken from the directory): `CS_PKG_RESERVED_NAME` with the name;
+- module names in a library's `modules` (`CS_PKG_RESERVED_NAME`) and module files in a package archive
+  (`modules/con.cscr`, also private modules: `CS_PKG_ARCHIVE_INVALID_PATH` with the reason), so `pack` and
+  `install` refuse them;
+- entry paths (`CS_PKG_INVALID_PATH` with the reason);
+- `import con` of a local module, in project mode and when running a file (`CS_MODULE_UNREADABLE`, "'con' is a
+  reserved file name on Windows").
+
+Names that only begin with such a name (`console`, `com10`, `aux-tools`) are allowed. Running a single file
+whose own name is reserved (`createscript run con.cscr`, as in v0.1.0-alpha) is unchanged. Archive paths and
+module names allow only ASCII letters, digits and `_` (and `.` before `cscr`), so the other Windows rules
+(`< > : " / \ | ? *`, control characters, trailing dots and spaces) cannot occur there, and paths that differ
+only in case are already refused. This has not been tried on Windows itself.
 
 `createscript init` writes the manifest in a canonical form (the field order above, two-space indentation, LF
 line ends, one final newline, dependencies sorted by name). Hand-written manifests do not have to be canonical.
@@ -153,7 +176,7 @@ line ends, one final newline, dependencies sorted by name). Hand-written manifes
 All other fields keep the version 1 rules, and unknown fields are still errors. A module name is a CreateScript
 identifier: an ASCII letter or `_` first, then letters, digits and `_`, not only `_`, at most 32 characters, not
 a Kotlin hard keyword and not a built-in function that cannot be redefined (`println`, `waitTicks`, `listOf`,
-`mutableListOf`). **Package names and module names are separate:** the package `vector-math` may export the module
+`mutableListOf`), and not a [name reserved on Windows](#names-reserved-on-windows). **Package names and module names are separate:** the package `vector-math` may export the module
 `vector_math`, and nothing converts one into the other. A library's module `name` lives in the file
 `modules/name.cscr`.
 

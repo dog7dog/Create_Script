@@ -98,7 +98,7 @@ object Manifests {
             kind = fields.string("kind")?.let { value -> PackageKind.of(value.value) ?: null.also { diagnostics.add(ProjectDiagnosticCode.INVALID_KIND, value, value.value) } }
         }
         val library = kind == PackageKind.LIBRARY
-        val name = fields.string("name")?.also { if (!ProjectRules.isValidName(it.value)) diagnostics.add(ProjectDiagnosticCode.INVALID_NAME, it, it.value) }
+        val name = fields.string("name")?.also { ProjectRules.nameCode(it.value, ProjectRules.isValidName(it.value), ProjectDiagnosticCode.INVALID_NAME)?.let { code -> diagnostics.add(code, it, it.value) } }
         val version = fields.string("version")?.also { if (!ProjectRules.isValidVersion(it.value)) diagnostics.add(ProjectDiagnosticCode.INVALID_VERSION, it, it.value) }
         // entry は application では必須、library では任意（kind が無い・正しくないときは、その診断だけにする）
         val entry = fields.string("entry", required = kind == PackageKind.APPLICATION)?.also { value ->
@@ -113,7 +113,7 @@ object Manifests {
                 val position = section.keyPositions[dependencyName]
                 dependencyPositions[dependencyName] = position ?: (1 to 1)
                 val path = "dependencies.$dependencyName"
-                if (!ProjectRules.isValidName(dependencyName)) diagnostics.add(ProjectDiagnosticCode.INVALID_NAME, position, dependencyName)
+                ProjectRules.nameCode(dependencyName, ProjectRules.isValidName(dependencyName), ProjectDiagnosticCode.INVALID_NAME)?.let { diagnostics.add(it, position, dependencyName) }
                 if (dependencyName == name?.value) diagnostics.add(ProjectDiagnosticCode.DEPENDS_ON_ITSELF, position, dependencyName)
                 val spec = value as? JsonObject
                 if (spec == null) {
@@ -140,7 +140,7 @@ object Manifests {
                     val text = element as? JsonString
                     when {
                         text == null -> diagnostics.add(ProjectDiagnosticCode.WRONG_TYPE, element, "modules", "string")
-                        !ProjectRules.isValidModuleName(text.value) -> diagnostics.add(ProjectDiagnosticCode.INVALID_MODULE_NAME, text, text.value)
+                        !ProjectRules.isValidModuleName(text.value) -> diagnostics.add(ProjectRules.nameCode(text.value, false, ProjectDiagnosticCode.INVALID_MODULE_NAME)!!, text, text.value)
                         text.value in modulePositions -> diagnostics.add(ProjectDiagnosticCode.DUPLICATE_MODULE, text, text.value)
                         else -> {
                             modules.add(text.value)

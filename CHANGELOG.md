@@ -88,6 +88,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   move and again before the manifest is written, each package must be where it was moved (same `fileKey`), or the
   installation is not completed and is undone without touching anything behind a symbolic link. A move redirected
   by a symbolic link that replaces a directory at that moment cannot be prevented and is documented.
+- Names reserved on Windows (`CON`, `PRN`, `AUX`, `NUL`, `COM0`–`COM9`, `LPT0`–`LPT9`, in any case and with any
+  extension) are rejected as package names, module names, entry paths and module files in package archives
+  (`CS_PKG_RESERVED_NAME`, or the reason in `CS_PKG_INVALID_PATH` and `CS_PKG_ARCHIVE_INVALID_PATH`), by
+  `init`, `pack` and `install`, and as local modules of `import` (`CS_MODULE_UNREADABLE`). Running a single file
+  is unchanged.
 - `createscript run [directory]` holds a shared lock on `.createscript/install.lock` while it checks the project
   (released before compiling; the file is only opened for reading and never created): while an installation is
   running it stops with exit code 75 instead of reporting an interrupted installation, which it reports (65) only

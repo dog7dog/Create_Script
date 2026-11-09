@@ -1,5 +1,6 @@
 package com.creatrbypc.createanalytical.cli
 
+import com.creatrbypc.createanalytical.project.ProjectRules
 import com.creatrbypc.createanalytical.script.module.ModuleLookup
 import com.creatrbypc.createanalytical.script.module.ModuleResolver
 import java.io.IOException
@@ -70,6 +71,8 @@ internal class ProjectModules(private val root: Path, private val shownRoot: Str
 
     override fun resolve(name: String): ModuleLookup {
         if (!NAME.matches(name)) return ModuleLookup.OutsideProject
+        // Windows の予約名（S8.2 L-7）: con.cscr などは Windows では作れず、装置として開かれることがある。どの OS でも使わない（理由は 64 文字まで）
+        if (ProjectRules.isWindowsReserved(name)) return ModuleLookup.Unreadable("'$name' is a reserved file name on Windows")
         val fileName = name + CliLimits.EXTENSION
         val similar = try {
             Files.list(root).use { entries -> entries.map { it.fileName.toString() }.filter { it.equals(fileName, ignoreCase = true) }.toList() }

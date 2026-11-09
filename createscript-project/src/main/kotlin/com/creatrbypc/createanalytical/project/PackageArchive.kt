@@ -27,7 +27,11 @@ object PackageArchives {
         if (path == Manifests.FILE_NAME || path in DOCUMENTS) return null
         if (path.startsWith("modules/") && path.endsWith(".cscr")) {
             val module = path.removePrefix("modules/").removeSuffix(".cscr")
-            return if (ProjectRules.isValidModuleName(module)) null else "'$module' is not a valid module name"
+            return when {
+                ProjectRules.isValidModuleName(module) -> null
+                ProjectRules.isWindowsReserved(module) -> ProjectRules.reservedNameReason(module)
+                else -> "'$module' is not a valid module name"
+            }
         }
         return "only createscript.json, modules/<module>.cscr and LICENSE, NOTICE, README, CHANGELOG or COPYING (.md, .txt) are allowed"
     }

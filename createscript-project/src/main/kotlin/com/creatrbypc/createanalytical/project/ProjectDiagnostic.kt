@@ -36,6 +36,9 @@ enum class ProjectDiagnosticCode(val id: String) {
     INVALID_SHA256("CS_PKG_INVALID_SHA256"),
     DEPENDS_ON_ITSELF("CS_PKG_DEPENDS_ON_ITSELF"),
 
+    // Windows の予約名（CON・PRN・AUX・NUL・COM0〜9・LPT0〜9。大文字・小文字・拡張子によらない）を、パッケージ名・モジュール名に使った（S8.2 L-7。引数: 名前）
+    RESERVED_NAME("CS_PKG_RESERVED_NAME"),
+
     // schemaVersion 2（S8.2 Phase 1）。kind が application・library でない（引数: 値）、その kind では書けない項目（引数: 項目、kind）、
     // import のモジュール名として使えない名前（引数: 名前）、同じモジュール名の重複（引数: 名前）、library の modules が空
     INVALID_KIND("CS_PKG_INVALID_KIND"),
