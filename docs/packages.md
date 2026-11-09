@@ -561,6 +561,16 @@ When a step fails, the installation is undone at once. When the process stops (a
   with the reason, for example a `journal.tmp` that was being written, a file that was changed or written only in
   part, a file that `install` does not make, a symbolic link, or a directory without `journal.tmp` (what a finished
   or undone installation leaves when it could not confirm and remove some files, or what an earlier version made).
+- Every `createscript install` also looks at `.createscript/packages/<name>/<version>/` and reports each directory
+  that cannot be used: files that do not match the marker (a source or the marker was changed, a file is missing
+  or extra, the marker is damaged or missing), a marker that names another package or version, files that no
+  longer make the archive named in the marker, symbolic links (reported, never followed), and names that `install`
+  does not make. This finds, for example, a package directory that was edited after an installation was
+  interrupted and undone. The warning names the directory and the reason and asks you to keep a copy of your
+  changes and remove the directory. Nothing is removed, repaired or followed, and the check never makes the
+  installation fail (a directory that cannot be read is reported too). Usable directories of versions that
+  `createscript.lock` no longer lists are not reported (removing them is planned), and names starting with `.`
+  (such as `.DS_Store`) are skipped. A directory that this installation needs still stops it, as before.
 - When the installation that runs after a recovery fails (for example, `--offline` and a package not in the cache),
   its message still says that an interrupted installation was finished or undone first.
 

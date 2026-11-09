@@ -174,6 +174,8 @@ class Installer internal constructor(
         val warnings = ArrayList<String>()
         // ジャーナルから参照されない作業用のディレクトリ（S8.2 L-3）。記録（journal.tmp・印）と完全に一致するものだけを消し、ほかは残して知らせる
         warnings += Leftovers(layout, owner, limits).clean()
+        // 使えないパッケージのディレクトリ（中断・取り消しの後に編集されたものなど。S8.2 L-4）。知らせるだけで、何も変えない
+        warnings += UnusablePackages(layout, owner).scan()
         hooks.reached("start")
 
         // プロジェクトのファイル（書き換えるので、シンボリックリンクは使わない）
