@@ -70,8 +70,9 @@ object InstallLayout {
 }
 
 // 所有者の確認（ジャーナル・印・作業用のディレクトリを、このユーザーが作ったものに限る）。所有者を扱えないファイルシステムでは確かめない
-internal class Owner private constructor(private val user: UserPrincipal?) {
+internal class Owner private constructor(private val user: UserPrincipal?, private val check: ((Path) -> Boolean)? = null) {
     fun owns(path: Path): Boolean {
+        check?.let { return it(path) }
         if (user == null) return true
         return try {
             Files.getOwner(path, LinkOption.NOFOLLOW_LINKS) == user
@@ -83,6 +84,9 @@ internal class Owner private constructor(private val user: UserPrincipal?) {
     }
 
     companion object {
+        // テストだけで使う: ほかのユーザーのファイルを作れないテストで、所有者の確認の結果を決める
+        internal fun forTests(owns: (Path) -> Boolean) = Owner(null, owns)
+
         // 既にあるファイル・ディレクトリの所有者（S8.2 Phase 4: 実行の前の確認では、ファイルを書かずに、.createscript と同じ所有者であることを確かめる）
         fun of(path: Path): Owner = try {
             Owner(Files.getOwner(path, LinkOption.NOFOLLOW_LINKS))

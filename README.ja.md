@@ -40,7 +40,8 @@ println(fib(10))   // 55
 - ローカルのモジュール（開発中。v0.1.0-alpha には入っていません）：`import geometry` と書くと、同じプロジェクトの `geometry.cscr` の関数を `geometry.square(5)` の形で使えます。
   ファイルをまたいで型を検査します。インストールしたパッケージのモジュールは、`createscript run [ディレクトリ]` で使えます（[Modules](docs/language.md#modules-local-import)）。
 - プロジェクトのファイル（開発中。v0.1.0-alpha には入っていません）：`createscript init` で、マニフェスト `createscript.json` のあるプロジェクトを作れます。
-  `createscript manifest check`・`createscript lock check` で、マニフェストとロックファイルを確かめます。`createscript install github:owner/repo@v1.2.0` で、
+  `createscript manifest check`・`createscript lock check` で、マニフェストとロックファイルを確かめます。`createscript pack` で、ライブラリのプロジェクトから
+  パッケージのアーカイブ（`createscript-package.zip`。同じファイルからは同じバイト列）を作れます。`createscript install github:owner/repo@v1.2.0` で、
   GitHub Releases からパッケージと依存を SHA-256 を確かめてインストールでき、`createscript run` で、通信せずにそれらを使って実行できます。
   import できるのは、直接の依存の公開モジュールだけです（[Project files](docs/packages.md)）。
 - 安全な実行：スタック・呼び出しの深さ・オブジェクト・リストの要素に固定の上限があり、1 tick の命令の数も決まっています。
@@ -108,7 +109,12 @@ val program = result.program ?: error("compile failed")
 
 ## 対応環境
 
-| 環境 | 状態 |
+次の表は、公開済みの v0.1.0-alpha（タグでの CI）の結果です。開発中の機能（ローカルのモジュール、プロジェクトのファイル、`pack`、`install`、
+パッケージを使うプロジェクトの実行）は、今のところ macOS arm64 のローカルだけで確かめています（すべての単体テストと、コマンドの手での実行）。
+CI・Linux・Windows では実行しておらず、`install` が実際の GitHub の Release から取得したこともまだありません（キャッシュのアーカイブと、テスト用のサーバーで確認）。
+そのため、ファイルのロック・ファイルの同一性（`fileKey`）・原子的な名前の変更・Windows の名前の規則は、Linux と Windows では未確認です。
+
+| 環境 | 状態（v0.1.0-alpha） |
 |---|---|
 | Ubuntu x86_64（`ubuntu-24.04`） | CI で確認済み：ビルド・すべてのテスト・サンプル・REPL、`.tar.gz` のインストール・実行・アンインストール |
 | Ubuntu aarch64（`ubuntu-24.04-arm`） | CI で確認済み：`.tar.gz` の作成・インストール・実行・アンインストール（単体テストは x86_64 と macOS だけで実行） |

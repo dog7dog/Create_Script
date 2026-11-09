@@ -571,8 +571,36 @@ When a step fails, the installation is undone at once. When the process stops (a
   installation fail (a directory that cannot be read is reported too). Usable directories of versions that
   `createscript.lock` no longer lists are not reported (removing them is planned), and names starting with `.`
   (such as `.DS_Store`) are skipped. A directory that this installation needs still stops it, as before.
+- **The temporary file of the journal.** The journal is rewritten (to `committed`) through
+  `txn-<id>/journal.tmp`. If the process stopped while writing it, the next install removes that file before
+  anything else, but only when it is a regular file of this user (not a link) and is either a complete journal of
+  this transaction or the beginning of one (the bytes of a journal follow from its contents, so a file written
+  only in part is always the beginning of it); the journal that counts is `transaction.json`. Any other
+  `journal.tmp` stops the command with nothing changed, and the first step is to move that file out of the
+  project.
+- **A missing transaction directory.** If `transaction.json` (state `prepared`) refers to a `txn-<id>` directory
+  that does not exist, the command says so and stops; put the directory back if you moved it, or check the two
+  files yourself.
 - When the installation that runs after a recovery fails (for example, `--offline` and a package not in the cache),
   its message still says that an interrupted installation was finished or undone first.
+
+#### Checking an interrupted installation by hand
+
+When `createscript install` stops with "cannot be finished or undone safely", it has changed nothing. Its message
+lists the reason, the files that were left and whether `createscript.json` and `createscript.lock` are the version
+before or after the installation. Then:
+
+1. Do what the first step of the message says if it is specific (for example, move a `journal.tmp` out of the
+   project, or put back a `txn-<id>` directory that was moved).
+2. Compare `createscript.json` and `createscript.lock` with the saved copies in `.createscript/txn-<id>/`
+   (`*.old` before the installation, `*.new` after it) and keep the version you want; `createscript manifest
+   check` and `createscript lock check` tell whether they are valid.
+3. Move `.createscript/transaction.json` and `.createscript/txn-<id>/` out of the project (keep them until you are
+   sure) and run `createscript install` again. It checks every package against `createscript.lock` again and
+   reports package directories that cannot be used.
+
+Never delete the journal before the two files are checked: while it exists, `run`, `manifest check`,
+`lock check` and `pack` refuse to work, so a half-finished update is not used by mistake.
 
 What this protects against: a project that someone else made, with a `.createscript` directory that contains a
 journal and saved copies chosen by them, so that the next `createscript install` would replace the

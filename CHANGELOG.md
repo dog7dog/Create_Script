@@ -16,6 +16,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   and reports `CS_MODULE_IMPORT_UNAVAILABLE` for `import`.
 - Core: `ModuleCompileResult.sourceFingerprint` and `ProgramFingerprint.ofModules`, a hash of the entry
   file and all modules for hosts that save and restore runs (the same value as `ofSource` without `import`).
+- Core: `DiagnosticPhase.MODULE` for diagnostics about modules and imports (`CS_MODULE_…`). Code with a `when`
+  over `DiagnosticPhase` that lists every value and has no `else` needs a branch for it.
 - Core: `CompileOptions` sets the compile-time program size limit. `CompileOptions.DEFAULT` and `EMBEDDED`
   keep 4096 instructions (`CreateScript.compile(source)` is unchanged); `STANDALONE` has no instruction
   limit. The input limits and the runtime limits are unchanged.
@@ -84,6 +86,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   works. A `txn-*` directory that no journal refers to is removed by the next install only when everything in it
   matches that record (no links, this user's files, no other files); otherwise it is kept and reported with the
   reason. Drives that add `._` files (FAT and exFAT on macOS) are refused before anything changes.
+  An installation that stopped while the journal was being rewritten (a half-written `journal.tmp`) is finished
+  on the next install: the temporary file is removed only when it belongs to this user, is not a link and is a
+  complete journal of this transaction or the beginning of one; otherwise the command stops with steps to check
+  by hand. A journal whose transaction directory is missing is reported as such.
   Before each package is moved, the directories on the way must be real directories inside the project; after the
   move and again before the manifest is written, each package must be where it was moved (same `fileKey`), or the
   installation is not completed and is undone without touching anything behind a symbolic link. A move redirected

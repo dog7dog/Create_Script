@@ -52,7 +52,8 @@ internal class Recovery(
     private var confirmed = false
 
     // 復旧できないときの説明（S8.2 Phase 4 の条件: ジャーナルの無条件の削除を促さず、理由・残っているファイル・手で確かめる手順を示す）。何も変えない
-    private fun manual(reason: String): Nothing {
+    // firstStep は、理由に合わせて最初に示す手順（無ければ null）
+    private fun manual(reason: String, firstStep: String? = null): Nothing {
         val lines = ArrayList<String>()
         lines += "an earlier createscript install was interrupted, and it cannot be finished or undone safely: $reason. Nothing was changed."
         lines += "Files left by the interrupted installation:"
@@ -93,10 +94,21 @@ internal class Recovery(
         }
         val txn = journal?.let { "${InstallLayout.DIRECTORY}/${InstallLayout.TRANSACTION_PREFIX}${it.id}/" } ?: "the ${InstallLayout.DIRECTORY}/${InstallLayout.TRANSACTION_PREFIX}* directory"
         lines += "To check by hand:"
-        lines += "  1. Compare ${Manifests.FILE_NAME} and ${Lockfiles.FILE_NAME} with the saved copies in $txn (*.old is the version before the installation, *.new the version after it), and keep the version you want."
-        lines += "  2. In ${InstallLayout.DIRECTORY}/${InstallLayout.PACKAGES}, directories whose ${InstallLayout.MARKER} names this transaction" +
+        val steps = ArrayList<String>()
+        firstStep?.let { steps += it }
+        // 作業用のディレクトリ（写し）が無いとき（S8.2 N-2）
+        val missing = journal != null && !SafeIo.exists(layout.transaction(journal.id))
+        steps += if (missing) {
+            "The saved copies ($txn) are missing. If you moved that directory, put it back and run createscript install again. " +
+                "Otherwise check ${Manifests.FILE_NAME} and ${Lockfiles.FILE_NAME} yourself (createscript manifest check, createscript lock check), and keep the version you want."
+        } else {
+            "Compare ${Manifests.FILE_NAME} and ${Lockfiles.FILE_NAME} with the saved copies in $txn (*.old is the version before the installation, *.new the version after it), and keep the version you want."
+        }
+        steps += "In ${InstallLayout.DIRECTORY}/${InstallLayout.PACKAGES}, directories whose ${InstallLayout.MARKER} names this transaction" +
             (journal?.let { " (${it.id})" } ?: "") + " were added by the interrupted installation; they are used only if createscript.lock lists them."
-        lines += "  3. Only when both files are as you want them, move ${InstallLayout.DIRECTORY}/${InstallLayout.JOURNAL} and $txn out of the project (keep them until you are sure), and run createscript install again; it checks every package again."
+        steps += "Only when both files are as you want them, move ${InstallLayout.DIRECTORY}/${InstallLayout.JOURNAL}" + (if (missing) "" else " and $txn") +
+            " out of the project (keep them until you are sure), and run createscript install again; it checks every package again."
+        steps.forEachIndexed { index, step -> lines += "  ${index + 1}. $step" }
         unsafe(lines.joinToString("\n"))
     }
 
@@ -129,8 +141,12 @@ internal class Recovery(
         val moved = "it may have come with a project that was copied, downloaded, moved or restored, so its saved copies are not used automatically"
         if (binding.root != layout.root.toString()) manual("${shown(layout.journal)} was written for another directory (${binding.root}); $moved")
         val txn = layout.transaction(journal.id)
-        // 済んだ（committed）インストールの片付けの途中なら、作業用のディレクトリはもう無いことがある（片付けは、プロジェクトのファイルを書き換えない）
-        val checkTransaction = journal.state == Journal.State.PREPARED || SafeIo.exists(txn)
+        // 済んだ（committed）インストールの片付けの途中なら、作業用のディレクトリはもう無いことがある（片付けは、プロジェクトのファイルを書き換えない）。
+        // 済んでいない（prepared）のに無ければ、続行にも取り消しにも要る写しが無い（S8.2 N-2: fileKey の問題とは区別して知らせる）
+        val checkTransaction = SafeIo.exists(txn)
+        if (journal.state == Journal.State.PREPARED && !checkTransaction) {
+            manual("${shown(layout.journal)} refers to ${shown(txn)}, which does not exist (it was removed or moved), so the saved copies needed to finish or undo the installation are missing")
+        }
         val current = keys.of(layout.state)
         val currentTransaction = if (checkTransaction) keys.of(txn) else null
         if (binding.directory == null || current == null || (checkTransaction && (binding.transaction == null || currentTransaction == null))) {
@@ -264,16 +280,27 @@ internal class Recovery(
     // trusted は、このプロセスが書いたジャーナル（インストールの途中の失敗を、その場で取り消すとき）。null なら、ディスクのジャーナルの書いた場所を確かめる
     fun recover(preferForward: Boolean, trusted: Journal? = null): RecoveryOutcome {
         val journal = load(trusted)
-        if (journal.state == Journal.State.COMMITTED) {
-            val kept = cleanup(journal)
-            return RecoveryOutcome("finished cleaning up an installation that had completed", kept)
-        }
         val txn = layout.transaction(journal.id)
         val txnAttributes = SafeIo.attributes(txn)
         if (txnAttributes != null && (txnAttributes.isSymbolicLink || !txnAttributes.isDirectory || !owner.owns(txn))) manual("${shown(txn)} is not a directory of this installation")
         // 置き場所の途中がリンクなら、リンクの先を読まず・書かない（S8.2 L-5）。中断の後の復旧は止まり、同じプロセスの中の取り消しは、
         // そのパッケージに触らずに（残したものとして知らせて）ほかを取り消す
         (SafeIo.chain(layout.root, txn) as? SafeIo.Chain.NotReal)?.let { manual(it.reason) }
+        // ジャーナルを書き換える途中（journal.tmp を書いている途中）で止まったもの（S8.2 N-1）。何かを変える前に、片付けてよいものか確かめる。
+        // 正式なジャーナルは transaction.json で、journal.tmp はその一時ファイル。確かめられなければ、何も変えずに止まる
+        if (txnAttributes != null) {
+            val temporary = txn.resolve(JOURNAL_TEMP)
+            removeJournalTemp(temporary, journal)?.let { problem ->
+                manual(
+                    "${shown(temporary)}, the temporary file used to rewrite the journal, cannot be removed safely ($problem)",
+                    "Move ${shown(temporary)} out of the project (keep it until you are sure). It is only a temporary copy; the journal itself is ${shown(layout.journal)}. Then run createscript install again, which finishes or undoes the installation.",
+                )
+            }
+        }
+        if (journal.state == Journal.State.COMMITTED) {
+            val kept = cleanup(journal)
+            return RecoveryOutcome("finished cleaning up an installation that had completed", kept)
+        }
         val linked = journal.packages.associate { p -> p.name to (SafeIo.chain(layout.root, layout.packages.resolve(p.name)) as? SafeIo.Chain.NotReal) }
         if (trusted == null) linked.values.firstOrNull { it != null }?.let { manual(it.reason) }
         val manifestFile = current(layout.manifest, Manifests.MAX_BYTES)
@@ -473,19 +500,34 @@ internal class Recovery(
         val txn = layout.transaction(journal.id)
         requireReal(txn, "the journal was not changed")
         val temporary = txn.resolve(JOURNAL_TEMP)
-        deleteJournalTemp(temporary, journal.id)?.let { unsafe("${shown(temporary)} cannot be replaced ($it)") }
+        removeJournalTemp(temporary, journal)?.let { unsafe("${shown(temporary)} cannot be replaced ($it); the journal was not changed. Move it out of the project and run createscript install again") }
         SafeIo.createFile(temporary, journal.write())
         SafeIo.replace(temporary, layout.journal)
         SafeIo.syncDirectory(layout.state)
     }
 
-    private fun deleteJournalTemp(path: Path, id: String): String? {
+    // 作業用のディレクトリの journal.tmp（ジャーナルを書き換えるための一時ファイル）を消す（S8.2 N-1）。無ければ何もしない。
+    // 消すのは、このユーザーの、リンクでない通常のファイルで、次のどちらかのものだけ（作業用のディレクトリは、呼ぶ側が確かめたもの: 書いた場所・所有者・リンクでないこと）:
+    // - このトランザクションのジャーナル（id が同じ。書き終えたもの）
+    // - このトランザクションのジャーナル（prepared・committed）が書くバイト列の先頭の一部（書いている途中で止まったもの。空のファイルを含む）。
+    //   ジャーナルのバイト列は内容から決まるので、途中で止まったものは必ずその先頭と同じになる
+    // それ以外（リンク・通常のファイルでない・ほかのユーザーのもの・読めない・別の中身）は消さずに理由を返す
+    private fun removeJournalTemp(path: Path, journal: Journal): String? {
+        val attributes = SafeIo.attributes(path) ?: return null
+        if (attributes.isSymbolicLink) return "it is a symbolic link"
+        if (!attributes.isRegularFile) return "it is not a regular file"
+        if (!owner.owns(path)) return "it belongs to another user"
         val file = try {
             SafeIo.readRegular(path, Journal.MAX_BYTES) ?: return null
         } catch (failure: InstallFailure) {
-            return failure.message
+            return failure.message ?: "it cannot be read"
         }
-        if (Journal.parse(file.bytes, limits.maxPackages).first?.id != id) return "it is not a journal of this installation"
+        val complete = Journal.parse(file.bytes, limits.maxPackages).first?.id == journal.id
+        val partial = Journal.State.entries.any { state ->
+            val expected = journal.copy(state = state).write()
+            file.bytes.size <= expected.size && expected.copyOf(file.bytes.size).contentEquals(file.bytes)
+        }
+        if (!complete && !partial) return "it is neither a journal of this installation nor the beginning of one that was being written"
         return SafeIo.deleteFileIfSame(path, file.identity.sha256, Journal.MAX_BYTES, file.identity.fileKey)
     }
 
@@ -507,7 +549,7 @@ internal class Recovery(
                         // （deleteFileIfSame は、消せたときに null を返す。?.let と ?: を組み合わせると、消せたことを「作っていない」と取り違えるため、if で分ける）
                         LOCK_OLD -> if (journal.lockOld == null) "it was not created by this installation" else SafeIo.deleteFileIfSame(path, journal.lockOld, Lockfiles.MAX_BYTES)
                         LOCK_NEW -> if (journal.lockNew == null) "it was not created by this installation" else SafeIo.deleteFileIfSame(path, journal.lockNew, Lockfiles.MAX_BYTES)
-                        JOURNAL_TEMP -> deleteJournalTemp(path, journal.id)
+                        JOURNAL_TEMP -> removeJournalTemp(path, journal)
                         STAGING -> cleanStaging(path, journal)
                         else -> "it was not created by this installation"
                     }

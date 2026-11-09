@@ -48,7 +48,8 @@ println(fib(10))   // 55
   modules of installed packages are used by `createscript run [directory]` (see [Modules](docs/language.md#modules-local-import)).
 - Project files (in development, not in v0.1.0-alpha): `createscript init` creates a project with a
   `createscript.json` manifest; `createscript manifest check` and `createscript lock check` check the manifest
-  and the lock file; `createscript install github:owner/repo@v1.2.0` installs a package and its dependencies from
+  and the lock file; `createscript pack` makes a package archive (`createscript-package.zip`, the same bytes for
+  the same files) from a library project; `createscript install github:owner/repo@v1.2.0` installs a package and its dependencies from
   GitHub Releases with SHA-256 checks, and `createscript run` runs the project with them, without the network; only
   public modules of direct dependencies can be imported (see [Project files](docs/packages.md)).
 - A safe execution model: fixed limits on stack, call depth, objects and list elements; an instruction budget
@@ -120,7 +121,14 @@ source files; for a program without `import` it equals `ProgramFingerprint.ofSou
 
 ## Platform status
 
-| Platform | Status |
+The table below is for the released v0.1.0-alpha (CI on its tag). The features in development (local modules,
+project files, `pack`, `install` and running projects with packages) have so far been tested on macOS arm64 only,
+locally (all unit tests, and the command run by hand); they have not run in CI or on Linux or Windows, and
+`install` has not yet downloaded from a real GitHub release (it was tried with archives in the cache and a test
+server). Their file locks, file identities (`fileKey`), atomic renames and Windows name rules are therefore not
+verified on Linux and Windows.
+
+| Platform | Status (v0.1.0-alpha) |
 |---|---|
 | Ubuntu x86_64 (`ubuntu-24.04`) | Verified in CI: build, all tests, samples, REPL, and the `.tar.gz` installed, run and uninstalled |
 | Ubuntu aarch64 (`ubuntu-24.04-arm`) | Verified in CI: the `.tar.gz` built, installed, run and uninstalled (the unit tests run on x86_64 and macOS only) |
