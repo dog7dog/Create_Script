@@ -497,9 +497,10 @@ class InstallTest {
         }
     }
 
-    // ジャーナルを書く前に止まったインストールは、プロジェクトのファイルを変えておらず、作業用のディレクトリを警告する
+    // ジャーナルを書く前に止まったインストールは、プロジェクトのファイルを変えていない。作業用のディレクトリは、記録（journal.tmp・印）と
+    // 一致するので、次の install が消して知らせる（S8.2 L-3）
     @ParameterizedTest
-    @ValueSource(strings = ["start", "resolved", "staged"])
+    @ValueSource(strings = ["start", "resolved", "recorded", "staging:numbers", "staging:vector-math", "staged"])
     fun aCrashBeforeTheJournalChangesNothing(step: String) {
         publishBasic()
         val before = snapshot(root)
@@ -509,7 +510,9 @@ class InstallTest {
         assertFalse(Files.exists(root.resolve(".createscript/transaction.json")))
         assertFalse(Files.exists(root.resolve(".createscript/packages")))
         val result = installer().install(spec, false)
-        assertEquals(if (step == "staged") 1 else 0, result.warnings.count { it.contains("stopped before it changed anything") })
+        val leftover = step != "start" && step != "resolved"
+        assertEquals(if (leftover) 1 else 0, result.warnings.count { it.startsWith("removed .createscript/txn-") }, result.warnings.toString())
         assertEquals(2, result.packages.count { it.installed })
+        assertEquals(listOf("install.lock", "packages"), Files.list(root.resolve(".createscript")).use { s -> s.map { it.fileName.toString() }.sorted().toList() })
     }
 }

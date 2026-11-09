@@ -79,6 +79,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   old one with at most one dependency added or changed, that the lock file passes `lock check` and keeps the
   SHA-256 of packages that did not change, and that every package makes again the canonical archive of the lock
   file; saved copies used to undo are checked too. A failure after a recovery still reports the recovery.
+  The journal is written first as `journal.tmp` in the transaction directory and published with a hard link or,
+  where there are none, an atomic move; it is never copied, and the installation stops unchanged where neither
+  works. A `txn-*` directory that no journal refers to is removed by the next install only when everything in it
+  matches that record (no links, this user's files, no other files); otherwise it is kept and reported with the
+  reason. Drives that add `._` files (FAT and exFAT on macOS) are refused before anything changes.
 - `createscript-install`: downloading package archives from GitHub Releases with the JDK HTTP client (HTTPS to fixed
   GitHub hosts only, checked redirects, the token only for `api.github.com`, size and time limits, retries and rate
   limits), SHA-256 checks against the lock file and GitHub's asset digest, and a cache keyed by SHA-256 that is

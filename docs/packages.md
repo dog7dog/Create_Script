@@ -474,11 +474,15 @@ $ createscript install --offline    # the same without the network (from the cac
 1. Hold `.createscript/install.lock` (`FileChannel.tryLock`), so that only one installation runs in a project.
 2. Read the project files and download and check every package. Up to here nothing in the project changes, so a
    network or check failure leaves everything as it was.
-3. Write, in a new `.createscript/txn-<id>/`, the new manifest and lock file, copies of the current ones, and the
-   unpacked packages, and flush them to disk.
-4. Create `.createscript/transaction.json` (state `prepared`) with the SHA-256 of the old and new manifest and lock
-   file and of each package marker. It is written to a temporary file and then given its name with a hard link,
-   so a half-written journal never has the name.
+3. Create a new `.createscript/txn-<id>/` and write in it, first, `journal.tmp`: the complete journal (state
+   `prepared`) with the SHA-256 of the old and new manifest and lock file and of each package marker (the markers
+   are made in memory first). Then write the new manifest and lock file, copies of the current ones, and the
+   unpacked packages (each package's marker first, then its files), and flush them to disk.
+4. Publish the journal: give `journal.tmp` the name `.createscript/transaction.json` with a hard link, which never
+   replaces a file. Where the file system has no hard links (FAT, for example), check that the name is free and
+   rename the file with an atomic move (`ATOMIC_MOVE`); `install.lock` keeps other installations away in the
+   meantime. Where neither works, the installation stops and changes nothing. The journal is never copied, so a
+   half-written `transaction.json` cannot appear (and one that is not complete JSON with every field is refused).
 5. Move the packages into `packages/` (never replacing a directory), then replace `createscript.json` and
    `createscript.lock` (a rename). Before each replacement the current file must be the one read in step 2, with
    the same SHA-256 and, where the file system tells, the same file (`fileKey`): a file that another program
@@ -520,8 +524,15 @@ When a step fails, the installation is undone at once. When the process stops (a
   `txn-<id>/` out of the project (keeping them until you are sure) and run `createscript install` again. It never
   asks to delete the journal before the files are checked.
 - `manifest check`, `lock check` and `pack` stop with exit code 65 while a journal exists.
-- An installation that stopped before step 4 has changed nothing; its `txn-<id>` directory is reported and can be
-  removed.
+- An installation that stopped before step 4 has changed nothing. Its `txn-<id>` directory is removed by the next
+  `createscript install` (which reports it) only when no journal exists and everything in it matches the record
+  it began with: the directory, its files and subdirectories are not symbolic links and belong to this user, its
+  name is `txn-` and a UUID, `journal.tmp` is a valid journal with that id, and every other file is one of the
+  copies or prepared packages that the record names, with the recorded SHA-256 (files that were not written yet may
+  be missing). Everything is checked before anything is removed. Anything else stays where it is and is reported
+  with the reason, for example a `journal.tmp` that was being written, a file that was changed or written only in
+  part, a file that `install` does not make, a symbolic link, or a directory without `journal.tmp` (what a finished
+  or undone installation leaves when it could not confirm and remove some files, or what an earlier version made).
 - When the installation that runs after a recovery fails (for example, `--offline` and a package not in the cache),
   its message still says that an interrupted installation was finished or undone first.
 
@@ -557,6 +568,11 @@ The lock file is what is trusted: a change of the files, the marker and `creates
 apart from installing another archive (review changes of `createscript.lock` like changes of code). Running
 `createscript install` again after removing `.createscript/packages` checks the archives against the lock file
 again.
+
+File systems that add a `._` file next to every new file (macOS does this on FAT and exFAT drives and on some
+network drives, to store extended attributes) are not supported: the package directories would no longer hold
+exactly the installed files. `createscript install` finds this with a test file before it changes anything and
+stops with exit code 73; `run` refuses such files in package directories and names the reason.
 
 Known limits: checks and renames are separate steps, so a program that changes a file in the moment between them
 is not always noticed (Java names files by path); a file whose contents and size stay the same after a change

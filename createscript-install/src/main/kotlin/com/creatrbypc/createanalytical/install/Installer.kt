@@ -86,6 +86,7 @@ class Installer internal constructor(
     private val limits: InstallLimits,
     private val hooks: InstallHooks,
     private val keys: DirectoryKeys = DirectoryKeys.FILE_KEY,
+    private val fileSystem: InstallFileSystem = InstallFileSystem.DEFAULT,
 ) {
     constructor(root: Path, fetcher: PackageFetcher) : this(root, fetcher, InstallLimits(), InstallHooks.NONE)
 
@@ -106,6 +107,15 @@ class Installer internal constructor(
         return withInstallLock(layout) {
             val owner = Owner.probe(layout.state)
             if (!owner.owns(layout.state)) unsafe("${layout.state} belongs to another user")
+            // 新しいファイルの隣に ._ のファイルができるファイルシステム（macOS の FAT・exFAT など）では、置いたパッケージの中身が印と一致しなくなる。
+            // 検査を弱めずに、何も変える前に止まる（S8.2 L-6）
+            if (fileSystem.addsSidecarFiles(layout.state)) {
+                unsafe(
+                    "the file system of ${layout.state} adds a ._ file next to every new file (macOS does this on FAT and exFAT drives and on some network drives). " +
+                        "createscript install checks that package directories hold exactly the installed files, so it cannot install packages there. Nothing was changed. " +
+                        "Move the project to a drive formatted as APFS or Mac OS Extended",
+                )
+            }
             run(layout, owner, spec, offline)
         }
     }
@@ -161,12 +171,8 @@ class Installer internal constructor(
 
     private fun install(layout: Layout, owner: Owner, spec: PackageSpec?, offline: Boolean, recovery: String?): InstallResult {
         val warnings = ArrayList<String>()
-        // ジャーナルを書く前に止まったインストールの作業用のディレクトリ（プロジェクトのファイルは変わっていない）。照合できるジャーナルが無いので消さずに知らせる
-        for (name in SafeIo.list(layout.state, 1024)) {
-            if (name.startsWith(InstallLayout.TRANSACTION_PREFIX)) {
-                warnings += "${InstallLayout.DIRECTORY}/$name was left by an installation that stopped before it changed anything; it is not used and can be removed"
-            }
-        }
+        // ジャーナルから参照されない作業用のディレクトリ（S8.2 L-3）。記録（journal.tmp・印）と完全に一致するものだけを消し、ほかは残して知らせる
+        warnings += Leftovers(layout, owner, limits).clean()
         hooks.reached("start")
 
         // プロジェクトのファイル（書き換えるので、シンボリックリンクは使わない）
@@ -272,22 +278,40 @@ class Installer internal constructor(
         val binding = JournalBinding(layout.root.toString(), keys.of(layout.state), keys.of(txn))
         // 書いたジャーナル（その場の取り消しでは、ディスクのジャーナルがこれと同じことを確かめて使う。書いた場所の確認は要らない）
         var journalWritten: Journal? = null
+        // ジャーナルを公開できたか分からなくなったとき（作業用のディレクトリを消さない）
+        var uncertain = false
         try {
+            // ジャーナルの中身（印は、書く前にメモリーの中で作る）を、作業用のディレクトリの最初のファイル journal.tmp として書く（S8.2 L-3）。
+            // 途中で止まった作業用のディレクトリは、journal.tmp と印に記録したものと完全に一致するときだけ、次の install が消す（Leftovers）
+            val markers = create.associate { it.name to PackageDirectories.marker(id, it) }
+            val staged = create.map { JournalPackage(it.name, it.version, SafeIo.sha256Hex(markers.getValue(it.name))) }
+            val journal = Journal(id, Journal.State.PREPARED, manifestOld.identity.sha256, SafeIo.sha256Hex(manifestNew), lockOld?.identity?.sha256, lockNew?.let(SafeIo::sha256Hex), staged, binding)
+            val temporary = txn.resolve(Recovery.JOURNAL_TEMP)
+            SafeIo.createFile(temporary, journal.write())
+            hooks.reached("recorded")
             SafeIo.createFile(txn.resolve(Recovery.MANIFEST_OLD), manifestOld.bytes)
             SafeIo.createFile(txn.resolve(Recovery.MANIFEST_NEW), manifestNew)
             lockOld?.let { SafeIo.createFile(txn.resolve(Recovery.LOCK_OLD), it.bytes) }
             lockNew?.let { SafeIo.createFile(txn.resolve(Recovery.LOCK_NEW), it) }
-            val staged = create.map { JournalPackage(it.name, it.version, PackageDirectories.stage(txn.resolve(Recovery.STAGING), id, it)) }
+            for (p in create) PackageDirectories.stage(txn.resolve(Recovery.STAGING), p, markers.getValue(p.name)) { hooks.reached("staging:${p.name}") }
             SafeIo.syncDirectory(txn)
             hooks.reached("staged")
-            val journal = Journal(id, Journal.State.PREPARED, manifestOld.identity.sha256, SafeIo.sha256Hex(manifestNew), lockOld?.identity?.sha256, lockNew?.let(SafeIo::sha256Hex), staged, binding)
-            // ジャーナルは、書き終えた一時ファイルに、置き換えないリンクで名前を付ける（書きかけのジャーナルは残らない）
-            val temporary = txn.resolve(Recovery.JOURNAL_TEMP)
-            SafeIo.createFile(temporary, journal.write())
+            // 書き終えた journal.tmp に transaction.json の名前を付けて公開する（S8.2 L-6: ハードリンク、作れなければ原子的な移動。写さない）
             try {
-                SafeIo.linkNew(temporary, layout.journal)
+                SafeIo.publishNew(temporary, layout.journal, fileSystem)
             } catch (error: FileAlreadyExistsException) {
                 unsafe("${relative(layout, layout.journal)} appeared during the installation; nothing was changed")
+            } catch (error: java.nio.file.AtomicMoveNotSupportedException) {
+                unsafe("the file system of ${layout.state} supports neither hard links nor atomic renames, so createscript install cannot write its journal safely; nothing was changed")
+            } catch (error: IOException) {
+                if (SafeIo.exists(layout.journal)) {
+                    uncertain = true
+                    unsafe(
+                        "cannot tell whether ${relative(layout, layout.journal)} was written completely (${error.message ?: error.javaClass.simpleName}); " +
+                            "nothing else was changed. Run createscript install again: it finishes or undoes the installation, or stops with steps to check it by hand",
+                    )
+                }
+                throw error
             }
             journalWritten = journal
             SafeIo.syncDirectory(layout.state)
@@ -298,7 +322,7 @@ class Installer internal constructor(
             val reason = (error as? InstallFailure)?.message ?: (error.message ?: error.javaClass.simpleName)
             val written = journalWritten
             if (written == null) {
-                SafeIo.deleteOwnTree(txn)
+                if (!uncertain) SafeIo.deleteOwnTree(txn)
                 throw (error as? InstallFailure) ?: InstallFailure(InstallFailure.Kind.UNSAFE, "cannot prepare the installation: $reason; nothing was changed")
             }
             val undo = try {
@@ -364,7 +388,7 @@ internal object PackageDirectories {
         files[InstallLayout.MARKER] = markerFile.identity
         var total = 0L
         fun check(path: Path, relative: String): String? {
-            val expected = marker.files[relative] ?: return "it has a file that was not installed: $relative"
+            val expected = marker.files[relative] ?: return "it has a file that was not installed: $relative" + sidecarHint(relative)
             val file = try {
                 SafeIo.readRegular(path, PackageArchives.MAX_TOTAL_BYTES)
             } catch (failure: InstallFailure) {
@@ -393,6 +417,10 @@ internal object PackageDirectories {
         return PackageState.Valid(marker, markerFile.identity.sha256, files, contents)
     }
 
+    // ._ で始まる名前は、macOS が FAT・exFAT などで作る AppleDouble のファイル（S8.2 L-6。検査は弱めず、理由だけを示す）
+    fun sidecarHint(relative: String): String =
+        if (relative.substringAfterLast('/').startsWith("._")) " (macOS makes such ._ files on FAT and exFAT drives and some network drives, where packages cannot be installed)" else ""
+
     // 確かめたディレクトリ（keepContents で読んだもの）のファイル（印を除く）から正規形のアーカイブを作り直すと、SHA-256 が sha256 になるか（S8.2 M-1）。
     // インストールは正規形のアーカイブだけを受け入れ、その中身をそのまま置くので、変わっていなければ必ず同じになる。印は使わない（印と中身を同じように書き換えても見つかる）
     fun matchesArchive(state: PackageState.Valid, sha256: String): Boolean {
@@ -400,14 +428,23 @@ internal object PackageDirectories {
         return SafeIo.sha256Hex(rebuilt) == sha256
     }
 
-    // 作業用のディレクトリ staging/<name>/<version>/ に展開し、印を書く。印の SHA-256 を返す
-    fun stage(staging: Path, transaction: String, p: ResolvedPackage): String {
+    // パッケージの印（.createscript-package.json）のバイト列。ファイルの SHA-256 は、展開するバイト列から計算する（書く前にジャーナルに記録するため）
+    fun marker(transaction: String, p: ResolvedPackage): ByteArray {
+        val hashes = java.util.TreeMap<String, String>()
+        for ((path, bytes) in p.files) hashes[path] = SafeIo.sha256Hex(bytes)
+        return Marker(transaction, p.name, p.version, p.source, p.sha256, hashes).write()
+    }
+
+    // 作業用のディレクトリ staging/<name>/<version>/ に、印を最初に書いてから展開する（S8.2 L-3: 途中で止まっても、置いたファイルを印と照合できる）。
+    // afterMarker は、印を書いた後（テストの中断に使う）
+    fun stage(staging: Path, p: ResolvedPackage, marker: ByteArray, afterMarker: () -> Unit = {}) {
         SafeIo.directory(staging, create = true)
         val parent = staging.resolve(p.name)
         SafeIo.directory(parent, create = true)
         val directory = parent.resolve(p.version)
         java.nio.file.Files.createDirectory(directory)
-        val hashes = java.util.TreeMap<String, String>()
+        SafeIo.createFile(directory.resolve(InstallLayout.MARKER), marker)
+        afterMarker()
         for ((path, bytes) in p.files) {
             val target = if (path.startsWith("$MODULES/")) {
                 SafeIo.directory(directory.resolve(MODULES), create = true)
@@ -415,12 +452,9 @@ internal object PackageDirectories {
             } else {
                 directory.resolve(path)
             }
-            hashes[path] = SafeIo.createFile(target, bytes).sha256
+            SafeIo.createFile(target, bytes)
         }
-        val marker = Marker(transaction, p.name, p.version, p.source, p.sha256, hashes).write()
-        SafeIo.createFile(directory.resolve(InstallLayout.MARKER), marker)
         SafeIo.syncDirectory(directory)
-        return SafeIo.sha256Hex(marker)
     }
 
     // 確かめたディレクトリを消す（印に書かれたファイルを、同一性を確かめてから消す。印は最後）。消さなかったものを返す

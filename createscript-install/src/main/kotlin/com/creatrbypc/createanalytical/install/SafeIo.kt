@@ -123,6 +123,17 @@ internal fun interface DirectoryKeys {
     }
 }
 
+// ファイルシステムの操作のうち、テストで「できない」場合を渡すもの（S8.2 L-6）
+internal class InstallFileSystem(
+    val createLink: (target: Path, source: Path) -> Unit = { target, source -> Files.createLink(target, source) },
+    val atomicMove: (source: Path, target: Path) -> Unit = { source, target -> Files.move(source, target, StandardCopyOption.ATOMIC_MOVE) },
+    val addsSidecarFiles: (directory: Path) -> Boolean = SafeIo::addsSidecarFiles,
+) {
+    companion object {
+        val DEFAULT = InstallFileSystem()
+    }
+}
+
 // インストールのファイルの操作（S8.2 Phase 3）。どれもシンボリックリンクをたどらない
 internal object SafeIo {
     fun sha256Hex(bytes: ByteArray): String = GitHubReleases.sha256Hex(bytes)
@@ -196,17 +207,48 @@ internal object SafeIo {
         }
     }
 
-    // source の名前を target に付ける（target が既にあれば失敗する: ハードリンク。作れなければ置き換えない移動）。source は残る
-    fun linkNew(source: Path, target: Path) {
+    // 書き終えてディスクに書き出したファイル source を、target の名前で公開する（S8.2 L-6）。target が既にあれば FileAlreadyExistsException。
+    // 1. ハードリンク（置き換えない、原子的）。source は残る
+    // 2. ハードリンクを作れないファイルシステムでは、target が無いことを確かめてから、原子的な移動（ATOMIC_MOVE。rename）。source は無くなる。
+    //    確かめてから移動するまでの間に target を作れるのは、install.lock を使わないほかのプログラムだけ（インストールは同時に 1 つ）
+    // 3. 原子的な移動もできなければ AtomicMoveNotSupportedException（何も公開しない）。写す（copy）ことはしない: 写す途中で止まると、
+    //    書きかけのファイルが target の名前で残るため
+    fun publishNew(source: Path, target: Path, fileSystem: InstallFileSystem) {
         try {
-            Files.createLink(target, source)
+            fileSystem.createLink(target, source)
+            return
         } catch (error: FileAlreadyExistsException) {
             throw error
         } catch (error: UnsupportedOperationException) {
-            Files.copy(source, target)
+            // ハードリンクを扱えないファイルシステム
         } catch (error: IOException) {
+            // FAT などでは FileSystemException（Operation not supported）
             if (exists(target)) throw FileAlreadyExistsException(target.toString())
-            Files.copy(source, target)
+        }
+        if (exists(target)) throw FileAlreadyExistsException(target.toString())
+        fileSystem.atomicMove(source, target)
+    }
+
+    // 新しいファイルの隣に、ファイルシステムが ._<名前> のファイル（AppleDouble）を作るか（S8.2 L-6）。macOS は FAT・exFAT などで、
+    // 拡張属性を ._ のファイルに書く。試しのファイルを作って確かめ、試しのファイル（と ._ のファイル）を消す
+    fun addsSidecarFiles(directory: Path): Boolean {
+        val name = ".probe-${UUID.randomUUID()}"
+        val probe = directory.resolve(name)
+        val sidecar = directory.resolve("._$name")
+        try {
+            Files.newByteChannel(probe, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS).close()
+        } catch (error: IOException) {
+            unsafe("cannot write to $directory")
+        }
+        return try {
+            attributes(sidecar) != null
+        } finally {
+            try {
+                Files.deleteIfExists(probe)
+                if (attributes(sidecar)?.isRegularFile == true) Files.deleteIfExists(sidecar)
+            } catch (error: IOException) {
+                // 空のファイルが残るだけ
+            }
         }
     }
 
