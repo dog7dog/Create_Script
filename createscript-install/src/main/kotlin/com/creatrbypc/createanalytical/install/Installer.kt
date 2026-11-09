@@ -137,7 +137,8 @@ class Installer internal constructor(
                 unsafe("cannot lock ${layout.installLock}")
             } ?: throw InstallFailure(
                 InstallFailure.Kind.BUSY,
-                "another createscript install is running in this project (${InstallLayout.DIRECTORY}/${InstallLayout.INSTALL_LOCK} is locked); try again when it has finished",
+                // createscript run も、確かめる間だけ共有ロックを持つ（S8.2 L-8）
+                "another createscript install is running in this project, or createscript run is checking it (${InstallLayout.DIRECTORY}/${InstallLayout.INSTALL_LOCK} is locked); try again when it has finished",
             )
             try {
                 return body()

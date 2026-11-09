@@ -1,7 +1,9 @@
 package com.creatrbypc.createanalytical.cli
 
 import com.creatrbypc.createanalytical.install.InstallFailure
+import com.creatrbypc.createanalytical.install.InstallLayout
 import com.creatrbypc.createanalytical.install.InstalledPackages
+import com.creatrbypc.createanalytical.install.VerifiedPackage
 import com.creatrbypc.createanalytical.script.api.CreateScript
 import com.creatrbypc.createanalytical.script.api.RunOptions
 import com.creatrbypc.createanalytical.script.compiler.CompileOptions
@@ -17,6 +19,7 @@ import java.io.InputStream
 import java.io.PrintStream
 import java.nio.file.Files
 import java.nio.file.InvalidPathException
+import java.nio.file.LinkOption
 import java.nio.file.Path
 import java.nio.file.Paths
 
@@ -64,6 +67,9 @@ object CliLimits {
 
 // input は対話モード（引数なし）で読む標準入力
 class CreateScriptCli(private val out: PrintStream, private val err: PrintStream, private val input: InputStream = System.`in`) {
+    // run のプロジェクトモードで install.lock の共有ロックを試す方法（S8.2 L-8。テストでは、ロックを扱えない場合を渡す）
+    internal var runLocker: RunLock.Locker = RunLock.DEFAULT
+
     private class UsageError(message: String) : Exception(message)
 
     // 入力のファイルを読めない（code は終了コード）
@@ -228,14 +234,53 @@ class CreateScriptCli(private val out: PrintStream, private val err: PrintStream
 
     // createscript run [ディレクトリ]（S8.2 Phase 4）: createscript.json の entry を、確かめたインストール済みのパッケージとともに実行する。
     // 通信しない。マニフェスト・ロックファイル・インストール済みのパッケージのどれかが合わなければ、コンパイルせずに終了コード 65
+    // S8.2 L-8: 確かめる間（マニフェスト・ロックファイル・インストール済みのパッケージ）、install.lock の共有ロックを持つ（RunLock）。
+    // インストールが動いていれば 75。ジャーナルがあり、インストールが動いていないと分かるときだけ「中断した」（65）。ロックはコンパイルの前に外す
     private fun runProject(command: RunCommand, directory: String?): Int {
         if (command.projectRoot != null) throw UsageError("--project-root cannot be used when running a project; the modules are found from createscript.json")
-        val project = ProjectCommands(out, err).projectForRun(directory) ?: return ExitCode.INVALID_INPUT
-        val packages = try {
-            project.lock?.let { InstalledPackages.verify(project.root, it) } ?: emptyList()
-        } catch (failure: InstallFailure) {
-            err.println("createscript: ${failure.message}")
-            return if (failure.kind == InstallFailure.Kind.NO_PROJECT) ExitCode.NO_INPUT else ExitCode.INVALID_INPUT
+        val commands = ProjectCommands(out, err)
+        val root = commands.projectRoot(directory)
+        val guard = try {
+            RunLock.acquire(root, runLocker)
+        } catch (busy: RunLock.Busy) {
+            err.println("createscript: ${busy.message}")
+            return ExitCode.TEMPORARY_FAILURE
+        }
+        // 確かめた結果が合わなかったとき: ロックを持たずに確かめた（install.lock が無い・ロックを扱えない）なら、その間にインストールが始まったかもしれない
+        fun failed(code: Int): Int {
+            if (guard.state != RunLock.State.HELD && RunLock.looksBusy(root, runLocker)) {
+                err.println("createscript: createscript install started while the project was being checked; try again when it has finished")
+                return ExitCode.TEMPORARY_FAILURE
+            }
+            return code
+        }
+        val project: ProjectCommands.RunnableProject
+        val packages: List<VerifiedPackage>
+        guard.use {
+            if (Files.exists(InstallLayout.journal(root), LinkOption.NOFOLLOW_LINKS)) {
+                val shownJournal = if (root.toString().isEmpty() || root.toString() == ".") ".createscript/transaction.json" else InstallLayout.journal(root).toString()
+                err.println(
+                    "createscript: " + when (guard.state) {
+                        RunLock.State.NOT_CHECKED ->
+                            "an installation is running or was interrupted ($shownJournal exists, and createscript could not check whether createscript install is running: ${guard.reason}); " +
+                                "try again later, or run createscript install to finish or undo it"
+                        else -> "an installation was interrupted ($shownJournal exists); run createscript install to finish or undo it"
+                    },
+                )
+                return ExitCode.INVALID_INPUT
+            }
+            project = try {
+                commands.projectForRun(directory)
+            } catch (failure: ProjectCommands.Failure) {
+                err.println("createscript: ${failure.message}")
+                return failed(failure.code)
+            } ?: return failed(ExitCode.INVALID_INPUT)
+            packages = try {
+                project.lock?.let { InstalledPackages.verify(project.root, it) } ?: emptyList()
+            } catch (failure: InstallFailure) {
+                err.println("createscript: ${failure.message}")
+                return failed(if (failure.kind == InstallFailure.Kind.NO_PROJECT) ExitCode.NO_INPUT else ExitCode.INVALID_INPUT)
+            }
         }
         val entry = project.shownEntry
         val source = readSource(entry)

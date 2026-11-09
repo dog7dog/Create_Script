@@ -494,7 +494,7 @@ internal class ProjectCommands(
         return null
     }
 
-    private fun projectRoot(directoryArgument: String?): Path {
+    fun projectRoot(directoryArgument: String?): Path {
         val root = path(directoryArgument ?: ".")
         if (!Files.isDirectory(root)) throw Failure(ExitCode.NO_INPUT, "not a directory: $root")
         return root

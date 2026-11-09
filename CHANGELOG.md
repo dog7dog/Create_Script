@@ -88,6 +88,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   move and again before the manifest is written, each package must be where it was moved (same `fileKey`), or the
   installation is not completed and is undone without touching anything behind a symbolic link. A move redirected
   by a symbolic link that replaces a directory at that moment cannot be prevented and is documented.
+- `createscript run [directory]` holds a shared lock on `.createscript/install.lock` while it checks the project
+  (released before compiling; the file is only opened for reading and never created): while an installation is
+  running it stops with exit code 75 instead of reporting an interrupted installation, which it reports (65) only
+  when no installation is running. Where the lock cannot be tried, a journal stops it with a message that says so.
 - `createscript-install`: downloading package archives from GitHub Releases with the JDK HTTP client (HTTPS to fixed
   GitHub hosts only, checked redirects, the token only for `api.github.com`, size and time limits, retries and rate
   limits), SHA-256 checks against the lock file and GitHub's asset digest, and a cache keyed by SHA-256 that is
