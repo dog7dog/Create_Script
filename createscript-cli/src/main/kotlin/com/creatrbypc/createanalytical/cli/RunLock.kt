@@ -26,9 +26,17 @@ internal class RunLock private constructor(private val channel: FileChannel?, pr
 
     class Busy(message: String) : Exception(message)
 
-    // 共有ロックを試す（テストでは、ロックを扱えない場合を渡す）
+    // 共有ロックを試す（テストでは、ロックを扱えない場合を渡す）。position・size は install.lock の範囲（gate・data。S8.2 L-8）
     fun interface Locker {
-        fun tryShared(channel: FileChannel): FileLock?
+        fun tryShared(channel: FileChannel, position: Long, size: Long): FileLock?
+    }
+
+    // 待つ時間（S8.2 L-8）。install が動いている間は、上限まで待ってから 75。待ち始めて notifyAfterMillis たったら一度知らせる
+    class Wait(val timeoutMillis: Long, val pollMillis: Long, val notifyAfterMillis: Long) {
+        companion object {
+            val RUN = Wait(10_000, 20, 1_000)
+            val NONE = Wait(0, 0, 0)
+        }
     }
 
     override fun close() {
@@ -45,13 +53,15 @@ internal class RunLock private constructor(private val channel: FileChannel?, pr
     }
 
     companion object {
-        val DEFAULT = Locker { channel -> channel.tryLock(0, Long.MAX_VALUE, true) }
+        val DEFAULT = Locker { channel, position, size -> channel.tryLock(position, size, true) }
 
         private const val SHOWN = "${InstallLayout.DIRECTORY}/${InstallLayout.INSTALL_LOCK}"
 
-        fun busyMessage() = "createscript install is running in this project ($SHOWN is locked); try again when it has finished"
+        fun busyMessage(wait: Wait) = "createscript install is running in this project ($SHOWN is locked)" +
+            (if (wait.timeoutMillis > 0) " and did not finish within ${wait.timeoutMillis / 1000} seconds" else "") + "; try again when it has finished"
 
-        fun acquire(root: Path, locker: Locker = DEFAULT): RunLock {
+        // gate（共有）→ data（共有）の順に取り、gate はすぐ外す（S8.2 L-8: install が gate を持って待っている間は、新しい run は入らずに待つ）
+        fun acquire(root: Path, locker: Locker = DEFAULT, wait: Wait = Wait.RUN, onWait: (String) -> Unit = {}): RunLock {
             val path = root.resolve(InstallLayout.DIRECTORY).resolve(InstallLayout.INSTALL_LOCK)
             val attributes = try {
                 Files.readAttributes(path, BasicFileAttributes::class.java, LinkOption.NOFOLLOW_LINKS)
@@ -70,28 +80,55 @@ internal class RunLock private constructor(private val channel: FileChannel?, pr
             } catch (error: IOException) {
                 return RunLock(null, null, State.NOT_CHECKED, "cannot open $SHOWN for reading (${error.javaClass.simpleName})")
             }
-            val lock = try {
-                locker.tryShared(channel)
-            } catch (error: OverlappingFileLockException) {
-                channel.close()
-                throw Busy(busyMessage())
-            } catch (error: IOException) {
-                channel.close()
-                return RunLock(null, null, State.NOT_CHECKED, "the file system did not lock $SHOWN (${error.message ?: error.javaClass.simpleName})")
-            } catch (error: UnsupportedOperationException) {
-                channel.close()
-                return RunLock(null, null, State.NOT_CHECKED, "the file system does not support locks")
+            val deadline = System.nanoTime() + wait.timeoutMillis * 1_000_000
+            val notifyAt = System.nanoTime() + wait.notifyAfterMillis * 1_000_000
+            var notified = false
+            while (true) {
+                // 取れなければ null（ほかのプロセスか、このプロセスが持っている）。ロックを扱えなければ例外
+                fun take(position: Long, size: Long): FileLock? = try {
+                    locker.tryShared(channel, position, size)
+                } catch (error: OverlappingFileLockException) {
+                    null
+                }
+                val data = try {
+                    val gate = take(InstallLayout.LOCK_GATE_POSITION, InstallLayout.LOCK_GATE_SIZE)
+                    if (gate == null) {
+                        null
+                    } else {
+                        try {
+                            take(InstallLayout.LOCK_DATA_POSITION, InstallLayout.LOCK_DATA_SIZE)
+                        } finally {
+                            try {
+                                gate.release()
+                            } catch (error: IOException) {
+                                // data を持っている間は、gate を外せなくても閉じるときに外れる
+                            }
+                        }
+                    }
+                } catch (error: IOException) {
+                    channel.close()
+                    return RunLock(null, null, State.NOT_CHECKED, "the file system did not lock $SHOWN (${error.message ?: error.javaClass.simpleName})")
+                } catch (error: UnsupportedOperationException) {
+                    channel.close()
+                    return RunLock(null, null, State.NOT_CHECKED, "the file system does not support locks")
+                }
+                if (data != null) return RunLock(channel, data, State.HELD, null)
+                val now = System.nanoTime()
+                if (now >= deadline) {
+                    channel.close()
+                    throw Busy(busyMessage(wait))
+                }
+                if (!notified && now >= notifyAt) {
+                    notified = true
+                    onWait("waiting for createscript install to finish in this project (up to ${wait.timeoutMillis / 1000} seconds)")
+                }
+                Thread.sleep(wait.pollMillis.coerceAtLeast(1))
             }
-            if (lock == null) {
-                channel.close()
-                throw Busy(busyMessage())
-            }
-            return RunLock(channel, lock, State.HELD, null)
         }
 
         // 今、インストールが動いているか（ロックを試してすぐに外す。分からなければ false）
         fun looksBusy(root: Path, locker: Locker = DEFAULT): Boolean = try {
-            acquire(root, locker).close()
+            acquire(root, locker, Wait.NONE).close()
             false
         } catch (busy: Busy) {
             true

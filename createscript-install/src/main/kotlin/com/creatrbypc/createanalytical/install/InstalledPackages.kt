@@ -46,16 +46,28 @@ object InstalledPackages {
         if (SafeIo.exists(layout.journal)) invalid("an installation was interrupted (${InstallLayout.DIRECTORY}/${InstallLayout.JOURNAL} exists); run createscript install to finish or undo it")
         if (lock.packages.isEmpty()) return emptyList()
         // ほかのユーザーが、プロジェクトのディレクトリや .createscript を書き換えられないこと（S8.2 L-5 の案 C。install と同じ規則）
-        val permissions = DirectoryPermissions(PermissionReader.DEFAULT, DirectoryPermissions.currentUser())
+        val permissions = DirectoryPermissions(PermissionReader.DEFAULT, DirectoryPermissions.currentUser(), realRoot)
         (permissions.ancestorsProblem(realRoot) ?: permissions.treeProblem(layout.state))?.let { invalid("$it. The packages were not used") }
         fun notInstalled(what: String): Nothing = invalid("$what is not installed; run createscript install")
-        if (!SafeIo.directory(layout.state, create = false)) notInstalled(lock.packages.first().let { "${it.name} ${it.version}" })
-        if (!SafeIo.directory(layout.packages, create = false)) notInstalled(lock.packages.first().let { "${it.name} ${it.version}" })
+        // 置き場所のディレクトリ（S8.2 N-4: run の言葉と、プロジェクトからの相対パスで知らせる）。無ければ false
+        fun directory(path: Path): Boolean {
+            val shown = layout.shown(path)
+            val attributes = try {
+                SafeIo.attributes(path)
+            } catch (failure: InstallFailure) {
+                invalid("$shown cannot be read, so the packages were not used")
+            } ?: return false
+            if (attributes.isSymbolicLink) invalid("$shown is a symbolic link; createscript run does not use packages through symbolic links. Remove the link and run createscript install")
+            if (!attributes.isDirectory) invalid("$shown is not a directory, so the packages were not used; remove it and run createscript install")
+            return true
+        }
+        if (!directory(layout.state)) notInstalled(lock.packages.first().let { "${it.name} ${it.version}" })
+        if (!directory(layout.packages)) notInstalled(lock.packages.first().let { "${it.name} ${it.version}" })
         val owner = Owner.of(layout.state)
         val byName = lock.packages.associateBy { it.name }
         return lock.packages.map { entry ->
             val label = "${entry.name} ${entry.version}"
-            if (!SafeIo.directory(layout.packages.resolve(entry.name), create = false)) notInstalled(label)
+            if (!directory(layout.packages.resolve(entry.name))) notInstalled(label)
             val directory = layout.packageDirectory(entry.name, entry.version)
             val shown = realRoot.relativize(directory).toString()
             val state = when (val inspected = PackageDirectories.inspect(directory, owner, keepContents = true)) {

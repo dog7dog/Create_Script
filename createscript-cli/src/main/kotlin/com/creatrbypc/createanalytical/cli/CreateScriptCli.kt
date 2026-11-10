@@ -70,6 +70,9 @@ class CreateScriptCli(private val out: PrintStream, private val err: PrintStream
     // run のプロジェクトモードで install.lock の共有ロックを試す方法（S8.2 L-8。テストでは、ロックを扱えない場合を渡す）
     internal var runLocker: RunLock.Locker = RunLock.DEFAULT
 
+    // install が動いているときに run が待つ時間（S8.2 L-8。テストでは短くする）
+    internal var runLockWait: RunLock.Wait = RunLock.Wait.RUN
+
     private class UsageError(message: String) : Exception(message)
 
     // 入力のファイルを読めない（code は終了コード）
@@ -241,7 +244,7 @@ class CreateScriptCli(private val out: PrintStream, private val err: PrintStream
         val commands = ProjectCommands(out, err)
         val root = commands.projectRoot(directory)
         val guard = try {
-            RunLock.acquire(root, runLocker)
+            RunLock.acquire(root, runLocker, runLockWait) { err.println("createscript: $it") }
         } catch (busy: RunLock.Busy) {
             err.println("createscript: ${busy.message}")
             return ExitCode.TEMPORARY_FAILURE

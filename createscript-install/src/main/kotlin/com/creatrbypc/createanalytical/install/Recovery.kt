@@ -372,8 +372,8 @@ internal class Recovery(
         // 置いたパッケージ（packages/<name> とパッケージのディレクトリの fileKey）。マニフェストを書き換える前に、もう一度すべてを確かめる
         val placed = ArrayList<Triple<JournalPackage, Any?, Any?>>()
         for (p in journal.packages) {
-            SafeIo.directory(layout.packages, create = true)
-            SafeIo.directory(layout.packages.resolve(p.name), create = true)
+            SafeIo.directory(layout.packages, create = true, layout.shown(layout.packages))
+            SafeIo.directory(layout.packages.resolve(p.name), create = true, layout.shown(layout.packages.resolve(p.name)))
             val target = layout.packageDirectory(p.name, p.version)
             requireReal(target.parent, "${p.name} ${p.version} was not moved")
             when (val state = PackageDirectories.inspect(target, owner)) {

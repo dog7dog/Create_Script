@@ -69,14 +69,16 @@ $ createscript run
   also stops it.
 - While it checks the project, `run` holds a shared lock on `.createscript/install.lock` (opened for reading
   only; it is never created). `createscript install` holds that file locked for the whole installation, so:
-  when an installation is running, `run` stops with exit code 75 and asks you to try again; only when no
-  installation is running and `.createscript/transaction.json` exists does it report an interrupted installation
-  (exit code 65). The lock is released before the program is compiled and run, so `install` can start while a
+  when an installation is running, `run` waits for it (saying so after a second) for up to 10 seconds, then
+  stops with exit code 75 and asks you to try again; only when no installation is running and
+  `.createscript/transaction.json` exists does it report an interrupted installation (exit code 65). The lock is released before the program is compiled and run, so `install` can start while a
   program runs. Without `install.lock` (a project that was never installed into, or a copy without it), `run`
   checks as before. Where the lock cannot be tried (the file cannot be read, or the file system does not support
   locks), `run` does not assume that no installation is running: with a journal it stops with exit code 65 and
   says that it cannot tell a running from an interrupted installation; without one it checks as before (only the
-  checked bytes are compiled). While `run` checks, `install` may stop with exit code 75; try it again.
+  checked bytes are compiled). `install` waits for runs that are checking and for another installation for up to
+  30 seconds (exit code 75 after that). Once an installation is waiting, new runs wait behind it, so runs that
+  start again and again cannot keep it out.
 - It uses no network and no cache, and writes no files. The sources that were checked are the ones compiled.
 - Local modules are found in the directory of the entry file. Which modules can be imported is described in
   [Modules from packages](language.md#modules-from-packages).
@@ -143,7 +145,7 @@ In development (not in v0.1.0-alpha). See [Project files](packages.md) for the f
 | 66 | `createscript.json` or the directory does not exist, or a file cannot be read |
 | 69 | `install`: the network is unavailable, or a package is not in the cache with `--offline` |
 | 73 | `init` cannot create the files (one exists already, or writing failed); `install` finds files in an unexpected state (symbolic links, changed files, an interrupted installation that cannot be finished or undone) |
-| 75 | `install`: another installation is running in the project, or `run` is checking it; `run` (project mode): an installation is running in the project |
+| 75 | `install`: another installation is running in the project, or `run` is checking it, and it did not finish within 30 seconds; `run` (project mode): an installation is running in the project and did not finish within 10 seconds |
 
 ## Interactive mode (REPL)
 

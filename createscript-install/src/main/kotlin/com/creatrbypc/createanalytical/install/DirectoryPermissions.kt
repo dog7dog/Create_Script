@@ -46,7 +46,8 @@ internal fun interface PermissionReader {
 // - グループに書き込みの権限があるものは、グループにほかのユーザーがいるかを確かめられないので、書き込めるものとみなす
 // - 所有者・権限を読めない（POSIX の属性が無いファイルシステム・Windows など）・今のユーザーが分からない・数が多すぎる: 確かめられないものとして扱う（呼ぶ側が拒否する）
 // 限界: ACL（macOS の chmod +a など）は、Java 21 の標準 API では読めないので確かめない（docs/packages.md）。権限を直すことはしない（利用者が判断する）
-internal class DirectoryPermissions(private val reader: PermissionReader, private val user: String?) {
+// root は表示のためのプロジェクトのルート（中のディレクトリは相対パスで示す。S8.2 N-4）
+internal class DirectoryPermissions(private val reader: PermissionReader, private val user: String?, private val root: Path? = null) {
     companion object {
         const val MAX_DIRECTORIES = 4096
         private const val OTHERS_WRITE = 0b000_010_010
@@ -67,15 +68,20 @@ internal class DirectoryPermissions(private val reader: PermissionReader, privat
 
     private fun trusted(owner: String) = owner == user || owner == "root"
 
+    private fun inside(path: Path) = root != null && path != root && path.startsWith(root)
+
+    private fun shown(path: Path): String = if (inside(path)) root!!.relativize(path).toString() else path.toString()
+
     private fun unconfirmed(path: Path) =
-        "the owner and permissions of $path cannot be read, so createscript cannot confirm that no other user can change it (file systems without POSIX permissions, such as on Windows, are not supported for packages yet)"
+        "the owner and permissions of ${shown(path)} cannot be read, so createscript cannot confirm that no other user can change it (file systems without POSIX permissions, such as on Windows, are not supported for packages yet)"
 
     private fun writable(path: Path, mode: Int) =
-        "$path can be changed by other users (permissions ${permissions(mode)}); another user could replace directories in it while packages are installed or checked. " +
-            "If no other user should change it, remove their write permission yourself (for example: chmod go-w '$path'), or move the project to a directory that only you can change"
+        "${shown(path)} can be changed by other users (permissions ${permissions(mode)}); another user could replace directories in it while packages are installed or checked. " +
+            "If no other user should change it, remove their write permission yourself (for example" + (if (inside(path)) ", in the project directory" else "") +
+            ": chmod go-w '${shown(path)}'), or move the project to a directory that only you can change"
 
     private fun foreign(path: Path, owner: String) =
-        "$path belongs to the user $owner, who could replace directories in it; move the project to a directory of your own"
+        "${shown(path)} belongs to the user $owner, who could replace directories in it; move the project to a directory of your own"
 
     // プロジェクトのルート（実パス）と、その上のディレクトリ。問題があれば理由
     fun ancestorsProblem(root: Path): String? {
@@ -88,7 +94,7 @@ internal class DirectoryPermissions(private val reader: PermissionReader, privat
         }
         for ((index, directory) in chain.withIndex()) {
             val attributes = reader.read(directory) ?: return unconfirmed(directory)
-            if (attributes.symbolicLink || !attributes.directory) return "$directory is not a directory (createscript checks the real path of the project)"
+            if (attributes.symbolicLink || !attributes.directory) return "${shown(directory)} is not a directory (createscript checks the real path of the project)"
             if (!trusted(attributes.owner)) return foreign(directory, attributes.owner)
             if (attributes.mode and OTHERS_WRITE == 0) continue
             // 書き込めるディレクトリでも、sticky ビットがあり、次（ルートなら .createscript）がこのユーザーか root のものなら、ほかのユーザーは差し替えられない

@@ -93,7 +93,8 @@ class DirectoryPermissionTest {
         chmod("775", numbersDir)
         val before = snapshot(root)
         val message = refused(root)
-        assertTrue(message.contains("${numbersDir.toRealPath()} can be changed by other users (permissions rwxrwxr-x)"), message)
+        assertTrue(message.contains(".createscript/packages/numbers can be changed by other users (permissions rwxrwxr-x)") && message.contains("in the project directory: chmod go-w '.createscript/packages/numbers'"), message)
+        assertFalse(message.contains(root.toRealPath().toString() + "/.createscript"), message)
         assertEquals(0b111_111_101, mode(numbersDir))
         assertEquals(before, snapshot(root))
         // run の前の確認も、同じ規則で使わない

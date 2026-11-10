@@ -495,6 +495,12 @@ $ createscript install --offline    # the same without the network (from the cac
 ### Changing several files safely
 
 1. Hold `.createscript/install.lock` (`FileChannel.tryLock`), so that only one installation runs in a project.
+   The file has two locked ranges: a gate (byte 0) and the data (the rest). `install` takes the gate
+   exclusively and then the data exclusively; `run` takes the gate shared, then the data shared, and lets the gate
+   go at once. While an installation waits with the gate, new runs cannot start their check, so a stream of runs
+   cannot keep it out; both take the gate first, so they never wait for each other in a circle. `install` waits up
+   to 30 seconds and `run` up to 10 (then exit code 75); the lock is tried again every 20 milliseconds, without
+   an order among several waiting programs.
 2. Read the project files and download and check every package. Up to here nothing in the project changes, so a
    network or check failure leaves everything as it was.
 3. Create a new `.createscript/txn-<id>/` and write in it, first, `journal.tmp`: the complete journal (state

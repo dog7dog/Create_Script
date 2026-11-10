@@ -56,6 +56,9 @@ internal class Layout(val root: Path) {
     fun packageDirectory(name: String, version: String): Path = packages.resolve(name).resolve(version)
 
     fun transaction(id: String): Path = state.resolve(InstallLayout.TRANSACTION_PREFIX + id)
+
+    // 利用者に示す名前（S8.2 N-4）: プロジェクトの中はルートからの相対パス。ルートそのものと外は、そのままのパス
+    fun shown(path: Path): String = if (path != root && path.startsWith(root)) root.relativize(path).toString() else path.toString()
 }
 
 // 名前（CLI の manifest check・lock check も、ジャーナルの有無を確かめるために使う）
@@ -66,6 +69,15 @@ object InstallLayout {
     const val PACKAGES = "packages"
     const val TRANSACTION_PREFIX = "txn-"
     const val MARKER = ".createscript-package.json"
+
+    // install.lock の 2 つの範囲（S8.2 L-8: install を優先する読み書きのロック）。
+    // - gate（0 バイト目）: install は排他で取ってから data を待つ（待っている間、新しい run は入れない）。run は共有で取り、data を取ったらすぐ外す
+    // - data（1 バイト目から最後まで）: install は排他、run は共有で、確かめる間だけ持つ
+    // どちらも gate → data の順に取るので、互いに待ち合って止まることは無い
+    const val LOCK_GATE_POSITION = 0L
+    const val LOCK_GATE_SIZE = 1L
+    const val LOCK_DATA_POSITION = 1L
+    const val LOCK_DATA_SIZE = Long.MAX_VALUE - 1
 
     // ジャーナルのパス（プロジェクトのルートから）
     fun journal(root: Path): Path = root.resolve(DIRECTORY).resolve(JOURNAL)
@@ -218,21 +230,21 @@ internal object SafeIo {
     }
 
     // ディレクトリ（リンクでないこと）。無ければ create のときだけ作る。作った・あったなら true
-    fun directory(path: Path, create: Boolean): Boolean {
+    fun directory(path: Path, create: Boolean, shown: String = path.toString()): Boolean {
         val attributes = attributes(path)
         if (attributes == null) {
             if (!create) return false
             try {
                 createDirectory(path)
             } catch (error: FileAlreadyExistsException) {
-                return directory(path, false)
+                return directory(path, false, shown)
             } catch (error: IOException) {
-                unsafe("cannot create the directory $path")
+                unsafe("cannot create the directory $shown")
             }
             return true
         }
-        if (attributes.isSymbolicLink) unsafe("$path is a symbolic link; install does not write through symbolic links")
-        if (!attributes.isDirectory) unsafe("$path is not a directory")
+        if (attributes.isSymbolicLink) unsafe("$shown is a symbolic link; createscript install does not write through symbolic links. Remove the link (it is not followed) and run createscript install again")
+        if (!attributes.isDirectory) unsafe("$shown is not a directory; remove it and run createscript install again")
         return true
     }
 

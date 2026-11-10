@@ -38,8 +38,9 @@ class InstallTest {
         cache = temp.resolve("cache")
     }
 
+    // install.lock を待つ時間は、テストでは 1 秒（S8.2 L-8）
     private fun installer(dir: Path = root, hooks: InstallHooks = InstallHooks.NONE, limits: InstallLimits = InstallLimits(), cacheDir: Path = cache) =
-        Installer(dir, PackageFetcher(store, ArchiveCache(cacheDir)), limits, hooks)
+        Installer(dir, PackageFetcher(store, ArchiveCache(cacheDir)), limits, hooks, DirectoryKeys.FILE_KEY, InstallFileSystem.DEFAULT, LockWait(1_000, 10, 200))
 
     private fun publishBasic() {
         store.publish(numbers, "3.0.0", Packages.library("numbers", "3.0.0"))

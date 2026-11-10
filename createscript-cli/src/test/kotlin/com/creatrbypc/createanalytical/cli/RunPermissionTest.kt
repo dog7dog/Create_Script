@@ -47,7 +47,7 @@ class RunPermissionTest {
         val (code, out, err) = cli("run", root.toString())
         assertEquals(ExitCode.INVALID_INPUT, code, err)
         assertEquals("", out)
-        assertTrue(err.contains("${packages.toRealPath()} can be changed by other users (permissions rwxrwxrwx)") && err.contains("The packages were not used"), err)
+        assertTrue(err.contains("createscript: .createscript/packages can be changed by other users (permissions rwxrwxrwx)") && err.contains("The packages were not used"), err)
         assertEquals(0b111_111_111, mode(packages), "the permissions were not changed")
         Files.setPosixFilePermissions(packages, PosixFilePermissions.fromString("rwxr-xr-x"))
         assertEquals("1\n", cli("run", root.toString()).second)

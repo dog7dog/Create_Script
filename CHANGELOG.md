@@ -98,6 +98,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   that do not match the marker or no longer make its archive, symbolic links, unknown names), for example one
   edited after an interrupted installation was undone; it does not remove, repair or follow them. Usable old
   versions are not reported.
+- `install.lock` has a gate and a data range: `install` takes the gate first, so runs that start again and again no
+  longer keep it out, and `install` (up to 30 seconds) and `run` (up to 10 seconds) wait for each other, saying so
+  after a second, before they stop with exit code 75. Messages of `run` and `install` about symbolic links and
+  directories in `.createscript` name them relative to the project and say what to do.
 - Names reserved on Windows (`CON`, `PRN`, `AUX`, `NUL`, `COM0`–`COM9`, `LPT0`–`LPT9`, in any case and with any
   extension) are rejected as package names, module names, entry paths and module files in package archives
   (`CS_PKG_RESERVED_NAME`, or the reason in `CS_PKG_INVALID_PATH` and `CS_PKG_ARCHIVE_INVALID_PATH`), by

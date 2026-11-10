@@ -79,7 +79,7 @@ internal class InstallCommands(
         }
         val (fetcher, closeable) = fetcher()
         try {
-            val result = Installer(root, fetcher).install(spec, offline)
+            val result = Installer(root, fetcher) { err.println("createscript: $it") }.install(spec, offline)
             result.recovery?.let { out.println("Recovered: $it") }
             for (p in result.packages) {
                 out.println((if (p.installed) "Installed" else "Already installed") + " ${p.name} ${p.version} from ${p.source}" + if (p.installed) " -> ${p.directory}" else "")

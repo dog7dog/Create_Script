@@ -15,6 +15,7 @@ import com.creatrbypc.createanalytical.project.PackageArchives
 import com.creatrbypc.createanalytical.project.ProjectRules
 import java.io.IOException
 import java.nio.channels.FileChannel
+import java.nio.channels.FileLock
 import java.nio.channels.OverlappingFileLockException
 import java.nio.file.FileAlreadyExistsException
 import java.nio.file.LinkOption
@@ -60,6 +61,13 @@ class InstallResult(
     val warnings: List<String>,
 )
 
+// install.lock を待つ時間（S8.2 L-8）。待ち始めて notifyAfterMillis たったら、onWait で一度知らせる
+internal class LockWait(val timeoutMillis: Long, val pollMillis: Long, val notifyAfterMillis: Long) {
+    companion object {
+        val INSTALL = LockWait(30_000, 20, 1_000)
+    }
+}
+
 // 処理の区切り（テストで、中断・ほかのプロセスによる差し替えを起こすために使う）
 internal fun interface InstallHooks {
     fun reached(step: String)
@@ -87,8 +95,14 @@ class Installer internal constructor(
     private val hooks: InstallHooks,
     private val keys: DirectoryKeys = DirectoryKeys.FILE_KEY,
     private val fileSystem: InstallFileSystem = InstallFileSystem.DEFAULT,
+    private val lockWait: LockWait = LockWait.INSTALL,
+    private val onWait: (String) -> Unit = {},
 ) {
     constructor(root: Path, fetcher: PackageFetcher) : this(root, fetcher, InstallLimits(), InstallHooks.NONE)
+
+    // onWait: ほかの install・run が終わるのを待ち始めたとき（1 秒たっても取れないとき）に一度呼ぶ（CLI が知らせる。S8.2 L-8）
+    constructor(root: Path, fetcher: PackageFetcher, onWait: (String) -> Unit) :
+        this(root, fetcher, InstallLimits(), InstallHooks.NONE, DirectoryKeys.FILE_KEY, InstallFileSystem.DEFAULT, LockWait.INSTALL, onWait)
 
     private fun unsafe(message: String): Nothing = throw InstallFailure(InstallFailure.Kind.UNSAFE, message)
 
@@ -104,13 +118,13 @@ class Installer internal constructor(
         val layout = Layout(realRoot)
         if (!SafeIo.exists(layout.manifest)) throw InstallFailure(InstallFailure.Kind.NO_PROJECT, "${Manifests.FILE_NAME} not found in $root (create one with createscript init)")
         // ほかのユーザーが、プロジェクトのディレクトリや .createscript を書き換えられないこと（S8.2 L-5 の案 C）。何かを作る前に確かめる。権限は直さない
-        val permissions = DirectoryPermissions(fileSystem.permissions, fileSystem.currentUser())
+        val permissions = DirectoryPermissions(fileSystem.permissions, fileSystem.currentUser(), layout.root)
         permissions.ancestorsProblem(layout.root)?.let { unsafe("$it. Nothing was changed") }
-        SafeIo.directory(layout.state, create = true)
+        SafeIo.directory(layout.state, create = true, layout.shown(layout.state))
         permissions.treeProblem(layout.state)?.let { unsafe("$it. Nothing was changed") }
         return withInstallLock(layout) {
             val owner = Owner.probe(layout.state)
-            if (!owner.owns(layout.state)) unsafe("${layout.state} belongs to another user")
+            if (!owner.owns(layout.state)) unsafe("${InstallLayout.DIRECTORY} belongs to another user")
             // 新しいファイルの隣に ._ のファイルができるファイルシステム（macOS の FAT・exFAT など）では、置いたパッケージの中身が印と一致しなくなる。
             // 検査を弱めずに、何も変える前に止まる（S8.2 L-6）
             if (fileSystem.addsSidecarFiles(layout.state)) {
@@ -124,34 +138,63 @@ class Installer internal constructor(
         }
     }
 
+    private fun release(lock: FileLock) {
+        try {
+            lock.release()
+        } catch (error: IOException) {
+            // チャネルを閉じればロックも外れる
+        }
+    }
+
     private fun <T> withInstallLock(layout: Layout, body: () -> T): T {
         val attributes = SafeIo.attributes(layout.installLock)
-        if (attributes != null && (attributes.isSymbolicLink || !attributes.isRegularFile)) unsafe("${layout.installLock} is not a regular file")
+        if (attributes != null && (attributes.isSymbolicLink || !attributes.isRegularFile)) unsafe("${InstallLayout.DIRECTORY}/${InstallLayout.INSTALL_LOCK} is not a regular file; remove it if no installation is running")
         val channel = try {
             FileChannel.open(layout.installLock, setOf(StandardOpenOption.CREATE, StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS), *SafeIo.fileAttributes(layout.installLock))
         } catch (error: IOException) {
-            unsafe("cannot open ${layout.installLock}")
+            unsafe("cannot open ${InstallLayout.DIRECTORY}/${InstallLayout.INSTALL_LOCK}")
         }
         channel.use {
-            val lock = try {
-                channel.tryLock()
-            } catch (error: OverlappingFileLockException) {
-                null
-            } catch (error: IOException) {
-                unsafe("cannot lock ${layout.installLock}")
-            } ?: throw InstallFailure(
+            // gate を取ってから data を取る（S8.2 L-8）。gate を持って待つ間、新しい run は入れないので、run が続いても install は取れる。
+            // 待つ時間には上限がある（その間に取れなければ BUSY）
+            val deadline = System.nanoTime() + lockWait.timeoutMillis * 1_000_000
+            val notifyAt = System.nanoTime() + lockWait.notifyAfterMillis * 1_000_000
+            var notified = false
+            fun take(position: Long, size: Long): FileLock? {
+                while (true) {
+                    val lock = try {
+                        channel.tryLock(position, size, false)
+                    } catch (error: OverlappingFileLockException) {
+                        null
+                    } catch (error: IOException) {
+                        unsafe("cannot lock ${InstallLayout.DIRECTORY}/${InstallLayout.INSTALL_LOCK}")
+                    }
+                    if (lock != null) return lock
+                    val now = System.nanoTime()
+                    if (now >= deadline) return null
+                    if (!notified && now >= notifyAt) {
+                        notified = true
+                        onWait("waiting for another createscript install or run in this project to finish (up to ${lockWait.timeoutMillis / 1000} seconds)")
+                    }
+                    Thread.sleep(lockWait.pollMillis)
+                }
+            }
+            fun busy(): Nothing = throw InstallFailure(
                 InstallFailure.Kind.BUSY,
                 // createscript run も、確かめる間だけ共有ロックを持つ（S8.2 L-8）
-                "another createscript install is running in this project, or createscript run is checking it (${InstallLayout.DIRECTORY}/${InstallLayout.INSTALL_LOCK} is locked); try again when it has finished",
+                "another createscript install is running in this project, or createscript run is checking it (${InstallLayout.DIRECTORY}/${InstallLayout.INSTALL_LOCK} is locked), " +
+                    "and it did not finish within ${lockWait.timeoutMillis / 1000} seconds; try again when it has finished",
             )
+            val gate = take(InstallLayout.LOCK_GATE_POSITION, InstallLayout.LOCK_GATE_SIZE) ?: busy()
             try {
-                return body()
-            } finally {
+                val data = take(InstallLayout.LOCK_DATA_POSITION, InstallLayout.LOCK_DATA_SIZE) ?: busy()
                 try {
-                    lock.release()
-                } catch (error: IOException) {
-                    // チャネルを閉じればロックも外れる
+                    return body()
+                } finally {
+                    release(data)
                 }
+            } finally {
+                release(gate)
             }
         }
     }
@@ -231,10 +274,10 @@ class Installer internal constructor(
 
         // 置き場所の状態（既にあるものは、印と中身がこのパッケージと完全に同じで、中身から作り直したアーカイブが取得したものと同じときだけ使う。
         // 違えば触らずに止まる）
-        if (packages.isNotEmpty()) SafeIo.directory(layout.packages, create = false)
+        if (packages.isNotEmpty()) SafeIo.directory(layout.packages, create = false, layout.shown(layout.packages))
         val toCreate = ArrayList<ResolvedPackage>()
         for (p in packages) {
-            SafeIo.directory(layout.packages.resolve(p.name), create = false)
+            SafeIo.directory(layout.packages.resolve(p.name), create = false, layout.shown(layout.packages.resolve(p.name)))
             val directory = layout.packageDirectory(p.name, p.version)
             when (val state = PackageDirectories.inspect(directory, owner, keepContents = true)) {
                 PackageState.Absent -> toCreate.add(p)

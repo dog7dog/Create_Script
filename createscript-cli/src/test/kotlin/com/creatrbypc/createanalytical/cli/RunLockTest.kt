@@ -120,7 +120,10 @@ class RunLockTest {
         val out = ByteArrayOutputStream()
         val err = ByteArrayOutputStream()
         val code = PrintStream(out, true, Charsets.UTF_8).use { o ->
-            PrintStream(err, true, Charsets.UTF_8).use { e -> CreateScriptCli(o, e).also { it.runLocker = locker }.execute(listOf("run", root.toString())) }
+            PrintStream(err, true, Charsets.UTF_8).use { e ->
+                // install を待つ時間は、テストでは 1 秒（S8.2 L-8）
+                CreateScriptCli(o, e).also { it.runLocker = locker; it.runLockWait = RunLock.Wait(1_000, 10, 200) }.execute(listOf("run", root.toString()))
+            }
         }
         return Result(code, out.toString(Charsets.UTF_8), err.toString(Charsets.UTF_8))
     }
@@ -169,7 +172,11 @@ class RunLockTest {
             val before = state(app)
             val result = run()
             assertEquals(ExitCode.TEMPORARY_FAILURE, result.code, result.err)
-            assertEquals("createscript: createscript install is running in this project (.createscript/install.lock is locked); try again when it has finished\n", result.err)
+            assertEquals(
+                "createscript: waiting for createscript install to finish in this project (up to 1 seconds)\n" +
+                    "createscript: createscript install is running in this project (.createscript/install.lock is locked) and did not finish within 1 seconds; try again when it has finished\n",
+                result.err,
+            )
             assertEquals("", result.out)
             assertEquals(before, state(app))
             // ジャーナルがあっても（インストールの途中）、「中断した」とは言わない
@@ -272,7 +279,7 @@ class RunLockTest {
 
     @Test
     fun withoutSharedLocksRunIsNotTreatedAsSafe() {
-        val unsupported = RunLock.Locker { throw IOException("Operation not supported") }
+        val unsupported = RunLock.Locker { _, _, _ -> throw IOException("Operation not supported") }
         // ジャーナルが無ければ、これまでどおり確かめて実行する（確かめたバイト列だけを実行する）
         assertEquals("1\n", run(locker = unsupported).out)
         // ジャーナルがあれば、動いているか中断したか分からないとして止まる（「インストールは動いていない」とはみなさない）
@@ -287,7 +294,10 @@ class RunLockTest {
     @Test
     fun runReleasesTheLockAndWritesNothing() {
         var taken: FileLock? = null
-        val recording = RunLock.Locker { channel -> RunLock.DEFAULT.tryShared(channel).also { taken = it } }
+        // data の範囲の共有ロック（gate は取ってすぐ外す）
+        val recording = RunLock.Locker { channel, position, size ->
+            RunLock.DEFAULT.tryShared(channel, position, size).also { if (position == com.creatrbypc.createanalytical.install.InstallLayout.LOCK_DATA_POSITION) taken = it }
+        }
         val before = state(app)
         assertEquals("1\n", run(locker = recording).out)
         assertEquals(before, state(app))
