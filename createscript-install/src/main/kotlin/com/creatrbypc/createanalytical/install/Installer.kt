@@ -103,7 +103,11 @@ class Installer internal constructor(
         if (SafeIo.attributes(realRoot)?.isDirectory != true) throw InstallFailure(InstallFailure.Kind.NO_PROJECT, "not a directory: $root")
         val layout = Layout(realRoot)
         if (!SafeIo.exists(layout.manifest)) throw InstallFailure(InstallFailure.Kind.NO_PROJECT, "${Manifests.FILE_NAME} not found in $root (create one with createscript init)")
+        // ほかのユーザーが、プロジェクトのディレクトリや .createscript を書き換えられないこと（S8.2 L-5 の案 C）。何かを作る前に確かめる。権限は直さない
+        val permissions = DirectoryPermissions(fileSystem.permissions, fileSystem.currentUser())
+        permissions.ancestorsProblem(layout.root)?.let { unsafe("$it. Nothing was changed") }
         SafeIo.directory(layout.state, create = true)
+        permissions.treeProblem(layout.state)?.let { unsafe("$it. Nothing was changed") }
         return withInstallLock(layout) {
             val owner = Owner.probe(layout.state)
             if (!owner.owns(layout.state)) unsafe("${layout.state} belongs to another user")
@@ -124,7 +128,7 @@ class Installer internal constructor(
         val attributes = SafeIo.attributes(layout.installLock)
         if (attributes != null && (attributes.isSymbolicLink || !attributes.isRegularFile)) unsafe("${layout.installLock} is not a regular file")
         val channel = try {
-            FileChannel.open(layout.installLock, StandardOpenOption.CREATE, StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS)
+            FileChannel.open(layout.installLock, setOf(StandardOpenOption.CREATE, StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS), *SafeIo.fileAttributes(layout.installLock))
         } catch (error: IOException) {
             unsafe("cannot open ${layout.installLock}")
         }
@@ -282,7 +286,7 @@ class Installer internal constructor(
         val id = UUID.randomUUID().toString()
         val txn = layout.transaction(id)
         try {
-            java.nio.file.Files.createDirectory(txn)
+            SafeIo.createDirectory(txn)
         } catch (error: IOException) {
             unsafe("cannot create ${relative(layout, txn)}; nothing was changed")
         }
@@ -464,7 +468,7 @@ internal object PackageDirectories {
         val parent = staging.resolve(p.name)
         SafeIo.directory(parent, create = true)
         val directory = parent.resolve(p.version)
-        java.nio.file.Files.createDirectory(directory)
+        SafeIo.createDirectory(directory)
         SafeIo.createFile(directory.resolve(InstallLayout.MARKER), marker)
         afterMarker()
         for ((path, bytes) in p.files) {

@@ -12,6 +12,8 @@ import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.nio.file.StandardOpenOption
 import java.nio.file.attribute.BasicFileAttributes
+import java.nio.file.attribute.FileAttribute
+import java.nio.file.attribute.PosixFilePermissions
 import java.nio.file.attribute.UserPrincipal
 import java.util.UUID
 
@@ -132,6 +134,9 @@ internal class InstallFileSystem(
     val createLink: (target: Path, source: Path) -> Unit = { target, source -> Files.createLink(target, source) },
     val atomicMove: (source: Path, target: Path) -> Unit = { source, target -> Files.move(source, target, StandardCopyOption.ATOMIC_MOVE) },
     val addsSidecarFiles: (directory: Path) -> Boolean = SafeIo::addsSidecarFiles,
+    // ディレクトリの所有者と権限・今のユーザー（S8.2 L-5 の案 C）
+    val permissions: PermissionReader = PermissionReader.DEFAULT,
+    val currentUser: () -> String? = DirectoryPermissions::currentUser,
 ) {
     companion object {
         val DEFAULT = InstallFileSystem()
@@ -218,7 +223,7 @@ internal object SafeIo {
         if (attributes == null) {
             if (!create) return false
             try {
-                Files.createDirectory(path)
+                createDirectory(path)
             } catch (error: FileAlreadyExistsException) {
                 return directory(path, false)
             } catch (error: IOException) {
@@ -231,9 +236,26 @@ internal object SafeIo {
         return true
     }
 
+    // 作るディレクトリ・ファイルの権限（S8.2 L-5 の案 C: 所有者だけが書き込める。umask はさらに権限を減らすだけ）。POSIX でないファイルシステムでは付けない
+    private val DIRECTORY_PERMISSIONS = PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwxr-xr-x"))
+    private val FILE_PERMISSIONS = PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-r--r--"))
+
+    // 新しいディレクトリ（既にあれば FileAlreadyExistsException）
+    fun createDirectory(path: Path) {
+        try {
+            Files.createDirectory(path, DIRECTORY_PERMISSIONS)
+        } catch (error: UnsupportedOperationException) {
+            Files.createDirectory(path)
+        }
+    }
+
+    // ファイルを作るときの属性（POSIX でなければ無し）
+    fun fileAttributes(path: Path): Array<FileAttribute<*>> =
+        if ("posix" in path.fileSystem.supportedFileAttributeViews()) arrayOf(FILE_PERMISSIONS) else emptyArray()
+
     // 新しいファイル（既にあれば失敗）に書いて、ディスクに書き出す
     fun createFile(path: Path, bytes: ByteArray): Identity {
-        FileChannel.open(path, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS).use { channel ->
+        FileChannel.open(path, setOf(StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS), *fileAttributes(path)).use { channel ->
             val buffer = ByteBuffer.wrap(bytes)
             while (buffer.hasRemaining()) channel.write(buffer)
             channel.force(true)

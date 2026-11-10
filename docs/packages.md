@@ -644,6 +644,31 @@ Known limits: checks and renames are separate steps, so a program that changes a
 is not always noticed (Java names files by path); a file whose contents and size stay the same after a change
 cannot be told apart where the file system has no `fileKey`. Windows has not been tried.
 
+#### Directories that other users can change
+
+Before it changes anything, `createscript install` checks the owner and the permissions of the project root, of
+every directory above it up to `/`, and of `.createscript` and every directory below it; `createscript run` does
+the same before it uses installed packages. Links are not followed: the directories above the root are those of
+its real path, and links inside `.createscript` are left to the other checks. A directory is accepted when it
+belongs to you or to `root` and neither its group nor other users can write to it. A directory that others can
+write to is accepted only above the project, when it has the sticky bit (like `/tmp` and `/Users/Shared`) and the
+next directory on the way belongs to you or to `root`, because then nobody else can rename or remove it. A
+group-writable directory counts as writable by others, because the members of the group cannot be checked.
+Directories that no one else can enter (no `x` for the group and others) are not looked into further.
+
+When a directory fails the check, the command stops with exit code 73 (`install`) or 65 (`run`), changes
+nothing and names the directory and its permissions. It never changes permissions itself: remove the write
+permission of others if that is what you want (`chmod go-w <directory>`), or move the project. Directories and
+files that `install` creates get `rwxr-xr-x` and `rw-r--r--` (your umask can only remove more), so they pass.
+
+Limits: access control lists (macOS `chmod +a`) cannot be read with the standard Java 21 API, so a directory that
+an ACL makes writable for others is not found (macOS home directories carry a `deny delete` ACL by default, which
+is harmless). Where the owner and permissions cannot be read, as on file systems without POSIX permissions
+(Windows, for example), `install` and `run` with packages stop instead of guessing; installing packages on Windows
+is therefore not possible yet. Linux has the same rules but has not been tried. The check makes it impossible for
+other users to replace the directories, since only the owner and `root` can change their permissions; it does
+not stop programs that run as you, and it does not remove the race described below.
+
 Directories replaced by symbolic links during an installation: Java on macOS (JDK 21) has no way to move a file
 relative to a directory that is already open (`SecureDirectoryStream`, `openat` and `renameat` are not available),
 so every move names its target by path again. A program running as your user that replaces

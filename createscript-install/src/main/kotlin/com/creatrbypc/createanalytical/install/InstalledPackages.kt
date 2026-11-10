@@ -45,6 +45,9 @@ object InstalledPackages {
         val layout = Layout(realRoot)
         if (SafeIo.exists(layout.journal)) invalid("an installation was interrupted (${InstallLayout.DIRECTORY}/${InstallLayout.JOURNAL} exists); run createscript install to finish or undo it")
         if (lock.packages.isEmpty()) return emptyList()
+        // ほかのユーザーが、プロジェクトのディレクトリや .createscript を書き換えられないこと（S8.2 L-5 の案 C。install と同じ規則）
+        val permissions = DirectoryPermissions(PermissionReader.DEFAULT, DirectoryPermissions.currentUser())
+        (permissions.ancestorsProblem(realRoot) ?: permissions.treeProblem(layout.state))?.let { invalid("$it. The packages were not used") }
         fun notInstalled(what: String): Nothing = invalid("$what is not installed; run createscript install")
         if (!SafeIo.directory(layout.state, create = false)) notInstalled(lock.packages.first().let { "${it.name} ${it.version}" })
         if (!SafeIo.directory(layout.packages, create = false)) notInstalled(lock.packages.first().let { "${it.name} ${it.version}" })

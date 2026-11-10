@@ -103,6 +103,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   (`CS_PKG_RESERVED_NAME`, or the reason in `CS_PKG_INVALID_PATH` and `CS_PKG_ARCHIVE_INVALID_PATH`), by
   `init`, `pack` and `install`, and as local modules of `import` (`CS_MODULE_UNREADABLE`). Running a single file
   is unchanged.
+- `createscript install` and `createscript run` with packages refuse projects where another user can change the
+  project root, a directory above it (unless it is sticky and the next directory is yours) or a directory in
+  `.createscript`; the message names the directory and its permissions, and permissions are never changed.
+  Directories and files that `install` creates are `rwxr-xr-x` and `rw-r--r--`. ACLs are not checked, and file
+  systems without POSIX permissions are not supported for packages yet.
 - `createscript run [directory]` holds a shared lock on `.createscript/install.lock` while it checks the project
   (released before compiling; the file is only opened for reading and never created): while an installation is
   running it stops with exit code 75 instead of reporting an interrupted installation, which it reports (65) only
