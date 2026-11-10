@@ -103,6 +103,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   (`CS_PKG_RESERVED_NAME`, or the reason in `CS_PKG_INVALID_PATH` and `CS_PKG_ARCHIVE_INVALID_PATH`), by
   `init`, `pack` and `install`, and as local modules of `import` (`CS_MODULE_UNREADABLE`). Running a single file
   is unchanged.
+- Files of an installation are written under a temporary name (`.part-<inode>-<size>-<name>`) and renamed when
+  complete, so an installation that stopped while it was writing them leaves no half-written file under the real
+  name, and the next install removes the temporary file when it is still the file it created (same inode, not
+  larger than recorded, expected by the record); otherwise it is kept and reported.
 - `createscript install` and `createscript run` with packages refuse projects where another user can change the
   project root, a directory above it (unless it is sticky and the next directory is yours) or a directory in
   `.createscript`; the message names the directory and its permissions, and permissions are never changed.

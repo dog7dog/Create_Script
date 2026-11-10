@@ -558,9 +558,19 @@ When a step fails, the installation is undone at once. When the process stops (a
   name is `txn-` and a UUID, `journal.tmp` is a valid journal with that id, and every other file is one of the
   copies or prepared packages that the record names, with the recorded SHA-256 (files that were not written yet may
   be missing). Everything is checked before anything is removed. Anything else stays where it is and is reported
-  with the reason, for example a `journal.tmp` that was being written, a file that was changed or written only in
-  part, a file that `install` does not make, a symbolic link, or a directory without `journal.tmp` (what a finished
-  or undone installation leaves when it could not confirm and remove some files, or what an earlier version made).
+  with the reason, for example a file that was changed, a file that `install` does not make, a symbolic link, or a
+  directory without `journal.tmp` (what a finished or undone installation leaves when it could not confirm and
+  remove some files, or what an earlier version made).
+- **Files that were being written.** Every file in `txn-<id>/` (`journal.tmp` first) is written under a temporary
+  name and gets its own name only after it was written completely and flushed to disk, so a file with its own name
+  is never a part of one. The temporary name is first `.part-<UUID>` (still empty), then
+  `.part-<inode>-<size>-<name>`, which records the file itself (its inode) and how large it will be. A stopped
+  installation can leave one such file; the next install removes it with the rest only when it belongs to this
+  user, is a regular file (not a link), is still the file that `install` created (the same inode; an editor that
+  saves into a new file changes it), is not larger than recorded, and is for a name that the record expects and
+  that does not exist yet (an empty `.part-<UUID>` holds nothing and may go). Its contents cannot be checked,
+  because the file was never finished; a change made in place within the recorded size is not noticed. Any other
+  `.part-` file stays and is reported.
 - Every `createscript install` also looks at `.createscript/packages/<name>/<version>/` and reports each directory
   that cannot be used: files that do not match the marker (a source or the marker was changed, a file is missing
   or extra, the marker is damaged or missing), a marker that names another package or version, files that no

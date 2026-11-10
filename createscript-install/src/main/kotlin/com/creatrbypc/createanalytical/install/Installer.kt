@@ -303,13 +303,15 @@ class Installer internal constructor(
             val staged = create.map { JournalPackage(it.name, it.version, SafeIo.sha256Hex(markers.getValue(it.name))) }
             val journal = Journal(id, Journal.State.PREPARED, manifestOld.identity.sha256, SafeIo.sha256Hex(manifestNew), lockOld?.identity?.sha256, lockNew?.let(SafeIo::sha256Hex), staged, binding)
             val temporary = txn.resolve(Recovery.JOURNAL_TEMP)
-            SafeIo.createFile(temporary, journal.write())
+            // どのファイルも、書き終えてから最終の名前を付ける（S8.2 N-3: 途中で止まっても、最終の名前の書きかけは残らない）
+            val write = { path: Path, bytes: ByteArray -> SafeIo.writeNew(path, bytes) { step -> hooks.reached(step) }; Unit }
+            write(temporary, journal.write())
             hooks.reached("recorded")
-            SafeIo.createFile(txn.resolve(Recovery.MANIFEST_OLD), manifestOld.bytes)
-            SafeIo.createFile(txn.resolve(Recovery.MANIFEST_NEW), manifestNew)
-            lockOld?.let { SafeIo.createFile(txn.resolve(Recovery.LOCK_OLD), it.bytes) }
-            lockNew?.let { SafeIo.createFile(txn.resolve(Recovery.LOCK_NEW), it) }
-            for (p in create) PackageDirectories.stage(txn.resolve(Recovery.STAGING), p, markers.getValue(p.name)) { hooks.reached("staging:${p.name}") }
+            write(txn.resolve(Recovery.MANIFEST_OLD), manifestOld.bytes)
+            write(txn.resolve(Recovery.MANIFEST_NEW), manifestNew)
+            lockOld?.let { write(txn.resolve(Recovery.LOCK_OLD), it.bytes) }
+            lockNew?.let { write(txn.resolve(Recovery.LOCK_NEW), it) }
+            for (p in create) PackageDirectories.stage(txn.resolve(Recovery.STAGING), p, markers.getValue(p.name), { hooks.reached("staging:${p.name}") }, write)
             SafeIo.syncDirectory(txn)
             hooks.reached("staged")
             // 書き込んだ .createscript と作業用のディレクトリが、今も同じ実際のディレクトリであること（S8.2 L-5: 途中でリンクに差し替えられたなら、
@@ -463,13 +465,14 @@ internal object PackageDirectories {
 
     // 作業用のディレクトリ staging/<name>/<version>/ に、印を最初に書いてから展開する（S8.2 L-3: 途中で止まっても、置いたファイルを印と照合できる）。
     // afterMarker は、印を書いた後（テストの中断に使う）
-    fun stage(staging: Path, p: ResolvedPackage, marker: ByteArray, afterMarker: () -> Unit = {}) {
+    // write は、ファイルを書く手順（install は、書き終えてから最終の名前を付ける SafeIo.writeNew。S8.2 N-3）
+    fun stage(staging: Path, p: ResolvedPackage, marker: ByteArray, afterMarker: () -> Unit = {}, write: (Path, ByteArray) -> Unit = { path, bytes -> SafeIo.writeNew(path, bytes); Unit }) {
         SafeIo.directory(staging, create = true)
         val parent = staging.resolve(p.name)
         SafeIo.directory(parent, create = true)
         val directory = parent.resolve(p.version)
         SafeIo.createDirectory(directory)
-        SafeIo.createFile(directory.resolve(InstallLayout.MARKER), marker)
+        write(directory.resolve(InstallLayout.MARKER), marker)
         afterMarker()
         for ((path, bytes) in p.files) {
             val target = if (path.startsWith("$MODULES/")) {
@@ -478,7 +481,7 @@ internal object PackageDirectories {
             } else {
                 directory.resolve(path)
             }
-            SafeIo.createFile(target, bytes)
+            write(target, bytes)
         }
         SafeIo.syncDirectory(directory)
     }

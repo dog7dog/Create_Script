@@ -14,7 +14,11 @@ import java.nio.file.Path
 // - 空か、journal.tmp が正しいジャーナルで id がディレクトリの名前と同じ
 // - ほかのファイルは、決まった名前の写し（SHA-256 が journal.tmp と同じ）と staging/<name>/<version>/ だけ。staging の中は、
 //   journal.tmp の印の SHA-256 と同じ印と、印に書かれたファイル（SHA-256 が同じ。書く前に止まって足りないものはよい）だけ。印が無ければ空
-// 満たさないもの（記録が無い・壊れている・書き換えられた・書きかけ・リンク・知らないファイル）は、何も消さずに残し、理由を知らせる。
+// - 書きかけのファイル（S8.2 N-3: どのファイルも .part-… の名前で書き終えてから最終の名前を付けるので、最終の名前のファイルは必ず書き終えたもの）は、
+//   このユーザーの、リンクでない通常のファイルで、空の .part-<UUID>（名前を付ける前に止まったもの）か、.part-<inode>-<大きさ>-<最終の名前> のうち
+//   inode が名前と同じ（作ったファイルそのもの）・大きさが名前の大きさ以下・最終の名前が記録にあり、そのファイルはまだ無いものだけ。
+//   記録（journal.tmp）を書いている途中で止まったもの（journal.tmp が無く、journal.tmp の書きかけと空のものだけがある）も、同じ確認で片付ける
+// 満たさないもの（記録が無い・壊れている・書き換えられた・確かめられない書きかけ・リンク・知らないファイル）は、何も消さずに残し、理由を知らせる。
 // 取り消し・続行の片付けで消せなかったファイルが残ったもの（journal.tmp はもう無い）も、記録が無いので残す
 internal class Leftovers(private val layout: Layout, private val owner: Owner, private val limits: InstallLimits) {
     private class Plan {
@@ -93,6 +97,11 @@ internal class Leftovers(private val layout: Layout, private val owner: Owner, p
         val plan = Plan()
         val entries = SafeIo.list(txn, 64)
         if (entries.isEmpty()) return plan
+        // 記録を書いている途中で止まったもの: journal.tmp の書きかけと空のものだけ
+        if (Recovery.JOURNAL_TEMP !in entries && entries.all { it.startsWith(SafeIo.PART_PREFIX) }) {
+            for (entry in entries) plan.copies.add(part(txn, entry, "it", setOf(Recovery.JOURNAL_TEMP), entries))
+            return plan
+        }
         if (Recovery.JOURNAL_TEMP !in entries) {
             problem(
                 "it has no record of what it holds (${Recovery.JOURNAL_TEMP}); it may hold files that an earlier installation, finished or undone, " +
@@ -111,6 +120,11 @@ internal class Leftovers(private val layout: Layout, private val owner: Owner, p
                 val copy = file(path, entry, maxBytes)
                 if (copy.identity.sha256 != sha256) problem("$entry does not match the record in ${Recovery.JOURNAL_TEMP} (it was changed, or written only in part)")
                 plan.copies.add(path to sha256)
+            }
+            if (entry.startsWith(SafeIo.PART_PREFIX)) {
+                val expected = setOfNotNull(Recovery.MANIFEST_OLD, Recovery.MANIFEST_NEW, journal.lockOld?.let { Recovery.LOCK_OLD }, journal.lockNew?.let { Recovery.LOCK_NEW })
+                plan.copies.add(part(txn, entry, "it", expected, entries))
+                continue
             }
             when (entry) {
                 Recovery.JOURNAL_TEMP -> {}
@@ -148,8 +162,9 @@ internal class Leftovers(private val layout: Layout, private val owner: Owner, p
     private fun packageDirectory(dir: Path, label: String, p: JournalPackage, plan: Plan) {
         val names = SafeIo.list(dir, PackageArchives.MAX_ENTRIES + 2)
         if (InstallLayout.MARKER !in names) {
-            // 印を書く前に止まったもの（印は最初に書くので、ほかのファイルは無い）
-            if (names.isNotEmpty()) problem("$label has files but no ${InstallLayout.MARKER}")
+            // 印を書き終える前に止まったもの（印は最初に書くので、ほかのファイルは印の書きかけだけ）
+            if (names.any { !it.startsWith(SafeIo.PART_PREFIX) }) problem("$label has files but no ${InstallLayout.MARKER}")
+            for (name in names) plan.contents.add(part(dir, name, label, setOf(InstallLayout.MARKER), names))
             return
         }
         val markerFile = file(dir.resolve(InstallLayout.MARKER), "$label/${InstallLayout.MARKER}", Marker.MAX_BYTES)
@@ -164,15 +179,44 @@ internal class Leftovers(private val layout: Layout, private val owner: Owner, p
         for (name in names) {
             if (name == InstallLayout.MARKER) continue
             val path = dir.resolve(name)
+            if (name.startsWith(SafeIo.PART_PREFIX)) {
+                plan.contents.add(part(dir, name, label, marker.files.keys.filter { '/' !in it }.toSet(), names))
+                continue
+            }
             if (name == "modules" && marker.files.keys.any { it.startsWith("modules/") }) {
                 directory(path, "$label/modules")
-                for (inner in SafeIo.list(path, PackageArchives.MAX_ENTRIES + 1)) content(path.resolve(inner), "modules/$inner")
+                val inner = SafeIo.list(path, PackageArchives.MAX_ENTRIES + 1)
+                val expected = marker.files.keys.filter { it.startsWith("modules/") }.map { it.removePrefix("modules/") }.toSet()
+                for (file in inner) {
+                    if (file.startsWith(SafeIo.PART_PREFIX)) plan.contents.add(part(path, file, "$label/modules", expected, inner)) else content(path.resolve(file), "modules/$file")
+                }
                 plan.packageDirectories.add(path)
                 continue
             }
             content(path, name)
         }
         plan.markers.add(dir.resolve(InstallLayout.MARKER) to p.marker)
+    }
+
+    // 書きかけのファイル（S8.2 N-3）を確かめる。片付けてよければ、そのパスと今の中身の SHA-256（消す直前にも同じことを確かめる）
+    private fun part(dir: Path, entry: String, label: String, expected: Set<String>, names: Collection<String>): Pair<Path, String> {
+        val path = dir.resolve(entry)
+        val shown = "$label/$entry"
+        val attributes = SafeIo.attributes(path) ?: problem("$shown disappeared")
+        if (attributes.isSymbolicLink || !attributes.isRegularFile) problem("$shown is a symbolic link or not a regular file")
+        if (!owner.owns(path)) problem("$shown belongs to another user")
+        if (SafeIo.isCreatingPart(entry)) {
+            // 名前を付ける前に止まったもの（中身は無い）
+            if (attributes.size() != 0L) problem("$shown is not empty, so it is not a file that createscript was about to write")
+        } else {
+            val part = SafeIo.part(entry) ?: problem("$label has a file that createscript install does not make: $entry")
+            if (part.finalName !in expected) problem("$shown is for ${part.finalName}, which is not in its record")
+            if (part.finalName in names) problem("both $shown and ${part.finalName} exist")
+            if (SafeIo.inode(path) != part.inode) problem("$shown was replaced by another file (it is not the file that createscript was writing)")
+            if (attributes.size() > part.size) problem("$shown is larger than the file it was being written for (it was changed)")
+        }
+        if (attributes.size() > PackageArchives.MAX_TOTAL_BYTES) problem("$shown is too large")
+        return path to file(path, shown, PackageArchives.MAX_TOTAL_BYTES).identity.sha256
     }
 
     // ---- 削除（確かめたものだけ。消す直前にも、同じファイルであることを確かめる） ----
@@ -189,7 +233,7 @@ internal class Leftovers(private val layout: Layout, private val owner: Owner, p
         if (kept.isEmpty()) {
             for (dir in plan.packageDirectories.sortedByDescending { it.nameCount }) SafeIo.deleteEmptyDirectory(dir)?.let { kept += "${shown(dir)} ($it)" }
         }
-        if (kept.isEmpty()) for ((path, sha) in plan.copies) delete(path, sha, Lockfiles.MAX_BYTES.coerceAtLeast(Manifests.MAX_BYTES))
+        if (kept.isEmpty()) for ((path, sha) in plan.copies) delete(path, sha, PackageArchives.MAX_TOTAL_BYTES)
         if (kept.isEmpty()) plan.journal?.let { (path, sha) -> delete(path, sha, Journal.MAX_BYTES) }
         if (kept.isEmpty()) SafeIo.deleteEmptyDirectory(txn)?.let { kept += "${shown(txn)} ($it)" }
         SafeIo.syncDirectory(layout.state)

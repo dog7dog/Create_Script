@@ -253,6 +253,62 @@ internal object SafeIo {
     fun fileAttributes(path: Path): Array<FileAttribute<*>> =
         if ("posix" in path.fileSystem.supportedFileAttributeViews()) arrayOf(FILE_PERMISSIONS) else emptyArray()
 
+    // ---- 書きかけのファイル（S8.2 N-3） ----
+    // 作業用のディレクトリのファイルは、一時的な名前で書き終えて（ディスクに書き出して）から、最終の名前を付ける。最終の名前のファイルは、必ず書き終えたもの。
+    // 1. .part-<UUID> を作る（空）  2. その inode と、書く大きさを名前に入れて .part-<inode>-<大きさ>-<最終の名前> に変える
+    // 3. 中身を書いてディスクに書き出す  4. 最終の名前に変える（置き換えない）
+    // 途中で止まったものは、名前の inode が今のファイルと同じで（作ったファイルそのもの。保存のたびに別のファイルを作るエディターで書き換えれば違う）、
+    // 大きさが名前の大きさ以下のときだけ、書きかけとして片付けてよい（Leftovers）。空の .part-<UUID> は、中身が無いので片付けてよい
+    const val PART_PREFIX = ".part-"
+    private val TAGGED_PART = Regex("\\.part-([0-9]+)-([0-9]+)-(.+)")
+    private val CREATING_PART = Regex("\\.part-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+
+    // 書きかけの名前（inode・書く大きさ・最終の名前）。違えば null
+    class Part(val inode: Long, val size: Long, val finalName: String)
+
+    fun part(name: String): Part? = TAGGED_PART.matchEntire(name)?.let { m ->
+        val inode = m.groupValues[1].toLongOrNull() ?: return null
+        val size = m.groupValues[2].toLongOrNull() ?: return null
+        Part(inode, size, m.groupValues[3])
+    }
+
+    fun isCreatingPart(name: String) = CREATING_PART.matches(name)
+
+    // inode（POSIX のファイルシステムだけ）。取れなければ null
+    fun inode(path: Path): Long? = try {
+        (Files.getAttribute(path, "unix:ino", LinkOption.NOFOLLOW_LINKS) as Number).toLong()
+    } catch (error: UnsupportedOperationException) {
+        null
+    } catch (error: IllegalArgumentException) {
+        null
+    } catch (error: IOException) {
+        null
+    }
+
+    // 作業用のディレクトリに、書き終えてから最終の名前を付けるファイル（上の手順）。onWrite は、中身を書く直前（テストの中断に使う）。
+    // inode が取れなければ（POSIX でないファイルシステム）、createFile と同じく最終の名前に直接書く
+    fun writeNew(path: Path, bytes: ByteArray, onWrite: (String) -> Unit = {}): Identity {
+        val directory = path.parent
+        val creating = directory.resolve("$PART_PREFIX${UUID.randomUUID()}")
+        FileChannel.open(creating, setOf(StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS), *fileAttributes(creating)).close()
+        onWrite("creating")
+        val inode = inode(creating) ?: run {
+            Files.delete(creating)
+            return createFile(path, bytes)
+        }
+        val tagged = directory.resolve("$PART_PREFIX$inode-${bytes.size}-${path.fileName}")
+        moveNew(creating, tagged)
+        onWrite("writing:${path.fileName}")
+        FileChannel.open(tagged, StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS).use { channel ->
+            val buffer = ByteBuffer.wrap(bytes)
+            while (buffer.hasRemaining()) channel.write(buffer)
+            channel.force(true)
+        }
+        onWrite("written:${path.fileName}")
+        moveNew(tagged, path)
+        return Identity(attributes(path)?.fileKey(), bytes.size.toLong(), sha256Hex(bytes))
+    }
+
     // 新しいファイル（既にあれば失敗）に書いて、ディスクに書き出す
     fun createFile(path: Path, bytes: ByteArray): Identity {
         FileChannel.open(path, setOf(StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS), *fileAttributes(path)).use { channel ->
