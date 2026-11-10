@@ -107,6 +107,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   complete, so an installation that stopped while it was writing them leaves no half-written file under the real
   name, and the next install removes the temporary file when it is still the file it created (same inode, not
   larger than recorded, expected by the record); otherwise it is kept and reported.
+  The temporary file is read-only (`r--------`) while it is written through the descriptor that created it, so
+  other writes are refused, and only read-only temporary files are removed; each removal checks the SHA-256 and
+  the file identity again.
 - `createscript install` and `createscript run` with packages refuse projects where another user can change the
   project root, a directory above it (unless it is sticky and the next directory is yours) or a directory in
   `.createscript`; the message names the directory and its permissions, and permissions are never changed.

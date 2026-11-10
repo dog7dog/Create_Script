@@ -54,6 +54,13 @@ class PartialFileTest {
         }
     }
 
+    // 書いている本人（作ったときに開いた記述子）と同じように、0400 のまま同じファイルに書く（テストでは記述子を持てないので、一時的に書き込みを許す）
+    private fun writeAsCreatescript(part: Path, bytes: ByteArray) {
+        Files.setPosixFilePermissions(part, java.nio.file.attribute.PosixFilePermissions.fromString("rw-------"))
+        Files.write(part, bytes)
+        Files.setPosixFilePermissions(part, java.nio.file.attribute.PosixFilePermissions.fromString("r--------"))
+    }
+
     private fun assertCleaned(root: Path) {
         val result = installer(root).install(spec, false)
         assertEquals(1, result.warnings.count { it.startsWith("removed .createscript/txn-") }, result.warnings.toString())
@@ -80,7 +87,7 @@ class PartialFileTest {
             if (step.startsWith("writing:")) {
                 // 書いている途中で止まったもの（同じファイルに、書く大きさより少なく書いた）
                 val size = SafeIo.part(name)!!.size
-                Files.write(part, ByteArray((size / 2).toInt()) { 'x'.code.toByte() })
+                writeAsCreatescript(part, ByteArray((size / 2).toInt()) { 'x'.code.toByte() })
                 assertFalse(Files.exists(part.resolveSibling(step.removePrefix("writing:"))), "$step: the final name is not used before the file is complete")
             }
             assertCleaned(root)
@@ -107,7 +114,7 @@ class PartialFileTest {
                 Files.move(copy, p, StandardCopyOption.REPLACE_EXISTING)
             } to "was replaced by another file (it is not the file that createscript was writing)"),
             // 書く大きさを超えたもの
-            "grown" to ({ p: Path -> Files.write(p, ByteArray((SafeIo.part(p.fileName.toString())!!.size + 1).toInt())) } to "is larger than the file it was being written for"),
+            "grown" to ({ p: Path -> writeAsCreatescript(p, ByteArray((SafeIo.part(p.fileName.toString())!!.size + 1).toInt())) } to "is larger than the file it was being written for"),
             "link" to ({ p: Path -> Files.delete(p); Files.createSymbolicLink(p, outside) } to "is a symbolic link or not a regular file"),
             "unknown final name" to ({ p: Path ->
                 val tag = SafeIo.part(p.fileName.toString())!!
@@ -129,7 +136,7 @@ class PartialFileTest {
         }
         // 名前を付ける前の空のファイルに、何かが書かれたもの
         val root = crashed("creating")
-        Files.writeString(parts(root).single(), "something")
+        writeAsCreatescript(parts(root).single(), "something".toByteArray())
         val result = installer(root).install(spec, false)
         assertTrue(result.warnings.any { it.contains("is not empty, so it is not a file that createscript was about to write") }, result.warnings.toString())
     }

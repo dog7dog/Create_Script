@@ -285,27 +285,54 @@ internal object SafeIo {
         null
     }
 
-    // 作業用のディレクトリに、書き終えてから最終の名前を付けるファイル（上の手順）。onWrite は、中身を書く直前（テストの中断に使う）。
-    // inode が取れなければ（POSIX でないファイルシステム）、createFile と同じく最終の名前に直接書く
+    // 書いている間の権限（S8.2 N-3 の対策 A）: 所有者が読めるだけ（0400）。ほかの書き込み（追記・上書き・エディターの直接の保存）は権限で拒否される。
+    // 書くのは、作ったときに開いたファイル記述子（書き込める）だけ。最終の名前に変えてから 0644 にする
+    private val PART_PERMISSIONS = PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("r--------"))
+    private val FINAL_PERMISSIONS = PosixFilePermissions.fromString("rw-r--r--")
+
+    // 書きかけのファイルが、書いている間の権限（0400）のままか（読めなければ false）
+    fun isReadOnlyPart(path: Path): Boolean = try {
+        Files.getPosixFilePermissions(path, LinkOption.NOFOLLOW_LINKS) == PosixFilePermissions.fromString("r--------")
+    } catch (error: UnsupportedOperationException) {
+        false
+    } catch (error: IOException) {
+        false
+    }
+
+    // 作業用のディレクトリに、書き終えてから最終の名前を付けるファイル（上の手順）。onWrite は、各段階（テストの中断に使う）。
+    // 順序: 0400 で作る（書き込める記述子を開いたまま）→ inode を名前に入れる → 記述子で書いてディスクに書き出し、閉じる → 最終の名前に変える → 0644 にする。
+    // 最終の名前に変えた直後に止まったものは、0400 のままの書き終えたファイル（最終の名前のファイルは、記録の SHA-256 と照合して扱うので安全。所有者は読める）。
+    // 0644 にしてから名前を変える順では、その間に止まると「0400 でない書きかけ」が残り、片付けられなくなるため、この順にする。
+    // POSIX でないファイルシステム（inode・権限が無い）では、createFile と同じく最終の名前に直接書く
     fun writeNew(path: Path, bytes: ByteArray, onWrite: (String) -> Unit = {}): Identity {
         val directory = path.parent
+        if ("posix" !in directory.fileSystem.supportedFileAttributeViews()) return createFile(path, bytes)
         val creating = directory.resolve("$PART_PREFIX${UUID.randomUUID()}")
-        FileChannel.open(creating, setOf(StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS), *fileAttributes(creating)).close()
-        onWrite("creating")
-        val inode = inode(creating) ?: run {
-            Files.delete(creating)
-            return createFile(path, bytes)
-        }
-        val tagged = directory.resolve("$PART_PREFIX$inode-${bytes.size}-${path.fileName}")
-        moveNew(creating, tagged)
-        onWrite("writing:${path.fileName}")
-        FileChannel.open(tagged, StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS).use { channel ->
+        lateinit var tagged: Path
+        FileChannel.open(creating, setOf(StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS), PART_PERMISSIONS).use { channel ->
+            onWrite("creating")
+            val inode = inode(creating)
+            if (inode == null) {
+                channel.close()
+                Files.delete(creating)
+                return createFile(path, bytes)
+            }
+            tagged = directory.resolve("$PART_PREFIX$inode-${bytes.size}-${path.fileName}")
+            // 開いたまま名前を変える（記述子は同じファイルを指したまま）
+            moveNew(creating, tagged)
+            onWrite("writing:${path.fileName}")
             val buffer = ByteBuffer.wrap(bytes)
             while (buffer.hasRemaining()) channel.write(buffer)
             channel.force(true)
         }
         onWrite("written:${path.fileName}")
         moveNew(tagged, path)
+        onWrite("renamed:${path.fileName}")
+        try {
+            Files.setPosixFilePermissions(path, FINAL_PERMISSIONS)
+        } catch (error: IOException) {
+            // 0400 のまま（所有者は読めるので、使うのに支障は無い）
+        }
         return Identity(attributes(path)?.fileKey(), bytes.size.toLong(), sha256Hex(bytes))
     }
 

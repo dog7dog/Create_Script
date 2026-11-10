@@ -564,13 +564,19 @@ When a step fails, the installation is undone at once. When the process stops (a
 - **Files that were being written.** Every file in `txn-<id>/` (`journal.tmp` first) is written under a temporary
   name and gets its own name only after it was written completely and flushed to disk, so a file with its own name
   is never a part of one. The temporary name is first `.part-<UUID>` (still empty), then
-  `.part-<inode>-<size>-<name>`, which records the file itself (its inode) and how large it will be. A stopped
-  installation can leave one such file; the next install removes it with the rest only when it belongs to this
-  user, is a regular file (not a link), is still the file that `install` created (the same inode; an editor that
-  saves into a new file changes it), is not larger than recorded, and is for a name that the record expects and
-  that does not exist yet (an empty `.part-<UUID>` holds nothing and may go). Its contents cannot be checked,
-  because the file was never finished; a change made in place within the recorded size is not noticed. Any other
-  `.part-` file stays and is reported.
+  `.part-<inode>-<size>-<name>`, which records the file itself (its inode) and how large it will be. The file is
+  created read-only for its owner (`r--------`) and written only through the descriptor that created it, so other
+  writes to it (appending, overwriting, an editor saving in place) are refused; the final file gets `rw-r--r--`
+  after it has its name. A stopped installation can leave one such file; the next install removes it with the
+  rest only when it belongs to this user, is a regular file (not a link), is still read-only, is still the file
+  that `install` created (the same inode; an editor that saves into a new file changes it), is not larger than
+  recorded, and is for a name that the record expects and that does not exist yet (an empty `.part-<UUID>` holds
+  nothing and may go). Just before each file is removed, its SHA-256 and file identity (`fileKey`) must still be
+  those that were checked. Any other `.part-` file stays and is reported. Its contents cannot be checked, because
+  the file was never finished, so the read-only permission is what keeps edits out. It cannot stop a change made
+  by someone who makes the file writable and then read-only again (`chmod`) within the recorded size, a program
+  that had already opened it for writing, or `root`; removing the file removes only that name, so the contents
+  stay if the file has another name (a hard link).
 - Every `createscript install` also looks at `.createscript/packages/<name>/<version>/` and reports each directory
   that cannot be used: files that do not match the marker (a source or the marker was changed, a file is missing
   or extra, the marker is damaged or missing), a marker that names another package or version, files that no
