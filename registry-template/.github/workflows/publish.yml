@@ -1,0 +1,110 @@
+# CreateScript-Registry: publish a signed index (S8.3 Phase 2, see SIGNING.md).
+#
+# This file runs only from the root of the registry's own repository. In the CreateScript repository it is kept
+# under registry-template/, where GitHub never runs it.
+#
+# This workflow never signs and never sees a private key. A signer builds and signs the index on their own
+# machine and opens a publication pull request that changes only signed/index.json and signed/index.json.sig.
+# After that pull request is approved and merged, this workflow:
+#   1. checks the signature with keys/trusted-keys.json, the serial (the one after the published index), that
+#      no reviewed SHA-256 or dependency changed, and that the index is exactly the one built from this commit;
+#   2. waits for a maintainer to approve the "publish" environment (a second, separate approval);
+#   3. creates the release index-<serial> with the two files, and checks that GitHub reports it as immutable
+#      and that the asset digests are the SHA-256 of the signed files.
+# An unsigned index, a test key, a closed registry (too few maintainers) or any failed check stops it before
+# anything is published.
+name: publish
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - signed/index.json
+      - signed/index.json.sig
+
+permissions: {}
+
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+env:
+  TOOL_REPOSITORY: dog7dog/Create_Script
+  TOOL_COMMIT: "0000000000000000000000000000000000000000"
+  TOOL: tool/createscript-registry-tool/build/install/createscript-registry-tool/bin/createscript-registry-tool
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    # A protected environment with required reviewers (GOVERNANCE.md). Only this job can create releases.
+    environment: publish
+    permissions:
+      contents: write
+    steps:
+      - name: Refuse to run before the bootstrap
+        run: |
+          if [ "$TOOL_COMMIT" = "0000000000000000000000000000000000000000" ]; then
+            echo "TOOL_COMMIT is not set yet (GOVERNANCE.md, Bootstrap)" >&2
+            exit 1
+          fi
+
+      - name: Check out main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: registry
+          persist-credentials: false
+
+      - name: Check out the tool at a fixed commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ env.TOOL_REPOSITORY }}
+          ref: ${{ env.TOOL_COMMIT }}
+          path: tool
+          persist-credentials: false
+
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Build the tool
+        working-directory: tool
+        run: ./gradlew --no-daemon --quiet :createscript-registry-tool:installDist
+
+      - name: Download the published index
+        env:
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          mkdir published
+          if curl -fsSL --max-time 60 -o published/index.json "https://github.com/$REPOSITORY/releases/latest/download/index.json"; then
+            curl -fsSL --max-time 60 -o published/index.json.sig "https://github.com/$REPOSITORY/releases/latest/download/index.json.sig"
+          else
+            rm -f published/index.json
+          fi
+
+      - name: Check before publishing
+        run: |
+          echo "::stop-commands::$(uuidgen)"
+          set --
+          if [ -f published/index.json ]; then set -- --previous-index published/index.json --previous-sig published/index.json.sig; fi
+          "$TOOL" publish-check --repo registry "$@"
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          serial="$(jq -r .serial registry/signed/index.json)"
+          case "$serial" in
+            ''|*[!0-9]*) echo "unexpected serial" >&2; exit 1 ;;
+          esac
+          gh release create "index-$serial" registry/signed/index.json registry/signed/index.json.sig \
+            --repo "$REPOSITORY" --target "$GITHUB_SHA" --title "Index $serial" --notes "Signed index $serial" --latest
+          gh api "repos/$REPOSITORY/releases/tags/index-$serial" > release.json
+
+      - name: Check the published release
+        run: |
+          echo "::stop-commands::$(uuidgen)"
+          "$TOOL" check-release --release release.json --index registry/signed/index.json --sig registry/signed/index.json.sig

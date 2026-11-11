@@ -2,6 +2,7 @@ package com.creatrbypc.createanalytical.install
 
 import com.creatrbypc.createanalytical.project.JsonArray
 import com.creatrbypc.createanalytical.project.JsonBoolean
+import com.creatrbypc.createanalytical.project.JsonInteger
 import com.creatrbypc.createanalytical.project.JsonObject
 import com.creatrbypc.createanalytical.project.JsonParser
 import com.creatrbypc.createanalytical.project.JsonString
@@ -73,6 +74,24 @@ class GitHubReleases internal constructor(
         }
         val immutable = (json.members["immutable"] as? JsonBoolean)?.value
         return ReleaseInfo(digest, immutable)
+    }
+
+    // リポジトリの数値 ID と持ち主（S8.3 Phase 2。レジストリの PR の検証が、名前を変えても変わらない ID を照合するために使う）。type は "User" か "Organization"
+    class RepositoryInfo(val id: Long, val fullName: String, val ownerId: Long, val ownerLogin: String, val ownerType: String)
+
+    // GET https://api.github.com/repos/持ち主/リポジトリ から読む（名前を変えたリポジトリは、GitHub がリダイレクトし、新しい full_name を返す）。
+    // 応答は厳密な JSON として読み、id・full_name・owner（login・id・type）が無ければ InvalidResponse
+    fun repositoryInfo(source: String): RepositoryInfo {
+        require(ProjectRules.isValidSource(source)) { "invalid source: $source" }
+        val (owner, repository) = source.removePrefix("github:").split('/')
+        val uri = URI(endpoints.api.scheme, endpoints.api.rawAuthority, "/repos/$owner/$repository", null, null)
+        val response = http.get(uri, limits.maxApiBytes, "application/vnd.github+json")
+        val json = JsonParser.parse(response.body, limits.maxApiBytes.toInt()).value as? JsonObject
+            ?: throw FetchFailure.InvalidResponse("cannot read the GitHub API response for $owner/$repository")
+        val ownerJson = json.members["owner"] as? JsonObject ?: throw FetchFailure.InvalidResponse("the GitHub API response has no owner")
+        fun long(obj: JsonObject, key: String) = (obj.members[key] as? JsonInteger)?.value?.takeIf { it > 0 } ?: throw FetchFailure.InvalidResponse("the GitHub API response has no $key")
+        fun text(obj: JsonObject, key: String) = (obj.members[key] as? JsonString)?.value ?: throw FetchFailure.InvalidResponse("the GitHub API response has no $key")
+        return RepositoryInfo(long(json, "id"), text(json, "full_name"), long(ownerJson, "id"), text(ownerJson, "login"), text(ownerJson, "type"))
     }
 
     companion object {

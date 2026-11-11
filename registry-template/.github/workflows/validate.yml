@@ -1,0 +1,172 @@
+# CreateScript-Registry: checks for every pull request (S8.3 Phase 2, see CONTRIBUTING.md and GOVERNANCE.md).
+#
+# This file runs only from the root of the registry's own repository (.github/workflows/). In the CreateScript
+# repository it is kept under registry-template/, where GitHub never runs it.
+#
+# Safety:
+# - pull_request_target runs this file as it is on main, so a pull request cannot change its own checks.
+# - The pull request is checked out only as data (into head/) and nothing from it is run. The tool is built
+#   from a fixed CreateScript commit (TOOL_COMMIT), never from the pull request.
+# - No secrets: the jobs get a read-only token that they do not use; GitHub is read without authentication.
+# - Every third-party action is pinned to a full commit SHA.
+# - The tool prints only lines starting with "error:", "notice:", "OK" or "FAILED", with control characters
+#   escaped, and workflow commands are turned off before it runs.
+name: validate
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review, labeled]
+    branches: [main]
+
+permissions: {}
+
+concurrency:
+  group: validate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  # The CreateScript commit whose createscript-registry-tool checks pull requests. It is set when the registry is
+  # set up (GOVERNANCE.md, "Bootstrap"); while it is all zeros every check fails on purpose.
+  TOOL_REPOSITORY: dog7dog/Create_Script
+  TOOL_COMMIT: "0000000000000000000000000000000000000000"
+  TOOL: tool/createscript-registry-tool/build/install/createscript-registry-tool/bin/createscript-registry-tool
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Refuse to run before the bootstrap
+        run: |
+          if [ "$TOOL_COMMIT" = "0000000000000000000000000000000000000000" ]; then
+            echo "TOOL_COMMIT is not set yet (GOVERNANCE.md, Bootstrap)" >&2
+            exit 1
+          fi
+
+      - name: Check out main (trusted)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: base
+          persist-credentials: false
+
+      - name: Check out the pull request as data (nothing in it is run)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: head
+          persist-credentials: false
+
+      - name: Check out the tool at a fixed commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ env.TOOL_REPOSITORY }}
+          ref: ${{ env.TOOL_COMMIT }}
+          path: tool
+          persist-credentials: false
+
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Build the tool
+        working-directory: tool
+        run: ./gradlew --no-daemon --quiet :createscript-registry-tool:installDist
+
+      - name: Download the published index (needed for publication pull requests)
+        env:
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          mkdir published
+          if curl -fsSL --max-time 60 -o published/index.json "https://github.com/$REPOSITORY/releases/latest/download/index.json"; then
+            curl -fsSL --max-time 60 -o published/index.json.sig "https://github.com/$REPOSITORY/releases/latest/download/index.json.sig"
+          else
+            rm -f published/index.json
+          fi
+
+      - name: Validate
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_AUTHOR_ID: ${{ github.event.pull_request.user.id }}
+        run: |
+          echo "::stop-commands::$(uuidgen)"
+          set --
+          if [ -f published/index.json ]; then set -- --previous-index published/index.json --previous-sig published/index.json.sig; fi
+          "$TOOL" validate-pr --base base --head head --pr "$PR_NUMBER" --author "$PR_AUTHOR" --author-id "$PR_AUTHOR_ID" "$@"
+
+  # The approvals that GitHub's settings cannot check (GOVERNANCE.md). Reviews do not start pull_request_target, so
+  # after the approvals a maintainer re-runs this job or adds the label "recheck".
+  approvals:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Refuse to run before the bootstrap
+        run: |
+          if [ "$TOOL_COMMIT" = "0000000000000000000000000000000000000000" ]; then
+            echo "TOOL_COMMIT is not set yet (GOVERNANCE.md, Bootstrap)" >&2
+            exit 1
+          fi
+
+      - name: Check out main (trusted)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: base
+          persist-credentials: false
+
+      - name: Check out the pull request as data (nothing in it is run)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: head
+          persist-credentials: false
+
+      - name: Check out the tool at a fixed commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ env.TOOL_REPOSITORY }}
+          ref: ${{ env.TOOL_COMMIT }}
+          path: tool
+          persist-credentials: false
+
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Build the tool
+        working-directory: tool
+        run: ./gradlew --no-daemon --quiet :createscript-registry-tool:installDist
+
+      - name: Read the reviews (public API, no token)
+        env:
+          REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          pages=""
+          for page in 1 2 3 4 5 6 7 8 9 10; do
+            curl -fsSL --max-time 60 -H "Accept: application/vnd.github+json" -o page.json \
+              "https://api.github.com/repos/$REPOSITORY/pulls/$PR_NUMBER/reviews?per_page=100&page=$page"
+            if [ "$(jq length page.json)" = "0" ]; then break; fi
+            if [ "$page" = "10" ]; then echo "more than 1000 reviews" >&2; exit 1; fi
+            pages="$pages${pages:+,}$(cat page.json)"
+          done
+          printf '[%s]' "$pages" > reviews.json
+
+      - name: Check the approvals
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_AUTHOR_ID: ${{ github.event.pull_request.user.id }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          echo "::stop-commands::$(uuidgen)"
+          "$TOOL" check-approvals --base base --head head --pr "$PR_NUMBER" --author "$PR_AUTHOR" --author-id "$PR_AUTHOR_ID" --head-sha "$HEAD_SHA" --reviews reviews.json

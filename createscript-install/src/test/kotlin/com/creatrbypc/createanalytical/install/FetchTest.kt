@@ -318,4 +318,22 @@ class FetchTest {
         assertThrows(IllegalArgumentException::class.java) { production.assetUri("github:owner/x", "1.2") }
         production.close()
     }
+
+    // S8.3 Phase 2: リポジトリの数値 ID（レジストリの PR の検証が使う）。API だけに問い合わせ、トークンは API にだけ送る
+    @Test
+    fun readsRepositoryIds() {
+        api.route("/repos/owner/vector-math", LocalServer.ok("""{"id": 123456789, "name": "vector-math", "full_name": "Owner/vector-math", "owner": {"login": "Owner", "id": 1001, "type": "User"}, "private": false}""".toByteArray()))
+        val info = releases().repositoryInfo("github:owner/vector-math")
+        assertEquals(123456789L, info.id)
+        assertEquals("Owner/vector-math", info.fullName)
+        assertEquals(1001L, info.ownerId)
+        assertEquals("Owner", info.ownerLogin)
+        assertEquals("User", info.ownerType)
+        assertEquals(1, api.requestsTo("/repos/owner/vector-math").size)
+        api.route("/repos/owner/broken", LocalServer.ok("""{"id": 5, "full_name": "owner/broken"}""".toByteArray()))
+        assertThrows(FetchFailure.InvalidResponse::class.java) { releases().repositoryInfo("github:owner/broken") }
+        api.route("/repos/owner/dup", LocalServer.ok("""{"id": 5, "id": 6, "full_name": "owner/dup", "owner": {"login": "owner", "id": 1, "type": "User"}}""".toByteArray()))
+        assertThrows(FetchFailure.InvalidResponse::class.java) { releases().repositoryInfo("github:owner/dup") }
+        assertThrows(FetchFailure.NotFound::class.java) { releases().repositoryInfo("github:owner/missing") }
+    }
 }

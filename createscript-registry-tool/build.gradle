@@ -1,0 +1,34 @@
+// CreateScript-Registry の運営の道具（S8.3 Phase 2。docs/registry.md・registry-template/）: PR の検証・承認の確認・index の生成・署名・公開前の確認。
+// レジストリのリポジトリのワークフローと、署名する人の手元で使う。createscript の配布物（CLI のパッケージ）には含めない
+plugins {
+    id 'application'
+    id 'org.jetbrains.kotlin.jvm'
+}
+
+repositories {
+    mavenCentral()
+}
+
+java.toolchain.languageVersion = JavaLanguageVersion.of(21)
+
+kotlin {
+    jvmToolchain(21)
+}
+
+dependencies {
+    implementation project(':createscript-project')
+    implementation project(':createscript-install')
+
+    testImplementation(platform("org.junit:junit-bom:5.10.2"))
+    testImplementation("org.junit.jupiter:junit-jupiter")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+}
+
+application {
+    mainClass = 'com.creatrbypc.createanalytical.registrytool.MainKt'
+    applicationName = 'createscript-registry-tool'
+}
+
+tasks.named('test', Test) {
+    useJUnitPlatform()
+}

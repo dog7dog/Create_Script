@@ -418,6 +418,9 @@ know it; we did not run them for S8.1.
 - `createscript-install` (S8.2 Phases 2 and 3): downloads package archives from GitHub Releases with the JDK HTTP
   client, checks their SHA-256 and GitHub's digest, keeps the cache, resolves dependencies, and installs them
   with the journal. It never runs what it downloads.
+- `createscript-registry-tool` (S8.3 Phase 2): checks registry pull requests and approvals, and builds, signs
+  (test keys only for now), checks and verifies the index for the planned registry ([registry.md](registry.md)).
+  It is not part of the `createscript` packages.
 - `createscript-cli`: reads and writes the files, checks the entry file on disk, and implements `init`,
   `manifest check`, `lock check`, `pack` and `install`.
 - `createscript-core` (the language, compiler and virtual machine) is unchanged.

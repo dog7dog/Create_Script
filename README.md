@@ -13,6 +13,8 @@ that run untrusted scripts. This repository contains:
 - **`createscript-project`** (in development, not in v0.1.0-alpha): the project files `createscript.json` and
   `createscript.lock` (strict JSON, validation, canonical form), and the formats and signature check of the
   planned package registry ([docs/registry.md](docs/registry.md)), without file or network access.
+- **`createscript-registry-tool`** and **`registry-template/`** (in development, not in service): the tool and
+  the template for operating the planned registry. Not part of the `createscript` packages.
 
 > **Status: 0.1.0-alpha.** The language and the APIs can still change.
 > [v0.1.0-alpha](https://github.com/dog7dog/Create_Script/releases/tag/v0.1.0-alpha) is published as a

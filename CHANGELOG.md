@@ -140,6 +140,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   comparison with an earlier index (no rollback, no changed SHA-256 or dependencies, nothing removed). New
   diagnostics `CS_REG_…`. See [docs/registry.md](docs/registry.md). The manifest, lock file and archive formats
   are unchanged.
+- `createscript-registry-tool` and `registry-template/` (S8.3 Phase 2, not in service): the template of the
+  future CreateScript-Registry repository (policy, governance with co-maintainers, contributing, signing and
+  security documents, `maintainers.json`, `keys/trusted-keys.json`, CODEOWNERS, rulesets, and `validate.yml` and
+  `publish.yml`, which do not run in this repository), and a tool that checks registry pull requests (strict
+  files, names, dependencies, GitHub numeric IDs, immutable releases, digests, canonical archives, authors and
+  owners, unchanged reviewed versions) and approvals (two maintainers other than the author and the package
+  owners), builds the next index, signs it locally (test keys only), and checks it before and after publishing.
+  `GitHubReleases.repositoryInfo` reads a repository's numeric IDs.
 
 ## [0.1.0-alpha] - 2026-11-04 (pre-release)
 

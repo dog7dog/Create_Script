@@ -22,3 +22,6 @@ include 'createscript-install'
 
 // The createscript command: runs .cscr files and the interactive mode (REPL)
 include 'createscript-cli'
+
+// CreateScript-Registry の運営の道具（S8.3 Phase 2）。CLI の配布物には含めない
+include 'createscript-registry-tool'

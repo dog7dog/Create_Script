@@ -1,9 +1,11 @@
 # CreateScript-Registry (S8.3)
 
-> **In development (Phase 1 of S8.3).** This page describes the file formats and the checks in the library
-> `createscript-project`. There is no registry repository yet, nothing downloads an index, and no command uses
-> it. Fetching the index, the signing key and its workflow, and `createscript install <name>@<version>` come in
-> later phases. Nothing here has been tried against GitHub.
+> **In development (Phases 1 and 2 of S8.3).** This page describes the file formats and the checks in the library
+> `createscript-project` (Phase 1) and the operation of the registry with `createscript-registry-tool` and the
+> template in `registry-template/` (Phase 2, see [Operating the registry](#operating-the-registry-phase-2)).
+> There is no registry repository yet, no signing key, no published index, and `createscript` does not use the
+> registry. `createscript install <name>@<version>` comes in a later phase. Nothing here has been tried against
+> GitHub.
 
 CreateScript-Registry will be a GitHub repository in which each package name is mapped, through reviewed pull
 requests, to a GitHub source and to the SHA-256 of each reviewed version. A signed `index.json` built from it
@@ -265,3 +267,64 @@ These are known limits of the design, not bugs to be fixed later:
 - **Not in Phase 1**: downloading the index, storing the accepted index, the registry repository and its
   workflows, the production key, and any command. Linux, Windows and real GitHub downloads have not been tried for
   any of it.
+
+## Operating the registry (Phase 2)
+
+`registry-template/` is the future repository `CreateScript-Registry`: its files (`registry.json`,
+`reserved-names.json`, `maintainers.json`, `keys/trusted-keys.json`, `packages/`, `signed/`), its documents
+(`README.md`, `POLICY.md`, `CONTRIBUTING.md`, `GOVERNANCE.md`, `SIGNING.md`, `SECURITY.md`), `CODEOWNERS`, two
+workflows and the proposed rulesets in `github-settings/`. It stays in the CreateScript repository until the
+registry repository is created. GitHub runs workflows only from a repository's root `.github/workflows/`, so the
+template's workflows never run here; in addition, both refuse to run while `TOOL_COMMIT` is all zeros. They can be
+tried only explicitly, with the tests (`./gradlew :createscript-registry-tool:test`) or by running the tool by hand.
+
+`createscript-registry-tool` (Gradle module of the same name, not part of the `createscript` packages) implements
+every check:
+
+| Command | Used by | Does |
+|---|---|---|
+| `check-repo` | anyone | reads the repository strictly and applies the rules across packages |
+| `validate-pr` | `validate.yml` | the checks of a pull request (below) |
+| `check-approvals` | `validate.yml` | the approvals that GitHub settings cannot check (`registry-template/GOVERNANCE.md`) |
+| `build-index` | a signer | builds the next index from the repository (serial = published + 1) and lists the changes |
+| `sign` | a signer | signs locally; in this phase **only keys whose ID starts with `test-only-`** |
+| `verify-index` | anyone | verifies a signed index as a client would |
+| `publish-check` | a signer, `validate.yml`, `publish.yml` | the checks before publishing (below) |
+| `check-release` | `publish.yml` | the published release is immutable and its digests match |
+
+`maintainers.json` (new in Phase 2) holds the lead, `minimumMaintainers` (3), `requiredApprovals` (2) and the
+maintainers by login and numeric ID, in canonical form. With fewer than `minimumMaintainers` maintainers the
+registry is closed: package pull requests and publishing are refused.
+`keys/trusted-keys.json` holds up to 4 public keys (key ID and 32 bytes in Base64), each listed in
+`signingKeyIds`; it is used only by `publish-check`, because clients have their own built-in keys.
+
+### Pull request checks (`validate-pr`)
+
+The pull request is read as data from a checked-out tree (symbolic links and non-regular files are refused; nothing
+in it is run). A pull request changes one kind of files only: `packages/`, `signed/`, or the other files
+(maintenance). For every kind the rules across packages are checked. For package changes:
+
+- the registry is open; reviewed SHA-256 values, dependencies, review records and repository IDs did not change;
+  nothing was deleted;
+- a new package: the author (by numeric ID) is an owner; for a user's repository that user is an owner; for an
+  organization's repository the reviewers are asked to confirm; names one edit away from existing ones are shown;
+- an update: only owners add versions or change owners or the source; owners or maintainers may yank, remove or
+  change the description;
+- each new version: `review.pullRequest` is this pull request, the reviewers are maintainers who are neither the
+  author nor owners, at least `requiredApprovals` of them, the date is not in the future, and it is not yanked;
+  GitHub reports the repository's numeric ID and current name, the release `v<version>` is immutable, GitHub's digest
+  of `createscript-package.zip` is the registered SHA-256, the downloaded file has that SHA-256, and it is a
+  canonical package archive (`createscript pack`) with the registered name, version and dependencies, whose sources
+  are the registry's sources.
+
+GitHub is read through `GitHubReleases` (fixed hosts, limits, `repositoryInfo` for the numeric IDs) without a
+token. The tests use an in-memory GitHub instead.
+
+### Publishing checks (`publish-check`)
+
+The registry is open; there are trusted keys and none of them is a test key (except in the tests); the signature is
+valid; compared with the published index there is no rollback, no reused serial, no changed SHA-256 or dependency
+and nothing removed; the serial is exactly the next one; and the signed index is byte for byte the index built from
+the repository at that commit. The signing and publishing procedure, key rotation, and what to do when a key is
+lost or leaks are in `registry-template/SIGNING.md`.
+

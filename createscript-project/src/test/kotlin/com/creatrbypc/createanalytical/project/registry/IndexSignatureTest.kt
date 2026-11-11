@@ -54,7 +54,8 @@ class IndexSignatureTest {
             good.replace("\"signatureVersion\":1", "\"signatureVersion\":2"),
             good.replace(signature, signature.dropLast(4)),
             good.replace(signature, signature.replace("==", "")),
-            good.replace(signature, signature.replace('A', '-')),
+            // Base64 でない文字（先頭を '-' にする。署名の中に特定の文字があるとは限らないので、置き換える位置を決めておく）
+            good.replace(signature, "-" + signature.substring(1)),
             good.replace("{\"keyId\"", "{\"extra\":1,\"keyId\""),
             good.replace("\"signatures\":[", "\"signatures\":[]").substringBefore("]") + "]}",
             good.replace("\"keyId\":\"test-only-key-1\"", "\"keyId\":\"Test Only\""),
