@@ -105,11 +105,16 @@ object ToolFixtures {
         files["reserved-names.json"] = RegistryFiles.writeReserved(ReservedNames(mapOf("createscript" to "the CreateScript project", "core" to "the CreateScript core"))).toByteArray()
         files["maintainers.json"] = Maintainers.write(maintainers).toByteArray()
         files["keys/trusted-keys.json"] = TrustedKeysFile.write(keys).toByteArray()
+        files[CodeOwners.PATH] = codeOwners(maintainers)
         files["README.md"] = "registry\n".toByteArray()
         for (entry in entries) files[RegistryRules.entryPath(entry.name)] = RegistryFiles.writeEntry(entry).toByteArray()
         files.putAll(extra)
         return RegistryTree(files)
     }
+
+    // すべてのメンテナーをコードオーナーにした CODEOWNERS（S8.3 Phase 5、P4-M1）
+    fun codeOwners(maintainers: Maintainers): ByteArray =
+        ("# code owners\n* " + (if (maintainers.maintainers.isEmpty()) listOf(maintainers.lead) else maintainers.maintainers.map { it.login }).joinToString(" ") { "@$it" } + "\n").toByteArray()
 
     fun RegistryTree.with(path: String, bytes: ByteArray?) = RegistryTree(java.util.TreeMap(files).also { if (bytes == null) it.remove(path) else it[path] = bytes })
 }

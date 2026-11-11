@@ -14,6 +14,9 @@ about it. For a leaked signing key see [SIGNING.md](SIGNING.md).
 | Threat | Protection |
 |---|---|
 | a malicious pull request | the checks run as they are on main, read the pull request only as data, have no secrets, and use actions pinned to commit SHAs; two maintainers other than the author approve |
+| a pull request that adds its own workflow to fake the checks | the required checks are accepted only from the registry's GitHub App, which only the trusted `report` job can use; forks cannot change `.github/`; workflows of outside collaborators need approval to run |
+| re-running an old check after new commits | every job compares the pull request's current head commit with the commit of the run and stops if they differ |
+| a compromised build dependency of the checking tool | the Gradle wrapper is checked against a pinned SHA-256, every dependency against `gradle/verification-metadata.xml` (strict), no build cache is used, and the only job with a write token builds and runs nothing |
 | changing a reviewed archive | the SHA-256 of every reviewed version can never change; releases must be immutable; GitHub's digest and the download must both match |
 | deleting a version and registering it again with other contents | versions and packages can never be deleted (checked in pull requests and against the published index) |
 | a renamed or re-created repository | the repository and owners are recorded with GitHub's numeric IDs |
@@ -27,7 +30,13 @@ about it. For a leaked signing key see [SIGNING.md](SIGNING.md).
 - **Several maintainers acting together**, or the lead together with one other maintainer.
 - **A stolen signing key**: whoever has it can sign an index. Clients still refuse changes to versions they have
   already seen. See [SIGNING.md](SIGNING.md).
-- **Freezing**: an attacker who blocks updates can keep a client on the last index until it expires.
+- **Freezing**: an attacker who blocks updates keeps clients from learning about new removals. Since S8.3 Phase 5
+  `createscript` does not fall back to its saved index when the download fails online; it does so only with
+  `--offline`, which uses what was saved before (removals published later are not known). An attacker who can
+  serve an older, still valid signed index to a client that has no saved state (first use, cleared cache) can
+  still hide removals until that index expires.
+- **The registry's GitHub App key**: whoever has it can report the required checks. It is kept only in the
+  environment `registry-checks`.
 - **First use**: a client that has never seen an index (or lost its state) cannot tell an old signed index from the
   newest one before it expires.
 - **Bugs in a reviewed package.** A review is not a guarantee.

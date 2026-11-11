@@ -309,8 +309,10 @@ Reviewed hashes in an official registry with a signed index are being built in S
 The client is in place (Phase 3: `createscript install <name>@<version>`, and a review status for direct installs
 and restores), but **the official registry is not published and has no production key yet, and it is looking for
 maintainers**; until then `createscript install <name>@<version>` refuses (exit code 69) without connecting, and
-direct installs report that their review status could not be checked. Signatures by the authors of packages
-themselves are not planned yet.
+direct installs report that their review status could not be checked. When the index cannot be downloaded,
+`createscript` does not fall back to the index it saved before unless `--offline` is given (S8.3 Phase 5), so a
+blocked download cannot quietly revive a removed package; restoring from `createscript.lock` is unaffected.
+Signatures by the authors of packages themselves are not planned yet.
 
 ### Cache
 
@@ -426,6 +428,9 @@ know it; we did not run them for S8.1.
 - `createscript-registry-tool` (S8.3 Phase 2): checks registry pull requests and approvals, and builds, signs
   (test keys only for now), checks and verifies the index for the planned registry ([registry.md](registry.md)).
   It is not part of the `createscript` packages.
+- The build verifies every dependency and plugin against `gradle/verification-metadata.xml` (SHA-256, strict; S8.3
+  Phase 5). After changing a dependency, regenerate it with
+  `./gradlew --write-verification-metadata sha256 build installDist` and review the difference.
 - `createscript-cli`: reads and writes the files, checks the entry file on disk, and implements `init`,
   `manifest check`, `lock check`, `pack` and `install` (including `install <name>@<version>`).
 - `createscript-core` (the language, compiler and virtual machine) is unchanged.

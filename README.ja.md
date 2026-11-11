@@ -14,6 +14,7 @@ CreateScript は、Kotlin に似た書き方の、静的型付けの小さなス
 > **CreateScript-Registry はまだ公開していません。メンテナーを募集しています。** クライアント側（Ed25519 の署名を確かめた index を使う
 > `createscript install <名前>@<版>`）はありますが、レジストリのリポジトリ・本番の署名鍵・公開した index が無いため、このコマンドは今は通信せずに拒否します。
 > パッケージは `createscript install github:owner/repo@v1.2.0` でインストールしてください（[docs/registry.md](docs/registry.md)）。
+> 公開前のセキュリティ監査（`docs/audits/`）の指摘はコードで対処しましたが、公開には GitHub の設定、本番の署名鍵、3 人以上のメンテナーがまだ必要です。
 
 > **状態：0.1.0-alpha。** 言語と API は、まだ変わることがあります。
 > [v0.1.0-alpha](https://github.com/dog7dog/Create_Script/releases/tag/v0.1.0-alpha) を、GitHub Releases にプレリリースとして公開しています（2026-11-04）。

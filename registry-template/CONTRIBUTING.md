@@ -50,4 +50,9 @@ remove a whole package, add `removed` (see [POLICY.md](POLICY.md)).
   canonical package archive with the registered name, version and dependencies.
 
 `approvals` checks the approvals (see [GOVERNANCE.md](GOVERNANCE.md)). Reviews do not start it again; after the
-approvals a maintainer re-runs it or adds the label `recheck`.
+approvals a maintainer adds the label `recheck`, which starts a run for the current head commit (re-running an old
+run fails on purpose when the pull request has newer commits).
+
+The results appear as the checks `registry/validate` and `registry/approvals`, reported by the registry's GitHub
+App. Checks with these names from anywhere else do not count. A pull request from a fork cannot change `.github/`
+(workflows and CODEOWNERS).

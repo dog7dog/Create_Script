@@ -28,8 +28,8 @@
       "parameters": {
         "strict_required_status_checks_policy": true,
         "required_status_checks": [
-          { "context": "validate" },
-          { "context": "approvals" }
+          { "context": "registry/validate", "integration_id": 0 },
+          { "context": "registry/approvals", "integration_id": 0 }
         ]
       }
     }

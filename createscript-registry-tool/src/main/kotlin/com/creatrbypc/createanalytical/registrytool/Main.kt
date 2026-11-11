@@ -23,13 +23,14 @@ class RegistryTool(private val out: PrintStream, private val err: PrintStream, p
     private val usage = """
         usage: createscript-registry-tool <command> [options]
           check-repo --repo DIR
-          validate-pr --base DIR --head DIR --pr N --author LOGIN --author-id ID [--previous-index FILE --previous-sig FILE]
+          validate-pr --base DIR --head DIR --pr N --author LOGIN --author-id ID [--previous-index FILE --previous-sig FILE] [--from-fork true|false]
           check-approvals --base DIR --head DIR --pr N --author LOGIN --author-id ID --head-sha SHA --reviews FILE
           build-index --repo DIR --out FILE [--previous-index FILE --previous-sig FILE] [--generated YYYY-MM-DDTHH:MM:SSZ]
           sign --index FILE --key FILE --key-id ID --repo DIR --out FILE [--existing-sig FILE]
           verify-index --index FILE --sig FILE --repo DIR [--previous-index FILE --previous-sig FILE]
           publish-check --repo DIR [--previous-index FILE --previous-sig FILE]
           check-release --release FILE --index FILE --sig FILE
+          check-settings --ruleset FILE
     """.trimIndent()
 
     private class Usage(message: String) : Exception(message)
@@ -50,6 +51,7 @@ class RegistryTool(private val out: PrintStream, private val err: PrintStream, p
                 "verify-index" -> verifyIndex(options)
                 "publish-check" -> publishCheck(options)
                 "check-release" -> IndexPublishing.checkRelease(file(options, "release"), file(options, "index"), file(options, "sig"))
+                "check-settings" -> Report().also { r -> GitHubSettings.rulesetProblems(file(options, "ruleset")).forEach(r::error) }
                 else -> throw Usage("unknown command ${args[0]}")
             }
             report.lines().forEach(out::println)
@@ -132,7 +134,14 @@ class RegistryTool(private val out: PrintStream, private val err: PrintStream, p
     private fun validatePr(options: Map<String, String>): Report {
         val now = clock()
         return PullRequestValidator(github(), LocalDate.ofInstant(now, ZoneOffset.UTC), now)
-            .validate(RegistryTree.read(path(options, "base")), RegistryTree.read(path(options, "head")), pullRequest(options), previous(options))
+            .validate(RegistryTree.read(path(options, "base")), RegistryTree.read(path(options, "head")), pullRequest(options), previous(options), fromFork = fromFork(options))
+    }
+
+    // --from-fork true|false（PR の head のリポジトリが、レジストリのリポジトリと違うか。ワークフローが GitHub のイベントから渡す）
+    private fun fromFork(options: Map<String, String>): Boolean = when (options["from-fork"]) {
+        null, "false" -> false
+        "true" -> true
+        else -> throw Usage("--from-fork must be true or false")
     }
 
     private fun checkApprovals(options: Map<String, String>): Report =

@@ -17,6 +17,7 @@ data class PullReview(val login: String, val id: Long, val state: String, val co
 // - レジストリが閉じている間（メンテナーが足りない間）は、パッケージの変更・公開を止める。運営の変更は、ほかの全メンテナーの承認で進める
 object Approvals {
     const val MAX_REVIEWS = 1000
+    private const val LEAD_FILE = LoadedRegistry.MAINTAINERS
 
     // API の応答（配列、または gh api --paginate --slurp の配列の配列）
     fun parseReviews(bytes: ByteArray): List<PullReview> {
@@ -69,7 +70,13 @@ object Approvals {
             }
         }
         val lead = maintainers.leadMaintainer
-        val leadInvolved = lead != null && (lead.id == pr.authorId || approvers.any { it.id == lead.id })
+        // 立ち上げが終わる前（運営責任者が maintainers.json にいない）は、何も承認できない（S8.3 Phase 5、P4-L5）。
+        // 立ち上げのコミットは、ruleset を適用する前に運営責任者が行い、記録する（GOVERNANCE.md の「Bootstrap」）
+        if (lead == null) {
+            report.error("the lead ${maintainers.lead} is not in $LEAD_FILE yet, so the bootstrap is not finished and no pull request can be approved (GOVERNANCE.md, Bootstrap)")
+            return report
+        }
+        val leadInvolved = lead.id == pr.authorId || approvers.any { it.id == lead.id }
         if (!maintainers.open) {
             if (ChangeKind.PACKAGES in changes.kinds || ChangeKind.PUBLICATION in changes.kinds) {
                 report.error(maintainers.closedReason())
@@ -79,7 +86,7 @@ object Approvals {
             val others = maintainers.maintainers.filter { it.id != pr.authorId }
             val missing = others.filter { other -> approvers.none { it.id == other.id } }
             if (missing.isNotEmpty()) report.error("while the registry is closed, every other maintainer must approve; missing: ${missing.joinToString(", ") { it.login }}")
-            if (lead != null && !leadInvolved) report.error("the lead ${maintainers.lead} must approve")
+            if (!leadInvolved) report.error("the lead ${maintainers.lead} must approve")
             report.notice("approved by ${approvers.joinToString(", ") { it.login }.ifEmpty { "nobody" }} (registry closed: ${maintainers.closedReason()})")
             return report
         }

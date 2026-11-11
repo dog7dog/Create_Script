@@ -150,13 +150,41 @@ class RegistryInstallTest {
         val offline = lookup(offline = true)
         val result = installer(second).install(RegistryRequest("vector-math", "1.2.0"), true, offline)
         assertTrue(result.packages.all { it.installed && it.fetch.origin == PackageFetcher.Origin.CACHE })
-        assertTrue(result.notes.single().contains("using the registry index saved before"), result.notes.toString())
+        assertTrue(result.notes.single().startsWith("offline: using the registry index saved before"), result.notes.toString())
         // アーカイブがキャッシュに無ければ、はっきりと失敗する
         val third = createProject(directory.resolve("third"))
         failure(InstallFailure.Kind.NETWORK, "not in the cache") { installer(third, directory.resolve("empty-archives")).install(RegistryRequest("vector-math", "1.2.0"), true, offline) }
         // 期限切れの index は使わない
         h.now = TestRegistry.GENERATED.plus(java.time.Duration.ofDays(31))
         failure(InstallFailure.Kind.NETWORK, "has expired") { installer(third).install(RegistryRequest("vector-math", "1.2.0"), true, lookup(offline = true)) }
+    }
+
+    // S8.3 Phase 5（P4-M2）: 削除を含む新しい index を取得できないとき、古い index（削除の前）に戻ってインストールしない。
+    // --offline を明示したときだけ古い index を使う（その限界は note で示す）
+    @Test
+    fun aNetworkFailureDoesNotRevivePackagesRemovedLater() {
+        h.publish(registered(), serial = 1)
+        installer().install(RegistryRequest("vector-math", "1.2.0"), false, lookup())
+        // 新しい index で削除されたが、この利用者には届かない（通信の妨害）
+        h.publish(registered(vectorRemoved = true), serial = 2, generated = TestRegistry.GENERATED.plusSeconds(1))
+        h.store.network = false
+        val second = createProject(directory.resolve("second"))
+        val before = state(second)
+        failure(InstallFailure.Kind.NETWORK, "was not used") { installer(second).install(RegistryRequest("vector-math", "1.2.0"), false, lookup()) }
+        assertEquals(before, state(second))
+        // 直接の指定・復元では「確かめられない」と示す（古い index で「審査済み」とは言わない）
+        val direct = installer(second).install(PackageSpec(Packages.source("vector-math"), "1.2.0"), false, lookup())
+        assertTrue(direct.reviews.isEmpty())
+        assertTrue(direct.warnings.any { it.startsWith("the review status of github:owner/vector-math@v1.2.0 could not be checked") }, direct.warnings.toString())
+        // 明示的なオフラインは、保存した（削除の前の）index を使う。これは既知の限界で、note が示す
+        val third = createProject(directory.resolve("third"))
+        val offline = installer(third).install(RegistryRequest("vector-math", "1.2.0"), true, lookup(offline = true))
+        assertTrue(offline.notes.single().contains("are not known"), offline.notes.toString())
+        // 通信が戻れば、削除を知り、新しく入れることも復元も拒否する
+        h.store.network = true
+        val fourth = createProject(directory.resolve("fourth"))
+        failure(InstallFailure.Kind.INVALID, "was removed from the CreateScript-Registry") { installer(fourth).install(RegistryRequest("vector-math", "1.2.0"), false, lookup()) }
+        failure(InstallFailure.Kind.INVALID, "was removed from the CreateScript-Registry") { installer(third).install(null, false, lookup()) }
     }
 
     // 16. 直接の指定（github:…）: 審査済みなら状態を示し、未審査なら警告し、審査済みの版と SHA-256 が違えば拒否する

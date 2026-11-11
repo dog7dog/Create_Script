@@ -6,6 +6,7 @@ import com.creatrbypc.createanalytical.registrytool.ToolFixtures.entry
 import com.creatrbypc.createanalytical.registrytool.ToolFixtures.library
 import com.creatrbypc.createanalytical.registrytool.ToolFixtures.tree
 import com.creatrbypc.createanalytical.registrytool.ToolFixtures.version
+import com.creatrbypc.createanalytical.registrytool.ToolFixtures.with
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -97,6 +98,30 @@ class RegistryToolTest {
         assertEquals("a\\u000a::set-output name=x::y\\u001b[31m", Report.safe("a\n::set-output name=x::y\u001b[31m"))
         val report = Report().also { it.error("x\n::error::forged") }
         assertEquals(listOf("error: x\\u000a::error::forged"), report.lines())
+    }
+
+    // S8.3 Phase 5（P4-M4）: GitHub の API の失敗（エラーの応答・空・壊れた JSON）は、承認の検査を失敗させる（成功にしない）
+    @Test
+    fun apiErrorsFailTheApprovalCheck() {
+        val base = write(directory.resolve("base"), tree())
+        val head = write(directory.resolve("head"), tree().with("README.md", "x\n".toByteArray()))
+        for ((name, body) in listOf(
+            "rate-limit" to """{"message": "API rate limit exceeded", "documentation_url": "https://docs.github.com"}""",
+            "empty" to "",
+            "broken" to "[{\"user\": ",
+            "no-user" to """[{"state": "APPROVED", "commit_id": "${"a".repeat(40)}"}]""",
+        )) {
+            val reviews = Files.writeString(directory.resolve("$name.json"), body)
+            val result = run("check-approvals", "--base", "$base", "--head", "$head", "--pr", "9", "--author", "dog7dog", "--author-id", "1", "--head-sha", "a".repeat(40), "--reviews", "$reviews")
+            assertTrue(result.first != 0, "$name: ${result.second}")
+            assertFalse(result.second.endsWith("OK\n"), name)
+        }
+        // --from-fork は true か false だけ
+        assertEquals(2, run("validate-pr", "--base", "$base", "--head", "$head", "--pr", "9", "--author", "dog7dog", "--author-id", "1", "--from-fork", "yes").first)
+        // check-settings: 雛形の ruleset は、App の ID がまだ無いことを示して失敗する
+        val settings = run("check-settings", "--ruleset", "../registry-template/github-settings/main-ruleset.json")
+        assertEquals(1, settings.first)
+        assertTrue(settings.second.contains("integration_id is not set yet"), settings.second)
     }
 
     @Test

@@ -1,18 +1,25 @@
-# CreateScript-Registry: publish a signed index (S8.3 Phase 2, see SIGNING.md).
+# CreateScript-Registry: publish a signed index (S8.3 Phase 2; jobs split in Phase 5, see SIGNING.md and
+# docs/audits/S8.3-Phase5-Remediation.md in CreateScript).
 #
 # This file runs only from the root of the registry's own repository. In the CreateScript repository it is kept
 # under registry-template/, where GitHub never runs it.
 #
 # This workflow never signs and never sees a private key. A signer builds and signs the index on their own
 # machine and opens a publication pull request that changes only signed/index.json and signed/index.json.sig.
-# After that pull request is approved and merged, this workflow:
-#   1. checks the signature with keys/trusted-keys.json, the serial (the one after the published index), that
-#      no reviewed SHA-256 or dependency changed, and that the index is exactly the one built from this commit;
-#   2. waits for a maintainer to approve the "publish" environment (a second, separate approval);
-#   3. creates the release index-<serial> with the two files, and checks that GitHub reports it as immutable
-#      and that the asset digests are the SHA-256 of the signed files.
-# An unsigned index, a test key, a closed registry (too few maintainers) or any failed check stops it before
-# anything is published.
+# After that pull request is approved and merged:
+#   1. check (read-only token, no secrets): builds the tool (checked wrapper, strict dependency verification, no
+#      cache) and checks the signature with keys/trusted-keys.json, the serial (the one after the published
+#      index), that no reviewed SHA-256 or dependency changed, and that the index is exactly the one built from
+#      this commit. It then checks the approvals again (P4-M4): the pushed commit must come from exactly one merged
+#      pull request, whose head commit has the same tree, and whose reviews (read with the token) pass
+#      check-approvals against the commit before the push. It passes on the SHA-256 of the two files.
+#   2. release (the only job with a write token; environment "publish" with required reviewers): runs no Gradle
+#      and no tool. It checks that the files still have the SHA-256 from step 1 and creates the release
+#      index-<serial> with them (P4-M3).
+#   3. verify (read-only token): checks that GitHub reports the release as immutable and that the asset digests
+#      are the SHA-256 of the signed files.
+# An unsigned index, a test key, a closed registry (too few maintainers), missing approvals or any failed check
+# stops it before anything is published.
 name: publish
 
 on:
@@ -31,16 +38,20 @@ concurrency:
 env:
   TOOL_REPOSITORY: dog7dog/Create_Script
   TOOL_COMMIT: "0000000000000000000000000000000000000000"
+  WRAPPER_JAR_SHA256: "cb0da6751c2b753a16ac168bb354870ebb1e162e9083f116729cec9c781156b8"
   TOOL: tool/createscript-registry-tool/build/install/createscript-registry-tool/bin/createscript-registry-tool
 
 jobs:
-  publish:
+  check:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
-    # A protected environment with required reviewers (GOVERNANCE.md). Only this job can create releases.
-    environment: publish
     permissions:
-      contents: write
+      contents: read
+      pull-requests: read
+    outputs:
+      serial: ${{ steps.files.outputs.serial }}
+      index_sha256: ${{ steps.files.outputs.index_sha256 }}
+      sig_sha256: ${{ steps.files.outputs.sig_sha256 }}
     steps:
       - name: Refuse to run before the bootstrap
         run: |
@@ -49,6 +60,153 @@ jobs:
             exit 1
           fi
 
+      - name: Check out main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: registry
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check out the tool at a fixed commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ env.TOOL_REPOSITORY }}
+          ref: ${{ env.TOOL_COMMIT }}
+          path: tool
+          persist-credentials: false
+
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Build the tool (checked wrapper, strict dependency verification, no cache)
+        working-directory: tool
+        run: |
+          echo "$WRAPPER_JAR_SHA256  gradle/wrapper/gradle-wrapper.jar" | sha256sum -c -
+          grep -q '^distributionSha256Sum=' gradle/wrapper/gradle-wrapper.properties
+          test -f gradle/verification-metadata.xml
+          ./gradlew --no-daemon --no-build-cache --quiet --dependency-verification strict :createscript-registry-tool:installDist
+
+      - name: Download the published index
+        env:
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          mkdir published
+          if curl -fsSL --max-time 60 -o published/index.json "https://github.com/$REPOSITORY/releases/latest/download/index.json"; then
+            curl -fsSL --max-time 60 -o published/index.json.sig "https://github.com/$REPOSITORY/releases/latest/download/index.json.sig"
+          else
+            rm -f published/index.json
+          fi
+
+      - name: Check before publishing
+        run: |
+          echo "::stop-commands::$(uuidgen)"
+          set --
+          if [ -f published/index.json ]; then set -- --previous-index published/index.json --previous-sig published/index.json.sig; fi
+          "$TOOL" publish-check --repo registry "$@"
+
+      - name: Find the merged pull request and read its reviews
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          COMMIT: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$REPOSITORY/commits/$COMMIT/pulls" > pulls.json
+          count="$(jq '[.[] | select(.merged_at != null and .base.ref == "main")] | length' pulls.json)"
+          if [ "$count" != 1 ]; then echo "the commit must come from exactly one merged pull request ($count found)" >&2; exit 1; fi
+          number="$(jq -r '[.[] | select(.merged_at != null and .base.ref == "main")][0].number' pulls.json)"
+          case "$number" in ''|*[!0-9]*) echo "unexpected pull request number" >&2; exit 1 ;; esac
+          gh api "repos/$REPOSITORY/pulls/$number" > pull.json
+          head="$(jq -r .head.sha pull.json)"
+          author="$(jq -r .user.login pull.json)"
+          author_id="$(jq -r .user.id pull.json)"
+          case "$head" in ''|*[!0-9a-f]*) echo "unexpected head commit" >&2; exit 1 ;; esac
+          [ "${#head}" = 40 ] || { echo "unexpected head commit" >&2; exit 1; }
+          case "$author_id" in ''|*[!0-9]*) echo "unexpected author" >&2; exit 1 ;; esac
+          case "$author" in ''|*[!A-Za-z0-9-]*) echo "unexpected author" >&2; exit 1 ;; esac
+          gh api --paginate --slurp "repos/$REPOSITORY/pulls/$number/reviews?per_page=100" > reviews.json
+          {
+            echo "number=$number"
+            echo "head=$head"
+            echo "author=$author"
+            echo "author_id=$author_id"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Check that the merged tree is the approved tree, and the approvals
+        env:
+          BEFORE: ${{ github.event.before }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          PR_HEAD: ${{ steps.pr.outputs.head }}
+          PR_AUTHOR: ${{ steps.pr.outputs.author }}
+          PR_AUTHOR_ID: ${{ steps.pr.outputs.author_id }}
+        run: |
+          set -euo pipefail
+          case "$BEFORE" in ''|*[!0-9a-f]*) echo "unexpected previous commit" >&2; exit 1 ;; esac
+          git -C registry fetch --quiet --no-tags origin "$PR_HEAD"
+          if [ "$(git -C registry rev-parse "$PR_HEAD^{tree}")" != "$(git -C registry rev-parse "HEAD^{tree}")" ]; then
+            echo "the published commit is not the tree of the approved head commit $PR_HEAD" >&2
+            exit 1
+          fi
+          mkdir before
+          git -C registry archive "$BEFORE" | tar -x -C before
+          echo "::stop-commands::$(uuidgen)"
+          "$TOOL" check-approvals --base before --head registry --pr "$PR_NUMBER" --author "$PR_AUTHOR" --author-id "$PR_AUTHOR_ID" --head-sha "$PR_HEAD" --reviews reviews.json
+
+      - name: Record the files to publish
+        id: files
+        run: |
+          set -euo pipefail
+          serial="$(jq -r .serial registry/signed/index.json)"
+          case "$serial" in ''|*[!0-9]*) echo "unexpected serial" >&2; exit 1 ;; esac
+          {
+            echo "serial=$serial"
+            echo "index_sha256=$(sha256sum registry/signed/index.json | cut -d' ' -f1)"
+            echo "sig_sha256=$(sha256sum registry/signed/index.json.sig | cut -d' ' -f1)"
+          } >> "$GITHUB_OUTPUT"
+
+  # The only job with a write token. It builds and runs nothing but sha256sum and gh.
+  release:
+    needs: check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    # A protected environment with required reviewers (GOVERNANCE.md).
+    environment: publish
+    permissions:
+      contents: write
+    steps:
+      - name: Check out main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: registry
+          persist-credentials: false
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          SERIAL: ${{ needs.check.outputs.serial }}
+          INDEX_SHA256: ${{ needs.check.outputs.index_sha256 }}
+          SIG_SHA256: ${{ needs.check.outputs.sig_sha256 }}
+        run: |
+          set -euo pipefail
+          case "$SERIAL" in ''|*[!0-9]*) echo "unexpected serial" >&2; exit 1 ;; esac
+          echo "$INDEX_SHA256  registry/signed/index.json" | sha256sum -c -
+          echo "$SIG_SHA256  registry/signed/index.json.sig" | sha256sum -c -
+          gh release create "index-$SERIAL" registry/signed/index.json registry/signed/index.json.sig \
+            --repo "$REPOSITORY" --target "$GITHUB_SHA" --title "Index $SERIAL" --notes "Signed index $SERIAL" --latest
+
+  verify:
+    needs: [check, release]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
       - name: Check out main
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -69,42 +227,22 @@ jobs:
           distribution: temurin
           java-version: '21'
 
-      - name: Build the tool
+      - name: Build the tool (checked wrapper, strict dependency verification, no cache)
         working-directory: tool
-        run: ./gradlew --no-daemon --quiet :createscript-registry-tool:installDist
-
-      - name: Download the published index
-        env:
-          REPOSITORY: ${{ github.repository }}
         run: |
-          mkdir published
-          if curl -fsSL --max-time 60 -o published/index.json "https://github.com/$REPOSITORY/releases/latest/download/index.json"; then
-            curl -fsSL --max-time 60 -o published/index.json.sig "https://github.com/$REPOSITORY/releases/latest/download/index.json.sig"
-          else
-            rm -f published/index.json
-          fi
+          echo "$WRAPPER_JAR_SHA256  gradle/wrapper/gradle-wrapper.jar" | sha256sum -c -
+          grep -q '^distributionSha256Sum=' gradle/wrapper/gradle-wrapper.properties
+          test -f gradle/verification-metadata.xml
+          ./gradlew --no-daemon --no-build-cache --quiet --dependency-verification strict :createscript-registry-tool:installDist
 
-      - name: Check before publishing
-        run: |
-          echo "::stop-commands::$(uuidgen)"
-          set --
-          if [ -f published/index.json ]; then set -- --previous-index published/index.json --previous-sig published/index.json.sig; fi
-          "$TOOL" publish-check --repo registry "$@"
-
-      - name: Publish the release
+      - name: Check the published release
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
+          SERIAL: ${{ needs.check.outputs.serial }}
         run: |
-          serial="$(jq -r .serial registry/signed/index.json)"
-          case "$serial" in
-            ''|*[!0-9]*) echo "unexpected serial" >&2; exit 1 ;;
-          esac
-          gh release create "index-$serial" registry/signed/index.json registry/signed/index.json.sig \
-            --repo "$REPOSITORY" --target "$GITHUB_SHA" --title "Index $serial" --notes "Signed index $serial" --latest
-          gh api "repos/$REPOSITORY/releases/tags/index-$serial" > release.json
-
-      - name: Check the published release
-        run: |
+          set -euo pipefail
+          case "$SERIAL" in ''|*[!0-9]*) echo "unexpected serial" >&2; exit 1 ;; esac
+          gh api "repos/$REPOSITORY/releases/tags/index-$SERIAL" > release.json
           echo "::stop-commands::$(uuidgen)"
           "$TOOL" check-release --release release.json --index registry/signed/index.json --sig registry/signed/index.json.sig

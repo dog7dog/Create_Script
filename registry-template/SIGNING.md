@@ -12,7 +12,10 @@
 - What is signed is exactly the canonical `index.json` (see `docs/registry.md`) built from a reviewed commit of
   `main`, prefixed with the domain `CreateScript-Registry index signature v1` and the key ID.
 - An index is published only after **two separate approvals**: the publication pull request (two maintainers)
-  and the `publish` environment.
+  and the `publish` environment. Before publishing, the workflow checks the approvals of the merged pull request
+  again, and that the merged tree is exactly the tree that was approved.
+- The job that creates the release (the only one with a write token) builds and runs nothing: it compares the two
+  files with the SHA-256 values from the checking job and calls `gh release create`.
 
 ## Publishing a new index
 
@@ -32,9 +35,13 @@ tool publish-check --repo . --previous-index index.json --previous-sig index.jso
 (`tool` is `createscript-registry-tool/build/install/createscript-registry-tool/bin/createscript-registry-tool`.)
 
 Then open a pull request that changes only `signed/index.json` and `signed/index.json.sig`. `validate` runs the
-same `publish-check`. After two approvals and the merge, `publish.yml` checks again, waits for the `publish`
-environment approval, creates the release `index-<serial>` and checks that GitHub reports it immutable with the
-right digests.
+same `publish-check`. After two approvals and the merge, `publish.yml` checks again (job `check`: the index, the
+approvals of the merged pull request on its head commit, and that the merged tree is that head commit's tree),
+waits for the `publish` environment approval, creates the release `index-<serial>` (job `release`, which builds
+nothing), and checks that GitHub reports it immutable with the right digests (job `verify`).
+
+Any maintainer may sign, the lead included: with every maintainer as a code owner, the lead's publication pull
+request is approved by two other maintainers like any other.
 
 The checks refuse:
 
@@ -42,7 +49,9 @@ The checks refuse:
 - a serial that is not exactly the one after the published index (no rollback, no reuse);
 - an index whose reviewed SHA-256 values or dependencies differ from the published index, or that lost a version;
 - an index that is not byte for byte the one built from the commit being published;
-- publishing while the registry is closed.
+- publishing while the registry is closed;
+- publishing a commit that does not come from exactly one merged pull request with valid approvals on its head
+  commit.
 
 If `check-release` reports that the release is not immutable, immutable releases were not on: turn them on, delete
 that release, and run the workflow again. A published immutable release cannot be changed; a mistake is fixed by

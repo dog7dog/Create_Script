@@ -1,4 +1,5 @@
-# CreateScript-Registry: checks for every pull request (S8.3 Phase 2, see CONTRIBUTING.md and GOVERNANCE.md).
+# CreateScript-Registry: checks for every pull request (S8.3 Phase 2; trust boundaries revised in Phase 5, see
+# CONTRIBUTING.md, GOVERNANCE.md and docs/audits/S8.3-Phase5-Remediation.md in CreateScript).
 #
 # This file runs only from the root of the registry's own repository (.github/workflows/). In the CreateScript
 # repository it is kept under registry-template/, where GitHub never runs it.
@@ -6,11 +7,21 @@
 # Safety:
 # - pull_request_target runs this file as it is on main, so a pull request cannot change its own checks.
 # - The pull request is checked out only as data (into head/) and nothing from it is run. The tool is built
-#   from a fixed CreateScript commit (TOOL_COMMIT), never from the pull request.
-# - No secrets: the jobs get a read-only token that they do not use; GitHub is read without authentication.
-# - Every third-party action is pinned to a full commit SHA.
+#   from a fixed CreateScript commit (TOOL_COMMIT), never from the pull request, with the Gradle wrapper checked
+#   against WRAPPER_JAR_SHA256 and Gradle's dependency verification in strict mode. No build cache is used.
+# - The jobs that read the pull request (validate, approvals) have no secrets and a read-only token.
+# - The results are published by the job "report", which never sees the pull request's files: it creates the
+#   check runs "registry/validate" and "registry/approvals" on the pull request's head commit as the registry's own
+#   GitHub App. The ruleset requires these checks from that App (integration_id), so a job with the same name in a
+#   workflow of a pull request (which GitHub Actions reports as its own App) does not count (P4-H1).
+# - Every job first compares the pull request's current head commit (from the API) with the commit of this run,
+#   and fails if they differ: re-running an old run never checks an old commit (P4-M4).
+# - Every third-party action is pinned to a full commit SHA. GitHub is read with the job's token (no
+#   unauthenticated API calls).
 # - The tool prints only lines starting with "error:", "notice:", "OK" or "FAILED", with control characters
 #   escaped, and workflow commands are turned off before it runs.
+# - Reviews do not start pull_request_target. After the approvals, a maintainer adds the label "recheck"
+#   (any label starts a new run with the current head commit).
 name: validate
 
 on:
@@ -25,10 +36,13 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # The CreateScript commit whose createscript-registry-tool checks pull requests. It is set when the registry is
-  # set up (GOVERNANCE.md, "Bootstrap"); while it is all zeros every check fails on purpose.
+  # The CreateScript commit whose createscript-registry-tool checks pull requests, and the SHA-256 of
+  # gradle/wrapper/gradle-wrapper.jar at that commit (compare it with Gradle's published checksum for the wrapper
+  # version). They are set when the registry is set up (GOVERNANCE.md, "Bootstrap"); while TOOL_COMMIT is all
+  # zeros every check fails on purpose.
   TOOL_REPOSITORY: dog7dog/Create_Script
   TOOL_COMMIT: "0000000000000000000000000000000000000000"
+  WRAPPER_JAR_SHA256: "cb0da6751c2b753a16ac168bb354870ebb1e162e9083f116729cec9c781156b8"
   TOOL: tool/createscript-registry-tool/build/install/createscript-registry-tool/bin/createscript-registry-tool
 
 jobs:
@@ -37,11 +51,25 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
+      pull-requests: read
     steps:
       - name: Refuse to run before the bootstrap
         run: |
           if [ "$TOOL_COMMIT" = "0000000000000000000000000000000000000000" ]; then
             echo "TOOL_COMMIT is not set yet (GOVERNANCE.md, Bootstrap)" >&2
+            exit 1
+          fi
+
+      - name: Refuse an outdated run (the pull request has a newer commit)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          current="$(gh api "repos/$REPOSITORY/pulls/$PR_NUMBER" --jq .head.sha)"
+          if [ "$current" != "$HEAD_SHA" ]; then
+            echo "this run is for $HEAD_SHA, but the pull request is now at $current" >&2
             exit 1
           fi
 
@@ -73,9 +101,13 @@ jobs:
           distribution: temurin
           java-version: '21'
 
-      - name: Build the tool
+      - name: Build the tool (checked wrapper, strict dependency verification, no cache)
         working-directory: tool
-        run: ./gradlew --no-daemon --quiet :createscript-registry-tool:installDist
+        run: |
+          echo "$WRAPPER_JAR_SHA256  gradle/wrapper/gradle-wrapper.jar" | sha256sum -c -
+          grep -q '^distributionSha256Sum=' gradle/wrapper/gradle-wrapper.properties
+          test -f gradle/verification-metadata.xml
+          ./gradlew --no-daemon --no-build-cache --quiet --dependency-verification strict :createscript-registry-tool:installDist
 
       - name: Download the published index (needed for publication pull requests)
         env:
@@ -93,24 +125,41 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
           PR_AUTHOR_ID: ${{ github.event.pull_request.user.id }}
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+          BASE_REPOSITORY: ${{ github.repository }}
         run: |
           echo "::stop-commands::$(uuidgen)"
+          fork=false
+          if [ "$HEAD_REPOSITORY" != "$BASE_REPOSITORY" ]; then fork=true; fi
           set --
           if [ -f published/index.json ]; then set -- --previous-index published/index.json --previous-sig published/index.json.sig; fi
-          "$TOOL" validate-pr --base base --head head --pr "$PR_NUMBER" --author "$PR_AUTHOR" --author-id "$PR_AUTHOR_ID" "$@"
+          "$TOOL" validate-pr --base base --head head --pr "$PR_NUMBER" --author "$PR_AUTHOR" --author-id "$PR_AUTHOR_ID" --from-fork "$fork" "$@"
 
-  # The approvals that GitHub's settings cannot check (GOVERNANCE.md). Reviews do not start pull_request_target, so
-  # after the approvals a maintainer re-runs this job or adds the label "recheck".
+  # The approvals that GitHub's settings cannot check (GOVERNANCE.md).
   approvals:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       contents: read
+      pull-requests: read
     steps:
       - name: Refuse to run before the bootstrap
         run: |
           if [ "$TOOL_COMMIT" = "0000000000000000000000000000000000000000" ]; then
             echo "TOOL_COMMIT is not set yet (GOVERNANCE.md, Bootstrap)" >&2
+            exit 1
+          fi
+
+      - name: Refuse an outdated run (the pull request has a newer commit)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          current="$(gh api "repos/$REPOSITORY/pulls/$PR_NUMBER" --jq .head.sha)"
+          if [ "$current" != "$HEAD_SHA" ]; then
+            echo "this run is for $HEAD_SHA, but the pull request is now at $current" >&2
             exit 1
           fi
 
@@ -142,24 +191,21 @@ jobs:
           distribution: temurin
           java-version: '21'
 
-      - name: Build the tool
+      - name: Build the tool (checked wrapper, strict dependency verification, no cache)
         working-directory: tool
-        run: ./gradlew --no-daemon --quiet :createscript-registry-tool:installDist
+        run: |
+          echo "$WRAPPER_JAR_SHA256  gradle/wrapper/gradle-wrapper.jar" | sha256sum -c -
+          grep -q '^distributionSha256Sum=' gradle/wrapper/gradle-wrapper.properties
+          test -f gradle/verification-metadata.xml
+          ./gradlew --no-daemon --no-build-cache --quiet --dependency-verification strict :createscript-registry-tool:installDist
 
-      - name: Read the reviews (public API, no token)
+      - name: Read the reviews (with the job's read-only token)
         env:
+          GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          pages=""
-          for page in 1 2 3 4 5 6 7 8 9 10; do
-            curl -fsSL --max-time 60 -H "Accept: application/vnd.github+json" -o page.json \
-              "https://api.github.com/repos/$REPOSITORY/pulls/$PR_NUMBER/reviews?per_page=100&page=$page"
-            if [ "$(jq length page.json)" = "0" ]; then break; fi
-            if [ "$page" = "10" ]; then echo "more than 1000 reviews" >&2; exit 1; fi
-            pages="$pages${pages:+,}$(cat page.json)"
-          done
-          printf '[%s]' "$pages" > reviews.json
+          gh api --paginate --slurp "repos/$REPOSITORY/pulls/$PR_NUMBER/reviews?per_page=100" > reviews.json
 
       - name: Check the approvals
         env:
@@ -170,3 +216,67 @@ jobs:
         run: |
           echo "::stop-commands::$(uuidgen)"
           "$TOOL" check-approvals --base base --head head --pr "$PR_NUMBER" --author "$PR_AUTHOR" --author-id "$PR_AUTHOR_ID" --head-sha "$HEAD_SHA" --reviews reviews.json
+
+  # Publishes the results as check runs of the registry's GitHub App on the head commit. This job never checks out
+  # or reads the pull request; it only uses the results of the two jobs above. The App's private key is a secret of
+  # the environment "registry-checks" (only this job uses that environment). The App token is limited to
+  # "checks: write" on this repository.
+  report:
+    needs: [validate, approvals]
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: registry-checks
+    permissions:
+      pull-requests: read
+    steps:
+      - name: Report the results as the registry's GitHub App
+        env:
+          GH_TOKEN: ${{ github.token }}
+          APP_ID: ${{ vars.REGISTRY_CHECKS_APP_ID }}
+          APP_KEY: ${{ secrets.REGISTRY_CHECKS_APP_KEY }}
+          REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          VALIDATE_RESULT: ${{ needs.validate.result }}
+          APPROVALS_RESULT: ${{ needs.approvals.result }}
+        run: |
+          set -euo pipefail
+          case "$APP_ID" in ''|*[!0-9]*) echo "REGISTRY_CHECKS_APP_ID is not set" >&2; exit 1 ;; esac
+          case "$HEAD_SHA" in ''|*[!0-9a-f]*) echo "unexpected head commit" >&2; exit 1 ;; esac
+          [ "${#HEAD_SHA}" = 40 ] || { echo "unexpected head commit" >&2; exit 1; }
+          # Report only for the current head commit (an outdated run reports nothing).
+          current="$(gh api "repos/$REPOSITORY/pulls/$PR_NUMBER" --jq .head.sha)"
+          if [ "$current" != "$HEAD_SHA" ]; then
+            echo "the pull request is now at $current; nothing is reported for $HEAD_SHA" >&2
+            exit 0
+          fi
+          b64url() { openssl base64 -A | tr '+/' '-_' | tr -d '='; }
+          now="$(date +%s)"
+          header="$(printf '{"alg":"RS256","typ":"JWT"}' | b64url)"
+          payload="$(printf '{"iat":%d,"exp":%d,"iss":"%s"}' "$((now - 60))" "$((now + 540))" "$APP_ID" | b64url)"
+          key="$(mktemp)"
+          trap 'rm -f "$key"' EXIT
+          printf '%s\n' "$APP_KEY" > "$key"
+          signature="$(printf '%s.%s' "$header" "$payload" | openssl dgst -sha256 -sign "$key" | b64url)"
+          rm -f "$key"
+          jwt="$header.$payload.$signature"
+          installation="$(curl -fsS --max-time 30 -H "Authorization: Bearer $jwt" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$REPOSITORY/installation" | jq -r .id)"
+          case "$installation" in ''|*[!0-9]*) echo "the App is not installed on $REPOSITORY" >&2; exit 1 ;; esac
+          token="$(jq -n --arg repo "${REPOSITORY#*/}" '{repositories: [$repo], permissions: {checks: "write"}}' |
+            curl -fsS --max-time 30 -X POST -H "Authorization: Bearer $jwt" -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/app/installations/$installation/access_tokens" -d @- | jq -r .token)"
+          if [ -z "$token" ] || [ "$token" = null ]; then echo "no App token" >&2; exit 1; fi
+          echo "::add-mask::$token"
+          post() {
+            conclusion=failure
+            if [ "$2" = success ]; then conclusion=success; fi
+            jq -n --arg name "$1" --arg sha "$HEAD_SHA" --arg conclusion "$conclusion" --arg result "$2" \
+              '{name: $name, head_sha: $sha, status: "completed", conclusion: $conclusion,
+                output: {title: $name, summary: ("The job finished with: " + $result)}}' |
+              curl -fsS --max-time 30 -X POST -H "Authorization: Bearer $token" -H "Accept: application/vnd.github+json" \
+                "https://api.github.com/repos/$REPOSITORY/check-runs" -d @- > /dev/null
+          }
+          post registry/validate "$VALIDATE_RESULT"
+          post registry/approvals "$APPROVALS_RESULT"

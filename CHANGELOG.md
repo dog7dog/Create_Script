@@ -166,6 +166,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   values that differ from the registry; warning about packages that are not reviewed), and otherwise warn that
   the review status **could not be checked** (for direct installs; for restores only when the registry is
   configured). With no production key, a direct install now prints that warning; nothing else changes.
+- S8.3 Phase 5 (fixes for the pre-launch audit, `docs/audits/S8.3-Phase5-Remediation.md`):
+  - `createscript install` no longer falls back to the saved registry index when the download fails online: a
+    registry install fails (69) and suggests `--offline`; direct installs and restores report that the review
+    status could not be checked. `--offline` still uses the saved index, with a note that later removals are not
+    known (P4-M2).
+  - Registry template: the required checks `registry/validate` and `registry/approvals` are reported by the
+    registry's own GitHub App from a job that never reads the pull request, and the ruleset requires them from that
+    App (P4-H1); every job refuses a run for an older head commit, reviews are read with the job's token, and the
+    publishing workflow checks the approvals of the merged pull request again (P4-M4); CODEOWNERS lists every
+    maintainer, so the lead's own pull requests can be merged with two other maintainers (P4-M1); the job with the
+    write token builds nothing, and the tool is built with a checked Gradle wrapper and strict dependency
+    verification without caches (P4-M3).
+  - `createscript-registry-tool`: `check-settings` (ruleset checks), `validate-pr --from-fork` (forks cannot change
+    `.github/`), CODEOWNERS must list exactly the maintainers, and `check-approvals` refuses everything before the
+    bootstrap (P4-L5).
+  - The build verifies all dependencies with `gradle/verification-metadata.xml` (SHA-256, strict).
 
 ## [0.1.0-alpha] - 2026-11-04 (pre-release)
 

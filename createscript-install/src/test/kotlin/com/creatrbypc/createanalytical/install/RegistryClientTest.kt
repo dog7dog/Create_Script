@@ -65,9 +65,11 @@ class RegistryClientTest {
         val offline = available(h.client().lookup(offline = true))
         assertTrue(offline.fromCache)
         assertEquals(first.accepted.sha256, offline.accepted.sha256)
-        // 通信できなければ、保存した有効なものを知らせて使う
-        val fallback = available(h.client().lookup(offline = false))
-        assertTrue(fallback.notes.single().contains("could not be downloaded"), fallback.notes.toString())
+        // S8.3 Phase 5（P4-M2）: オンラインで通信できなければ、保存した有効なものがあっても使わない（--offline を案内する）
+        val failed = h.client().lookup(offline = false)
+        assertTrue(failed is RegistryLookup.Unavailable && failed.reason == RegistryLookup.Reason.NETWORK, describe(failed))
+        assertTrue((failed as RegistryLookup.Unavailable).message.contains("was not used") && failed.message.contains("--offline"), failed.message)
+        assertTrue(offline.notes.single().startsWith("offline: using the registry index saved before"), offline.notes.toString())
         // 新しい index を受け入れて、履歴を進める。古いファイルは消す
         h.store.network = true
         h.publish(two, serial = 2, generated = TestRegistry.GENERATED.plusSeconds(60))
@@ -124,7 +126,7 @@ class RegistryClientTest {
         assertTrue(offline is RegistryLookup.Unavailable && offline.reason == RegistryLookup.Reason.EXPIRED && offline.message.contains("has expired"), describe(offline))
         h.store.network = false
         val unreachable = h.client().lookup(offline = false)
-        assertTrue(unreachable is RegistryLookup.Unavailable && unreachable.message.contains("has expired"), describe(unreachable))
+        assertTrue(unreachable is RegistryLookup.Unavailable && unreachable.reason == RegistryLookup.Reason.NETWORK && !unreachable.message.contains("--offline"), describe(unreachable))
         // 生成日時が 1 日を超えて未来
         h.now = TestRegistry.GENERATED.minus(Duration.ofDays(2))
         h.store.network = true

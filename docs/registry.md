@@ -1,6 +1,6 @@
 # CreateScript-Registry (S8.3)
 
-> **In development (Phases 1 to 3 of S8.3). The official registry is not published.** There is no registry
+> **In development (Phases 1 to 3 of S8.3, with the fixes of the Phase 5 remediation). The official registry is not published.** There is no registry
 > repository yet, no production signing key and no published index, and the registry is **looking for
 > maintainers** (it needs at least three before anything is registered or published, see
 > [Operating the registry](#operating-the-registry-phase-2)). This page describes the file formats and checks
@@ -258,8 +258,11 @@ These are known limits of the design, not bugs to be fixed later:
   a client cannot tell an old signed index from the newest one. Such an index is still signed and still checked,
   and an attacker can only send one that has not yet expired, so the window is at most `indexValidityDays` (at
   most 90 days, 30 by default). The local state is protected only by the file permissions of the user.
-- **Freezing.** An attacker who can block updates can keep a client on the last index until it expires; after that
-  the client refuses it (or shows it as expired when offline).
+- **Freezing.** An attacker who can block the download of the index keeps a client from learning about new
+  removals and yanks. Online, the client then fails (it does not fall back to its saved index, S8.3 Phase 5); with
+  `--offline` it uses its saved index, which does not know about removals published later. An attacker who can
+  serve an older but unexpired signed index to a client without saved state can hide removals until that index
+  expires (at most `indexValidityDays`).
 - **The signing key.** Whoever has the private key can publish any index. Protecting it is Phase 2. A stolen key
   cannot change what a client already accepted (SHA-256 values and dependencies of earlier versions), but it can
   add versions and packages, so the key must be replaced (a client release with a new key) if it leaks.
@@ -274,6 +277,13 @@ These are known limits of the design, not bugs to be fixed later:
   Linux, Windows and real GitHub downloads have not been tried for any of it.
 
 ## Operating the registry (Phase 2)
+
+> Revised in S8.3 Phase 5 after the Phase 4 audit (`docs/audits/S8.3-Phase4-Security-Audit.md`,
+> `docs/audits/S8.3-Phase5-Remediation.md`): the required checks come from the registry's own GitHub App
+> (`registry/validate`, `registry/approvals`), CODEOWNERS lists every maintainer, every job refuses runs for an
+> older commit, the approvals are checked again before publishing, the tool is built with a checked Gradle wrapper
+> and strict dependency verification, and the job with the write token builds nothing. None of this has been
+> tried on GitHub.
 
 `registry-template/` is the future repository `CreateScript-Registry`: its files (`registry.json`,
 `reserved-names.json`, `maintainers.json`, `keys/trusted-keys.json`, `packages/`, `signed/`), its documents
@@ -290,7 +300,8 @@ every check:
 |---|---|---|
 | `check-repo` | anyone | reads the repository strictly and applies the rules across packages |
 | `validate-pr` | `validate.yml` | the checks of a pull request (below) |
-| `check-approvals` | `validate.yml` | the approvals that GitHub settings cannot check (`registry-template/GOVERNANCE.md`) |
+| `check-approvals` | `validate.yml`, `publish.yml` | the approvals that GitHub settings cannot check (`registry-template/GOVERNANCE.md`); again before publishing |
+| `check-settings` | the lead | checks the proposed ruleset: no bypass, 2 approvals, code owners, required checks only from the registry's GitHub App (S8.3 Phase 5) |
 | `build-index` | a signer | builds the next index from the repository (serial = published + 1) and lists the changes |
 | `sign` | a signer | signs locally; in this phase **only keys whose ID starts with `test-only-`** |
 | `verify-index` | anyone | verifies a signed index as a client would |
@@ -370,8 +381,8 @@ or `\` is a package name; a directory whose name contains `@` must be written wi
    compared with the index.
 
 If the index cannot be used, nothing is changed and the command fails: 69 when the registry is not
-configured, cannot be reached and nothing usable is saved, the saved index has expired, or an archive is not
-in the cache offline; 65 when the index is refused or the name or version is not allowed; 73 when the cache
+configured, cannot be reached (online, even when an index was saved before: the message suggests `--offline`), the
+saved index has expired or is missing with `--offline`, or an archive is not in the cache offline; 65 when the index is refused or the name or version is not allowed; 73 when the cache
 directory is unsafe; 75 when another `createscript` holds the cache lock for more than 30 seconds.
 
 ### Review status of other installs
@@ -424,8 +435,12 @@ of the files and verifies the signature again with the current keys.
 - An older index (smaller serial) than the saved one is refused; if the saved one is still valid it is used
   instead (this is also what happens when two `createscript` processes update the cache at the same time). The
   same serial with other bytes is refused.
-- Offline, only a saved index that has not expired is used, with a note that it may not show the latest
-  review status. Online, when the registry cannot be reached, the same applies.
+- With `--offline`, only a saved index that has not expired is used, with the note
+  `offline: using the registry index saved before (…); packages removed and versions yanked after … are not known`.
+- Online, when the index cannot be downloaded, the saved index is **not** used (S8.3 Phase 5, finding P4-M2 of the
+  Phase 4 audit): `install <name>@<version>` fails with 69 and suggests `--offline`; direct installs and restores
+  report that the review status could not be checked. Restoring from `createscript.lock` keeps working (it never
+  depended on the index).
 - The `registry`, owner and repository directories are created with mode 0700 and must not be symbolic links,
   must belong to the user and must not be writable by group or others; otherwise the cache is not used (73).
   Files are read without following links. The cache root itself may be a link, as for the archive cache.

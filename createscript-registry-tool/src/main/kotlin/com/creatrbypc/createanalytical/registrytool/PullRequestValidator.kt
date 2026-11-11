@@ -34,7 +34,7 @@ data class PullRequest(val number: Long, val authorLogin: String, val authorId: 
 // レジストリの PR の自動検証（S8.3 Phase 2。CONTRIBUTING.md・POLICY.md）。PR のファイルはデータとしてだけ読む（PR のコードを実行しない）。
 // base は PR の向かう先（main）の作業ツリー、head は PR の作業ツリー
 class PullRequestValidator(private val github: RegistryGitHub, private val today: LocalDate, private val now: Instant) {
-    fun validate(base: RegistryTree, head: RegistryTree, pr: PullRequest, published: PublishedIndex?, allowTestKeys: Boolean = false): Report {
+    fun validate(base: RegistryTree, head: RegistryTree, pr: PullRequest, published: PublishedIndex?, allowTestKeys: Boolean = false, fromFork: Boolean = false): Report {
         val report = Report()
         val before = LoadedRegistry.load(base)
         if (!before.ok) {
@@ -47,6 +47,10 @@ class PullRequestValidator(private val github: RegistryGitHub, private val today
         if (changes.paths.isEmpty()) {
             report.notice("the pull request changes nothing")
             return report
+        }
+        // fork の PR は、ワークフロー・CODEOWNERS（.github/）を変えられない（S8.3 Phase 5、P4-H1 の多層の対策）。運営の変更は、このリポジトリのブランチから出す
+        if (fromFork && changes.paths.any { it.startsWith(".github/") }) {
+            report.error("a pull request from a fork cannot change .github/ (workflows and CODEOWNERS); maintenance changes are opened from a branch of the registry repository")
         }
         if (changes.kinds.size > 1) {
             report.error("a pull request must change only one kind of files: packages/ (registration and updates), signed/ (publication) or the other files (maintenance); this one changes ${changes.kinds.sorted().joinToString(", ") { it.name.lowercase() }}")
@@ -64,7 +68,7 @@ class PullRequestValidator(private val github: RegistryGitHub, private val today
                 report.addAll(IndexPublishing.publishCheck(after, after.signedIndex, after.signedSignature, published, now, allowTestKeys))
             }
             else -> {
-                report.notice("maintenance pull request (${changes.paths.joinToString(", ")}): the lead must approve it (CODEOWNERS), as well as ${maintainers.requiredApprovals} maintainers other than the author")
+                report.notice("maintenance pull request (${changes.paths.joinToString(", ")}): it needs ${maintainers.requiredApprovals} maintainers other than the author, and the lead as the author or one of them (check-approvals)")
                 val newMaintainers = after.maintainers!!
                 if (newMaintainers != maintainers) report.notice("maintainers change: ${maintainers.maintainers.map { it.login }} -> ${newMaintainers.maintainers.map { it.login }}; open: ${newMaintainers.open}")
                 if (LoadedRegistry.KEYS in changes.paths) report.notice("trusted keys change: this only changes the check before publishing; createscript has its own keys built in")

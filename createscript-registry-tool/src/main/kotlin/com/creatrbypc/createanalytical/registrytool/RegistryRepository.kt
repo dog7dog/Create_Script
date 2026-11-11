@@ -127,6 +127,8 @@ class LoadedRegistry(
             val reserved = required(RESERVED)?.let { bytes -> RegistryFiles.parseReserved(bytes).also { diagnostics(RESERVED, it.diagnostics) }.value }
             val maintainers = required(MAINTAINERS)?.let { bytes -> Maintainers.parse(bytes).also { r -> r.problems.forEach { problems += "$MAINTAINERS: $it" } }.value }
             val keys = required(KEYS)?.let { bytes -> TrustedKeysFile.parse(bytes).also { r -> r.problems.forEach { problems += "$KEYS: $it" } }.value }
+            // コードオーナーは、すべてのメンテナー（S8.3 Phase 5、P4-M1）
+            if (maintainers != null) CodeOwners.problems(tree.files[CodeOwners.PATH], maintainers).forEach { problems += it }
             if (config != null && keys != null) {
                 for (key in keys.keys.keys) if (key.keyId !in config.signingKeyIds) problems += "$KEYS: the key ${key.keyId} is not listed in signingKeyIds of $CONFIG"
             }

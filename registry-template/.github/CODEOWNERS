@@ -1,7 +1,5 @@
 # CreateScript-Registry code owners (see GOVERNANCE.md).
-# The last matching line wins. Everything needs the lead; package files need one of the maintainers
-# (the second approval and the rules that GitHub cannot express are enforced by the "approvals" check).
-# When a maintainer joins, add their login to the packages/ line in the same pull request that adds them
-# to maintainers.json; remove it when they leave.
-*            @dog7dog
-/packages/   @dog7dog
+# Every maintainer is a code owner, so a pull request by any maintainer, the lead included, can get the
+# code owner approval from another maintainer. The tool checks that this one rule lists exactly the maintainers
+# in maintainers.json; change both in the same pull request. Before the bootstrap it lists only the lead.
+* @dog7dog

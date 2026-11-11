@@ -126,7 +126,9 @@ class RegistryClient(
         val downloaded = try {
             download()
         } catch (failure: FetchFailure) {
-            return fromCache(clock(), "the registry index could not be downloaded (${failure.message})")
+            // S8.3 Phase 5（P4-M2）: オンラインでは、取得できなかったときに保存した index へ黙って戻らない（新しい削除・取り下げを隠されないため）。
+            // 保存した index を使うのは、利用者が --offline を明示したときだけ
+            return networkFailure(clock(), "the registry index could not be downloaded (${failure.message})")
         }
         return cache.withLock { accept(downloaded.first, downloaded.second, clock()) }
     }
@@ -145,6 +147,18 @@ class RegistryClient(
             val signed = IndexSignatures.verify(index, signature, trust.keys)
             if (signed.value != null || attempt++ >= 1 || signed.diagnostics.none { it.code == ProjectDiagnosticCode.SIGNATURE_INVALID }) return index to signature
         }
+    }
+
+    private fun networkFailure(now: Instant, problem: String): RegistryLookup {
+        val saved = try {
+            cache.withLock { readCache(now) }.accepted?.takeIf { !expired(it, now) }
+        } catch (failure: InstallFailure) {
+            null
+        }
+        val hint = if (saved == null) "" else
+            "; the registry index saved before (${summary(saved)}) was not used, because it may not include packages removed or versions yanked since then. " +
+                "To use it anyway, run the command again with --offline"
+        return RegistryLookup.Unavailable(RegistryLookup.Reason.NETWORK, problem + hint)
     }
 
     private fun fromCache(now: Instant, networkProblem: String?): RegistryLookup {
@@ -166,7 +180,8 @@ class RegistryClient(
             )
         }
         val notes = ArrayList<String>()
-        notes += (if (networkProblem != null) "$networkProblem; " else "") + "using the registry index saved before (${summary(accepted)}); it may not show the latest review status"
+        notes += (if (networkProblem != null) "$networkProblem; " else "") +
+            "offline: using the registry index saved before (${summary(accepted)}); packages removed and versions yanked after ${RegistryRules.formatTimestamp(accepted.index.generated)} are not known"
         return RegistryLookup.Available(accepted, true, notes)
     }
 

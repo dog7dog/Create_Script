@@ -19,6 +19,8 @@ that run untrusted scripts. This repository contains:
 > **CreateScript-Registry is not published yet, and it is looking for maintainers.** The client side exists
 > (`createscript install <name>@<version>` checks an Ed25519-signed index), but there is no registry repository,
 > no production signing key and no published index, so that command currently refuses without connecting.
+> The findings of the pre-launch security audit (`docs/audits/`) have been addressed in code, but the GitHub
+> settings, the production key and at least three maintainers are still needed before any launch.
 > Install packages with `createscript install github:owner/repo@v1.2.0`. See [docs/registry.md](docs/registry.md).
 
 > **Status: 0.1.0-alpha.** The language and the APIs can still change.

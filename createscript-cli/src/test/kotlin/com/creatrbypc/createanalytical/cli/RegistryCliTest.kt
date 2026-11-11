@@ -147,7 +147,14 @@ class RegistryCliTest {
         Files.writeString(second.resolve("createscript.json"), """{"schemaVersion": 1, "name": "second", "version": "0.1.0", "entry": "src/main.cscr"}""")
         val offline = install("vector-math@1.2.0", second.toString(), "--offline")
         assertEquals(ExitCode.OK, offline.code, offline.err)
-        assertTrue(offline.err.startsWith("note: using the registry index saved before"), offline.err)
+        assertTrue(offline.err.startsWith("note: offline: using the registry index saved before"), offline.err)
+        // S8.3 Phase 5（P4-M2）: --offline を付けずに通信できなければ、保存した index があっても 69 で止まる
+        val third = Files.createDirectories(directory.resolve("third"))
+        Files.writeString(third.resolve("createscript.json"), """{"schemaVersion": 1, "name": "third", "version": "0.1.0", "entry": "src/main.cscr"}""")
+        val unreachable = install("vector-math@1.2.0", third.toString())
+        assertEquals(ExitCode.UNAVAILABLE, unreachable.code, unreachable.err)
+        assertTrue(unreachable.err.contains("was not used") && unreachable.err.contains("--offline"), unreachable.err)
+        assertFalse(Files.exists(third.resolve("createscript.lock")))
     }
 
     @Test
