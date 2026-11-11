@@ -723,6 +723,13 @@ A replacement after the last check (just before the lock file is written) is not
 refuses symbolic links in `.createscript/packages`. Only programs that can already change the project can do
 this; keep projects in directories that only you can write to.
 
+This is still unresolved (S8.3 Phase 8, `docs/audits/S8.3-Phase8-Security-Hardening.md`). In the latest tests
+(10 ways of replacing directories, including the project directory itself; 4,200 installations per run on
+macOS), new files or a staged package directory ended up outside the project in 0.2% to 0.7% of the
+installations. No existing file was changed and no installation was reported as successful. The test is
+`L5RaceTest`; it runs only with `CREATESCRIPT_L5_RACE=1`. A complete fix needs file operations relative to open
+directories, which JDK 21 does not offer on macOS.
+
 ### Still planned
 
 - The official registry reviewed through pull requests (S8.3, [registry.md](registry.md)): the formats, the

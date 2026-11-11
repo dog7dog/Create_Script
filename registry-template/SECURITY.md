@@ -40,6 +40,8 @@ about it. For a leaked signing key see [SIGNING.md](SIGNING.md).
   workflow uses is revoked at the end of the step.
 - **Releases under other names or a changed "latest"**: anyone with write access can create releases or mark
   another one as the latest; settings cannot prevent it (GOVERNANCE.md, "Index tags and releases").
+- **Who can create `index-*` tags**: today anyone with write access, because the publishing workflow uses its own
+  token. A dedicated publishing App as the only allowed creator is proposed but not adopted (GOVERNANCE.md).
 - **First use**: a client that has never seen an index (or lost its state) cannot tell an old signed index from the
   newest one before it expires.
 - **Bugs in a reviewed package.** A review is not a guarantee.

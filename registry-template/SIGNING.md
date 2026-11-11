@@ -14,6 +14,9 @@
 - An index is published only after **two separate approvals**: the publication pull request (two maintainers)
   and the `publish` environment. Before publishing, the workflow checks the approvals of the merged pull request
   again, and that the merged tree is exactly the tree that was approved.
+- Whether the release is created with the job's `GITHUB_TOKEN` (today) or with a dedicated publishing App (proposed,
+  not adopted: GOVERNANCE.md, "Index tags and releases"), only the `release` job, after the `publish` environment
+  approval, can publish.
 - The job that creates the release (the only one with a write token) builds and runs nothing: it compares the two
   files with the SHA-256 values from the checking job, stops if a release for the serial already exists, creates
   the release as a draft, checks the draft's assets and GitHub's digests, and only then publishes it as the

@@ -120,6 +120,18 @@
   2. 未マージの PR のチェックを確かめ直す。
   3. 鍵の漏えいの期間にマージされた PR を監査する。
 
+### C-7'. 公開専用の GitHub App（Phase 8 の推奨案。**未採用**）
+
+- `index-*` のタグを作れる主体を限定するための案です。採用するには、承認、`publish.yml` と ruleset の変更、GitHub 上での試験（`docs/registry-github-integration-test.md` のシナリオ 21〜25）が必要です。
+- 案の内容：
+  - 2 つめの App「CreateScript Registry Publisher」を作る。権限は Contents: read and write だけで、レジストリのリポジトリだけにインストールする。
+  - 秘密鍵は environment `publish` の secret にだけ置く（必須の承認者・自分の承認の禁止・main だけ）。
+  - タグの ruleset を 2 つに分ける。
+    - 更新・削除・non-fast-forward の禁止：回避者なし。
+    - 作成の禁止：公開専用の App だけが回避者。
+- この案でも残ること：別の名前の Release と `latest` の変更は防げない。管理者は ruleset を変えられる。App の鍵を持つ人はタグを作れる。
+- 詳細は GOVERNANCE.md の「Proposed: a publishing GitHub App」。
+
 ### C-7. トークンの扱い
 
 - インストールのトークンの有効期間は、GitHub が決める（約 1 時間）。

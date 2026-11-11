@@ -137,6 +137,41 @@ What protects the index releases, and what GitHub settings cannot do:
   watching the releases (the lead checks after every publication, and anyone may, that the latest release is the
   highest `index-<serial>`).
 
+### Proposed: a publishing GitHub App (recommended in S8.3 Phase 8, **not adopted yet**)
+
+The template still publishes with the `release` job's `GITHUB_TOKEN`. The following design is the recommendation
+of `docs/audits/S8.3-Phase8-Security-Hardening.md`; adopting it needs the approval of the lead and the
+maintainers, a change of `publish.yml` and the rulesets, and the tests on GitHub listed in
+`docs/registry-github-integration-test.md` (scenarios 21 to 25). Nothing of it has been tried on GitHub.
+
+- **A second App, "CreateScript Registry Publisher"**: repository permission "Contents: read and write" only,
+  installed only on the registry repository, no webhook. It is separate from the checks App, so that neither key
+  can do the other's job.
+- **Its private key** is a secret of the environment `publish` (required reviewers = the maintainers, "prevent
+  self-review", deployment branches `main` only), so a workflow can use it only after the second approval. It is
+  never stored anywhere else; it is rotated like the checks App's key.
+- **The `release` job** would keep `GITHUB_TOKEN` read-only (`contents: read`), ask for an installation token of
+  the publishing App limited to this repository and `contents: write`, mask it, use it only for the draft, the
+  draft check and the publication, and revoke it when the step ends (as the `report` job does).
+- **Two tag rulesets** for `refs/tags/index-*`:
+  1. update, deletion and non-fast-forward forbidden, **no bypass actors** (as today);
+  2. creation forbidden, with the publishing App as the **only** bypass actor (`actor_type: Integration`). A
+     bypass applies to every rule of its ruleset, which is why creation is in a ruleset of its own.
+  Proposed JSON for the second ruleset (the App ID is filled in when the App exists):
+  `{"name": "index tags: creation", "target": "tag", "enforcement": "active", "conditions": {"ref_name":
+  {"include": ["refs/tags/index-*"], "exclude": []}}, "rules": [{"type": "creation"}], "bypass_actors":
+  [{"actor_id": <publisher App ID>, "actor_type": "Integration", "bypass_mode": "always"}]}`.
+- **What it does not change**: maintainers with write access can still create releases under other tag names and
+  change the latest release; an administrator can still change the rulesets; whoever has the publishing App's
+  key can create `index-*` tags and releases, though not sign an index (an old signed index can be published
+  again under a new tag, which clients with saved state refuse as a rollback). A client-side check that the tag
+  of `releases/latest` is `index-<serial>` of the index it received would close the "other tag name" case; it is
+  a separate code change.
+- **Emergency stop** (with or without the App): disable the `publish` workflow in the Actions settings, remove the
+  reviewers' ability to approve the `publish` environment by restricting it to a branch that does not exist, and,
+  with the App, suspend its installation and delete its key. Nothing already published is deleted in a hurry
+  (see "Failed publication").
+
 ## Failed publication
 
 The `release` job creates `index-<serial>` as a **draft** first, checks the draft's two assets and GitHub's

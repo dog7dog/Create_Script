@@ -189,6 +189,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   documented (P6-L4); the approval base is rebuilt from the commit's raw blobs instead of `git archive` (P6-L5).
   `createscript-registry-tool` gains `WorkflowHarnessTest`, which checks the workflows statically and runs their
   scripts against fake `gh`/`curl` (skipped without python3/PyYAML, jq, openssl, git or bash).
+- S8.3 Phase 8 (`docs/audits/S8.3-Phase8-Security-Hardening.md`): `L5RaceTest`, the race test for L-5 (directories
+  replaced by symbolic links during an installation, now also the project directory itself), is kept as an opt-in
+  test (`CREATESCRIPT_L5_RACE=1`) that fails if an installation is wrongly reported as successful or an existing
+  file outside the project changes. L-5 itself is still unresolved; no installer code changed. A dedicated
+  publishing GitHub App that alone may create `index-*` tags is proposed in the registry template's documents (not
+  adopted).
 
 ## [0.1.0-alpha] - 2026-11-04 (pre-release)
 
