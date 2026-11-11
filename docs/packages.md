@@ -284,7 +284,7 @@ limit.
 - Redirects are followed by CreateScript itself (at most 5), and every location is checked against the list. URLs
   with user information (`user@host`), other ports, IP addresses (also decimal and hexadecimal forms) and
   fragments are refused.
-- System proxy settings are not used (proxies are planned for S8.3).
+- System proxy settings are not used (proxies are planned for a later stage).
 - A GitHub token is optional and read only from the environment variable `CREATESCRIPT_GITHUB_TOKEN`. It is sent
   only to `api.github.com` (never with downloads or to redirect locations) and never printed; messages also leave
   out the query part of URLs, which for release downloads contains a signature.
@@ -305,8 +305,9 @@ limit.
 | `immutable` of the release (from the API) | GitHub | the release assets cannot be replaced after publishing | whether they were good when published |
 | The cache | nobody | — | it is read only when the lock file gives a SHA-256, and that SHA-256 is checked every time |
 
-Proving who published a package (signatures, attestations) is planned for S8.3, and reviewed hashes in an official
-registry for S8.4.
+Reviewed hashes in an official registry with a signed index are planned for S8.3 (see [registry.md](registry.md);
+Phase 1, the formats and checks, is in development). Signatures by the authors of packages themselves are not
+planned yet.
 
 ### Cache
 
@@ -411,8 +412,9 @@ know it; we did not run them for S8.1.
 
 - `createscript-project` (new Gradle module): the JSON parser and writer, the manifest and lock file models,
   their rules, the canonical form and the consistency checks, and the package archive reader and writer
-  (`PackageArchives`). It uses only the Kotlin standard library and never touches files or the network; it takes
-  bytes and returns values and diagnostics.
+  (`PackageArchives`), and the registry formats, the canonical index and its Ed25519 signature check
+  (`project.registry`, S8.3 Phase 1, see [registry.md](registry.md)). It uses only the Kotlin standard library and
+  the JDK, and never touches files or the network; it takes bytes and returns values and diagnostics.
 - `createscript-install` (S8.2 Phases 2 and 3): downloads package archives from GitHub Releases with the JDK HTTP
   client, checks their SHA-256 and GitHub's digest, keeps the cache, resolves dependencies, and installs them
   with the journal. It never runs what it downloads.
@@ -487,7 +489,7 @@ $ createscript install --offline    # the same without the network (from the cac
   missing, extra or changed files, no symbolic links) and the canonical archive made again from its files has the
   SHA-256 of the package. Otherwise the installation stops before changing anything and asks you to remove the
   directory.
-- Directories of versions that are no longer used are not removed (removing packages is planned for S8.3).
+- Directories of versions that are no longer used are not removed (removing packages is planned for a later stage).
 - `createscript.json`, `createscript.lock`, `.createscript` and everything in it must not be symbolic links:
   `install` does not write through links.
 - Nothing that is downloaded is run: archives are only checked and unpacked as files.
@@ -707,5 +709,7 @@ this; keep projects in directories that only you can write to.
 
 ### Still planned
 
-- An official registry (reviewed through pull requests) and direct GitHub URLs (not reviewed); the `source`
-  field will grow new forms with a new schema or lock version.
+- An official registry reviewed through pull requests (S8.3, [registry.md](registry.md)). Packages keep
+  `source: "github:owner/repo"`, so the manifest, lock file and archive formats do not change; packages that are
+  not in the registry can still be installed directly.
+- Version ranges and dependency resolution (S8.4).

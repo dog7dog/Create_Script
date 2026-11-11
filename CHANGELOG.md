@@ -132,6 +132,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   hidden members), so code compiled against v0.1.0-alpha still runs; a regression test runs such code.
 - `createscript run`: `--project-root <directory>` (default: the directory of the file). The interactive
   mode reports `CS_MODULE_IMPORT_UNAVAILABLE` for `import`.
+- `createscript-project` (S8.3 Phase 1, no command uses it yet): the formats of the planned CreateScript-Registry
+  (`registry.json`, `reserved-names.json`, one file per package, `index.json`, `index.json.sig`) with strict checks
+  (names, versions, sources, GitHub IDs, SHA-256, dependencies, yanked and removed, safe text, limits, reserved
+  and similar names), `CanonicalJson` (RFC 8785 for integers) for the index, Ed25519 signature verification with
+  Java 21's own implementation (key IDs, domain separation, several signatures for key rotation), and the
+  comparison with an earlier index (no rollback, no changed SHA-256 or dependencies, nothing removed). New
+  diagnostics `CS_REG_…`. See [docs/registry.md](docs/registry.md). The manifest, lock file and archive formats
+  are unchanged.
 
 ## [0.1.0-alpha] - 2026-11-04 (pre-release)
 

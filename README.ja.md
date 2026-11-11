@@ -8,7 +8,7 @@ CreateScript は、Kotlin に似た書き方の、静的型付けの小さなス
 
 - **`createscript-core`**：字句解析・構文解析・意味解析・バイトコードへのコンパイル・VM。Kotlin/JVM のライブラリで、依存は Kotlin の標準ライブラリだけです。
 - **`createscript-cli`**：`createscript` コマンド。`.cscr` ファイルを実行します。行編集つきの対話モード（REPL）もあります。
-- **`createscript-project`**（開発中。v0.1.0-alpha には入っていません）：プロジェクトのファイル `createscript.json`・`createscript.lock` の読み取り（厳密な JSON）・検査・正規形。ファイルとネットワークには触れません。
+- **`createscript-project`**（開発中。v0.1.0-alpha には入っていません）：プロジェクトのファイル `createscript.json`・`createscript.lock` の読み取り（厳密な JSON）・検査・正規形と、計画中のパッケージのレジストリの形式・署名の検証（[docs/registry.md](docs/registry.md)）。ファイルとネットワークには触れません。
 
 > **状態：0.1.0-alpha。** 言語と API は、まだ変わることがあります。
 > [v0.1.0-alpha](https://github.com/dog7dog/Create_Script/releases/tag/v0.1.0-alpha) を、GitHub Releases にプレリリースとして公開しています（2026-11-04）。

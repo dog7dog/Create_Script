@@ -100,6 +100,69 @@ enum class ProjectDiagnosticCode(val id: String) {
     ARCHIVE_VERSION_MISMATCH("CS_PKG_ARCHIVE_VERSION_MISMATCH"),
     ARCHIVE_MISSING_MODULE("CS_PKG_ARCHIVE_MISSING_MODULE"),
     ARCHIVE_INVALID_SOURCE("CS_PKG_ARCHIVE_INVALID_SOURCE"),
+
+    // ---- レジストリ（S8.3 Phase 1。docs/registry.md）。JSON の誤り・項目の誤り・名前・版・取得元・SHA-256 の形は、上の CS_PKG_… を使う ----
+
+    // 版（引数: 書かれた版、対応している版）: registry.json・reserved-names.json・パッケージのファイル（registryVersion）、index.json（indexVersion）、
+    // index.json.sig（signatureVersion）
+    UNSUPPORTED_REGISTRY_VERSION("CS_REG_UNSUPPORTED_REGISTRY_VERSION"),
+    UNSUPPORTED_INDEX_VERSION("CS_REG_UNSUPPORTED_INDEX_VERSION"),
+    UNSUPPORTED_SIGNATURE_VERSION("CS_REG_UNSUPPORTED_SIGNATURE_VERSION"),
+
+    // 正規形でない（引数: 説明）。index.json・index.json.sig は 1 行の正規形、リポジトリのファイルは字下げした正規形
+    REGISTRY_NOT_CANONICAL("CS_REG_NOT_CANONICAL"),
+
+    // 値の形。ビルドメタデータ（+…）のある版（引数: 版）、GitHub の数値 ID・PR の番号・通し番号が 1〜2^53-1 でない（引数: 項目、値）、
+    // GitHub のユーザー名でない（引数: 値）、説明・理由の文字列が使えない（引数: 項目、理由）、日付・日時の形が正しくない（引数: 項目、値）、
+    // 鍵の ID の形が正しくない（引数: 値）、設定の値が範囲の外（引数: 項目、値、範囲）、同じ値の重複（引数: 項目、値）、版が 1 つも無い（引数: パッケージ）、
+    // パッケージのファイルの置き場所が名前と合わない（引数: パス、正しいパス）
+    VERSION_BUILD_METADATA("CS_REG_VERSION_BUILD_METADATA"),
+    INVALID_ID("CS_REG_INVALID_ID"),
+    INVALID_LOGIN("CS_REG_INVALID_LOGIN"),
+    INVALID_TEXT("CS_REG_INVALID_TEXT"),
+    INVALID_DATE("CS_REG_INVALID_DATE"),
+    INVALID_KEY_ID("CS_REG_INVALID_KEY_ID"),
+    INVALID_SETTING("CS_REG_INVALID_SETTING"),
+    DUPLICATE_VALUE("CS_REG_DUPLICATE_VALUE"),
+    NO_VERSIONS("CS_REG_NO_VERSIONS"),
+    ENTRY_PATH_MISMATCH("CS_REG_ENTRY_PATH_MISMATCH"),
+
+    // 名前（引数: 名前、予約名・似た名前）。予約名と同じか似ている、ほかのパッケージと似ている（ハイフン・0/o・1/l の違いだけ）、同じ名前のパッケージが 2 つ
+    RESERVED_PACKAGE_NAME("CS_REG_RESERVED_PACKAGE_NAME"),
+    SIMILAR_NAME("CS_REG_SIMILAR_NAME"),
+    DUPLICATE_PACKAGE("CS_REG_DUPLICATE_PACKAGE"),
+    // 同じ取得元（大文字・小文字を区別しない）・同じリポジトリの ID を、2 つのパッケージが使う（引数: 値、パッケージ、パッケージ）
+    DUPLICATE_SOURCE("CS_REG_DUPLICATE_SOURCE"),
+    DUPLICATE_REPOSITORY("CS_REG_DUPLICATE_REPOSITORY"),
+
+    // 依存（引数: パッケージ@版、…）。レジストリに無い名前・版（依存@版）、削除したパッケージへの依存（依存）、循環、
+    // 1 つの版の依存の中に、同じ名前の別の版がある（名前、版、版。S8.2 の 1 つのロックファイルに入らない）
+    UNKNOWN_DEPENDENCY("CS_REG_UNKNOWN_DEPENDENCY"),
+    DEPENDENCY_ON_REMOVED("CS_REG_DEPENDENCY_ON_REMOVED"),
+    DEPENDENCY_CYCLE("CS_REG_DEPENDENCY_CYCLE"),
+    DEPENDENCY_CONFLICT("CS_REG_DEPENDENCY_CONFLICT"),
+
+    // index の日時（引数: 説明・日時）。generated・expires の関係が正しくない、期限切れ、生成日時が未来
+    INVALID_VALIDITY("CS_REG_INVALID_VALIDITY"),
+    INDEX_EXPIRED("CS_REG_INDEX_EXPIRED"),
+    INDEX_NOT_YET_VALID("CS_REG_INDEX_NOT_YET_VALID"),
+
+    // 署名。署名が無い、署名のファイルの形が正しくない（引数: 理由）、信頼する鍵の署名が無い（引数: 鍵の ID）、署名が合わない（引数: 鍵の ID）
+    SIGNATURE_MISSING("CS_REG_SIGNATURE_MISSING"),
+    SIGNATURE_MALFORMED("CS_REG_SIGNATURE_MALFORMED"),
+    SIGNATURE_UNKNOWN_KEY("CS_REG_SIGNATURE_UNKNOWN_KEY"),
+    SIGNATURE_INVALID("CS_REG_SIGNATURE_INVALID"),
+
+    // 以前に受け入れた index との比較。通し番号の巻き戻し（引数: 以前、今回）、同じ通し番号で違う内容（引数: 番号）、生成日時の巻き戻し（引数: 以前、今回）、
+    // パッケージ・版が消えた（引数: パッケージ（@版））、審査済みの SHA-256・依存が変わった（引数: パッケージ@版、以前、今回）、リポジトリの ID が変わった（引数: パッケージ、以前、今回）
+    INDEX_ROLLBACK("CS_REG_INDEX_ROLLBACK"),
+    INDEX_SERIAL_REUSED("CS_REG_INDEX_SERIAL_REUSED"),
+    INDEX_TIME_ROLLBACK("CS_REG_INDEX_TIME_ROLLBACK"),
+    PACKAGE_DISAPPEARED("CS_REG_PACKAGE_DISAPPEARED"),
+    VERSION_DISAPPEARED("CS_REG_VERSION_DISAPPEARED"),
+    SHA256_CHANGED("CS_REG_SHA256_CHANGED"),
+    DEPENDENCIES_CHANGED("CS_REG_DEPENDENCIES_CHANGED"),
+    REPOSITORY_CHANGED("CS_REG_REPOSITORY_CHANGED"),
 }
 
 data class ProjectDiagnostic(val code: ProjectDiagnosticCode, val line: Int, val column: Int, val arguments: List<String> = emptyList()) {

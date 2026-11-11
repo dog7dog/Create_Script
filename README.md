@@ -11,7 +11,8 @@ that run untrusted scripts. This repository contains:
 - **`createscript-cli`**: the `createscript` command, which runs `.cscr` files and has an interactive mode
   (REPL) with line editing.
 - **`createscript-project`** (in development, not in v0.1.0-alpha): the project files `createscript.json` and
-  `createscript.lock` (strict JSON, validation, canonical form), without file or network access.
+  `createscript.lock` (strict JSON, validation, canonical form), and the formats and signature check of the
+  planned package registry ([docs/registry.md](docs/registry.md)), without file or network access.
 
 > **Status: 0.1.0-alpha.** The language and the APIs can still change.
 > [v0.1.0-alpha](https://github.com/dog7dog/Create_Script/releases/tag/v0.1.0-alpha) is published as a
