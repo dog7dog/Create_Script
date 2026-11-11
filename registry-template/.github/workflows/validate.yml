@@ -220,7 +220,7 @@ jobs:
   # Publishes the results as check runs of the registry's GitHub App on the head commit. This job never checks out
   # or reads the pull request; it only uses the results of the two jobs above. The App's private key is a secret of
   # the environment "registry-checks" (only this job uses that environment). The App token is limited to
-  # "checks: write" on this repository.
+  # "checks: write" on this repository and is revoked when the step ends, however it ends (P6-L1).
   report:
     needs: [validate, approvals]
     if: ${{ always() }}
@@ -242,6 +242,24 @@ jobs:
           APPROVALS_RESULT: ${{ needs.approvals.result }}
         run: |
           set -euo pipefail
+          # One cleanup for every way out (normal end, error, early exit): remove the key file and revoke the App
+          # token (S8.3 Phase 7, P6-L1). The token lives only in this shell variable; it is never written to a file
+          # or printed. A failed revocation is reported without any secret and does not change the result.
+          key=""
+          token=""
+          cleanup() {
+            status=$?
+            if [ -n "$key" ]; then rm -f "$key"; fi
+            if [ -n "$token" ] && [ "$token" != null ]; then
+              if ! curl -fsS --max-time 30 -X DELETE -o /dev/null -H "Authorization: Bearer $token" -H "Accept: application/vnd.github+json" \
+                  "https://api.github.com/installation/token" 2>/dev/null; then
+                echo "::warning::the App installation token could not be revoked; it expires by itself within about an hour"
+              fi
+              token=""
+            fi
+            exit "$status"
+          }
+          trap cleanup EXIT
           case "$APP_ID" in ''|*[!0-9]*) echo "REGISTRY_CHECKS_APP_ID is not set" >&2; exit 1 ;; esac
           case "$HEAD_SHA" in ''|*[!0-9a-f]*) echo "unexpected head commit" >&2; exit 1 ;; esac
           [ "${#HEAD_SHA}" = 40 ] || { echo "unexpected head commit" >&2; exit 1; }
@@ -256,10 +274,10 @@ jobs:
           header="$(printf '{"alg":"RS256","typ":"JWT"}' | b64url)"
           payload="$(printf '{"iat":%d,"exp":%d,"iss":"%s"}' "$((now - 60))" "$((now + 540))" "$APP_ID" | b64url)"
           key="$(mktemp)"
-          trap 'rm -f "$key"' EXIT
           printf '%s\n' "$APP_KEY" > "$key"
           signature="$(printf '%s.%s' "$header" "$payload" | openssl dgst -sha256 -sign "$key" | b64url)"
           rm -f "$key"
+          key=""
           jwt="$header.$payload.$signature"
           installation="$(curl -fsS --max-time 30 -H "Authorization: Bearer $jwt" -H "Accept: application/vnd.github+json" \
             "https://api.github.com/repos/$REPOSITORY/installation" | jq -r .id)"
@@ -267,7 +285,8 @@ jobs:
           token="$(jq -n --arg repo "${REPOSITORY#*/}" '{repositories: [$repo], permissions: {checks: "write"}}' |
             curl -fsS --max-time 30 -X POST -H "Authorization: Bearer $jwt" -H "Accept: application/vnd.github+json" \
               "https://api.github.com/app/installations/$installation/access_tokens" -d @- | jq -r .token)"
-          if [ -z "$token" ] || [ "$token" = null ]; then echo "no App token" >&2; exit 1; fi
+          if [ -z "$token" ] || [ "$token" = null ]; then token=""; echo "no App token" >&2; exit 1; fi
+          # Masked before anything else uses it
           echo "::add-mask::$token"
           post() {
             conclusion=failure

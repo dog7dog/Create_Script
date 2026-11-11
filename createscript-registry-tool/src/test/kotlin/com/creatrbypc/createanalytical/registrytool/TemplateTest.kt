@@ -132,6 +132,30 @@ class TemplateTest {
         assertTrue(publishJobs.getValue("verify").contains("check-release"))
     }
 
+    // S8.3 Phase 7: App のトークンの失効（P6-L1）、App の権限の文書（P6-L2）、下書きを経る公開（P6-L3）、base の取り出し（P6-L5）
+    @Test
+    fun phase7RulesHold() {
+        val validate = read(".github/workflows/validate.yml")
+        val report = jobs(validate).getValue("report")
+        assertTrue(report.contains("trap cleanup EXIT") && report.contains("-X DELETE") && report.contains("https://api.github.com/installation/token"), "the App token is revoked")
+        assertEquals(1, Regex("trap ").findAll(report).count(), "one cleanup for the key file and the token")
+        assertTrue(report.contains("'{repositories: [\$repo], permissions: {checks: \"write\"}}'"), "the App token is limited to checks: write")
+        assertTrue(report.indexOf("echo \"::add-mask::\$token\"") < report.indexOf("post registry/validate"), "masked before use")
+        assertFalse(Regex(">\\s*\"?\\\$token|tee").containsMatchIn(report), "the token is not written to a file")
+        val governance = read("GOVERNANCE.md")
+        assertTrue(governance.contains("**Repository permissions: \"Checks: read and write\" only**"))
+        assertFalse(governance.contains("\"Pull requests: read\""), "the App does not need pull requests")
+        assertTrue(governance.contains("## Failed publication") && governance.contains("## Index tags and releases"))
+        val publish = read(".github/workflows/publish.yml")
+        val release = jobs(publish).getValue("release")
+        assertTrue(release.contains("--draft") && !release.contains("--latest") && release.contains("make_latest=true"), "draft first, latest only when published")
+        assertTrue(release.indexOf("already exists") < release.indexOf("gh release create"), "an existing release stops a re-run before anything is created")
+        assertTrue(release.indexOf("sha256:\$INDEX_SHA256") < release.indexOf("-X PATCH"), "the draft's digests are checked before publishing")
+        assertFalse(publish.contains("git -C registry archive") || publish.contains("| tar "), "the base is not made with git archive (export-ignore)")
+        assertTrue(jobs(publish).getValue("check").contains("cat-file blob") && jobs(publish).getValue("check").contains("merge-base --is-ancestor"))
+        assertTrue(jobs(publish).getValue("verify").contains("if: \${{ failure() }}"))
+    }
+
     // Gradle の依存の検証（P4-M3）: メタデータがあり、すべての成果物に SHA-256 がある
     @Test
     fun dependencyVerificationIsComplete() {

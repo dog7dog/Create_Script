@@ -14,10 +14,14 @@
 #      pull request, whose head commit has the same tree, and whose reviews (read with the token) pass
 #      check-approvals against the commit before the push. It passes on the SHA-256 of the two files.
 #   2. release (the only job with a write token; environment "publish" with required reviewers): runs no Gradle
-#      and no tool. It checks that the files still have the SHA-256 from step 1 and creates the release
-#      index-<serial> with them (P4-M3).
-#   3. verify (read-only token): checks that GitHub reports the release as immutable and that the asset digests
-#      are the SHA-256 of the signed files.
+#      and no tool (P4-M3). It checks that the files still have the SHA-256 from step 1, stops if any release
+#      for this serial already exists (draft or published), creates the release index-<serial> as a draft, checks
+#      the draft's two assets and GitHub's digests against the recorded SHA-256, and only then publishes it and
+#      makes it the latest; it then checks that GitHub reports it published and immutable (P6-L3). A failure
+#      leaves a draft (never published, never latest) or, after publishing, a recorded failure; nothing is
+#      deleted or replaced automatically.
+#   3. verify (read-only token): checks again with the tool that GitHub reports the release as immutable and that
+#      the asset digests are the SHA-256 of the signed files, and records a failure in the job summary.
 # An unsigned index, a test key, a closed registry (too few maintainers), missing approvals or any failed check
 # stops it before anything is published.
 name: publish
@@ -145,15 +149,36 @@ jobs:
           PR_AUTHOR_ID: ${{ steps.pr.outputs.author_id }}
         run: |
           set -euo pipefail
+          echo "::stop-commands::$(uuidgen)"
           case "$BEFORE" in ''|*[!0-9a-f]*) echo "unexpected previous commit" >&2; exit 1 ;; esac
+          [ "${#BEFORE}" = 40 ] || { echo "unexpected previous commit" >&2; exit 1; }
           git -C registry fetch --quiet --no-tags origin "$PR_HEAD"
           if [ "$(git -C registry rev-parse "$PR_HEAD^{tree}")" != "$(git -C registry rev-parse "HEAD^{tree}")" ]; then
             echo "the published commit is not the tree of the approved head commit $PR_HEAD" >&2
             exit 1
           fi
+          # The base of the approvals is the commit before the push (by its SHA from the push event); it must be an
+          # ancestor of the published commit. It is rebuilt from every tracked file of that commit, read as raw
+          # blobs: no .git, and no .gitattributes processing (export-ignore, eol, filters) can drop or change a file
+          # (P6-L5). Only regular files are allowed (no symbolic links, no submodules).
+          git -C registry merge-base --is-ancestor "$BEFORE" HEAD || { echo "the previous commit is not an ancestor of the published commit" >&2; exit 1; }
+          listing="$(mktemp)"
+          git -C registry ls-tree -r -z --full-tree "$BEFORE" > "$listing"
           mkdir before
-          git -C registry archive "$BEFORE" | tar -x -C before
-          echo "::stop-commands::$(uuidgen)"
+          count=0
+          while IFS= read -r -d '' entry; do
+            meta="${entry%%$'\t'*}"
+            path="${entry#*$'\t'}"
+            mode="${meta%% *}"
+            blob="${meta##* }"
+            case "$mode" in 100644|100755) ;; *) echo "the previous commit has an entry that is not a regular file (mode $mode)" >&2; exit 1 ;; esac
+            case "/$path/" in */../*|*/./*|*//*|*/.git/*) echo "the previous commit has an unexpected path" >&2; exit 1 ;; esac
+            mkdir -p "before/$(dirname -- "$path")"
+            git -C registry cat-file blob "$blob" > "before/$path"
+            count=$((count + 1))
+          done < "$listing"
+          rm -f "$listing"
+          [ "$count" -gt 0 ] || { echo "the previous commit has no files" >&2; exit 1; }
           "$TOOL" check-approvals --base before --head registry --pr "$PR_NUMBER" --author "$PR_AUTHOR" --author-id "$PR_AUTHOR_ID" --head-sha "$PR_HEAD" --reviews reviews.json
 
       - name: Record the files to publish
@@ -194,11 +219,43 @@ jobs:
           SIG_SHA256: ${{ needs.check.outputs.sig_sha256 }}
         run: |
           set -euo pipefail
+          stop() {
+            echo "::error::$1"
+            if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then printf '### Publication of index-%s stopped\n\n%s\n\nNothing was deleted or replaced automatically (GOVERNANCE.md, "Failed publication").\n' "$SERIAL" "$1" >> "$GITHUB_STEP_SUMMARY"; fi
+            exit 1
+          }
           case "$SERIAL" in ''|*[!0-9]*) echo "unexpected serial" >&2; exit 1 ;; esac
+          for value in "$INDEX_SHA256" "$SIG_SHA256"; do
+            case "$value" in ''|*[!0-9a-f]*) echo "unexpected SHA-256" >&2; exit 1 ;; esac
+            [ "${#value}" = 64 ] || { echo "unexpected SHA-256" >&2; exit 1; }
+          done
           echo "$INDEX_SHA256  registry/signed/index.json" | sha256sum -c -
           echo "$SIG_SHA256  registry/signed/index.json.sig" | sha256sum -c -
-          gh release create "index-$SERIAL" registry/signed/index.json registry/signed/index.json.sig \
-            --repo "$REPOSITORY" --target "$GITHUB_SHA" --title "Index $SERIAL" --notes "Signed index $SERIAL" --latest
+          tag="index-$SERIAL"
+          # A re-run never publishes the same serial again: any release for this tag, draft or published, stops it.
+          gh api --paginate --slurp "repos/$REPOSITORY/releases?per_page=100" > releases.json
+          if [ "$(jq --arg tag "$tag" '[.[][] | select(.tag_name == $tag)] | length' releases.json)" != 0 ]; then
+            stop "a release for $tag already exists (draft or published); nothing was published. Check it by hand."
+          fi
+          # Create it as a draft: not visible as the latest release, and not yet immutable.
+          gh release create "$tag" registry/signed/index.json registry/signed/index.json.sig \
+            --repo "$REPOSITORY" --target "$GITHUB_SHA" --title "Index $SERIAL" --notes "Signed index $SERIAL" --draft
+          gh api --paginate --slurp "repos/$REPOSITORY/releases?per_page=100" > releases.json
+          jq --arg tag "$tag" '[.[][] | select(.tag_name == $tag)]' releases.json > draft.json
+          [ "$(jq length draft.json)" = 1 ] || stop "the draft release $tag cannot be found exactly once; it was not published."
+          id="$(jq -r '.[0].id' draft.json)"
+          case "$id" in ''|*[!0-9]*) stop "the draft release $tag has no usable ID; it was not published." ;; esac
+          [ "$(jq -r '.[0].draft' draft.json)" = true ] || stop "the release $tag is not a draft; it was not changed."
+          # Exactly the two assets, uploaded, with GitHub's digests equal to the SHA-256 recorded by the check job.
+          assets="$(jq -r '.[0].assets | map(.name + " " + .state + " " + (.digest // "none")) | sort | join(",")' draft.json)"
+          expected="index.json uploaded sha256:$INDEX_SHA256,index.json.sig uploaded sha256:$SIG_SHA256"
+          [ "$assets" = "$expected" ] || stop "the draft release $tag does not have exactly the two signed files with the expected digests; it was left as a draft (not published, not the latest)."
+          # Publish it and make it the latest, then check what GitHub reports.
+          gh api -X PATCH "repos/$REPOSITORY/releases/$id" -F draft=false -f make_latest=true > published.json
+          [ "$(jq -r .draft published.json)" = false ] && [ "$(jq -r .tag_name published.json)" = "$tag" ] ||
+            stop "GitHub did not report $tag as published; check the release by hand."
+          [ "$(jq -r .immutable published.json)" = true ] ||
+            stop "$tag was published, but GitHub does not report it as immutable. Its assets are signed, but they could be replaced; check the repository setting and the release by hand."
 
   verify:
     needs: [check, release]
@@ -246,3 +303,11 @@ jobs:
           gh api "repos/$REPOSITORY/releases/tags/index-$SERIAL" > release.json
           echo "::stop-commands::$(uuidgen)"
           "$TOOL" check-release --release release.json --index registry/signed/index.json --sig registry/signed/index.json.sig
+
+      - name: Record a failed verification
+        if: ${{ failure() }}
+        env:
+          SERIAL: ${{ needs.check.outputs.serial }}
+        run: |
+          printf '### index-%s: published, but the verification failed\n\nThe release was not changed automatically. Follow GOVERNANCE.md, "Failed publication".\n' "$SERIAL" >> "$GITHUB_STEP_SUMMARY"
+          echo "::error::index-$SERIAL was published but did not pass the verification; see the job summary"

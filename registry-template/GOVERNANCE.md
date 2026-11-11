@@ -70,12 +70,32 @@ satisfied by such a job (finding P4-H1 of the S8.3 Phase 4 audit). So:
 - Reviews do not start `pull_request_target`; after approving, a maintainer adds the label `recheck` (or removes
   and adds it again), which starts a run for the current head commit.
 
-**The GitHub App "CreateScript Registry Checks"** (created by the lead in step 3 of the bootstrap): permissions
-"Checks: read and write" and "Pull requests: read" only, installed only on the registry repository, no webhook.
-Its ID is the repository variable `REGISTRY_CHECKS_APP_ID` and the `integration_id` of both required checks; its
-private key is the secret `REGISTRY_CHECKS_APP_KEY` of the environment `registry-checks`, which only the `report`
-job uses (deployment branches: `main` only, no reviewers). The key is rotated like any GitHub App key; whoever has
-it can report checks, so it is kept only in that environment.
+**The GitHub App "CreateScript Registry Checks"** (created by the lead in step 3 of the bootstrap):
+
+- **Repository permissions: "Checks: read and write" only** (GitHub adds "Metadata: read" to every App). It has no
+  other repository, organization or account permission, no webhook and no user authorization. It reads nothing:
+  the pull request's head commit is read with the job's own `GITHUB_TOKEN`, not with the App.
+- **Installed only on the registry repository** ("Only select repositories"); it can be installed only on this
+  account. The workflow additionally asks GitHub for an installation token limited to this repository and to
+  `checks: write`, masks it at once, uses it only to create the two check runs, and revokes it
+  (`DELETE /installation/token`) when the step ends, also after an error. If the revocation fails, a warning
+  without any secret is printed; the token then expires by itself within about an hour.
+- Its ID is the repository variable `REGISTRY_CHECKS_APP_ID` and the `integration_id` of both required checks; its
+  private key is the secret `REGISTRY_CHECKS_APP_KEY` of the environment `registry-checks`, which only the `report`
+  job uses (deployment branches: `main` only, no reviewers). The key is rotated like any GitHub App key; whoever has
+  it can report checks, so it is kept only in that environment.
+- **Changing the App's permissions or installation** is a maintenance change: it is proposed in an issue, approved
+  like a maintenance pull request (two maintainers and the lead), and the installation owner then accepts the new
+  permissions on GitHub. Nobody adds a permission "for later".
+
+The App is separate from the workflows' own `GITHUB_TOKEN`, whose permissions are set per job:
+
+| Workflow / job | `GITHUB_TOKEN` permissions | Secrets |
+|---|---|---|
+| `validate` / `validate`, `approvals` | `contents: read`, `pull-requests: read` | none |
+| `validate` / `report` | `pull-requests: read` (to read the current head commit) | the App key (environment `registry-checks`) |
+| `publish` / `check`, `verify` | `contents: read` (`check` also `pull-requests: read`) | none |
+| `publish` / `release` | `contents: write` (environment `publish`) | none |
 
 ## GitHub settings (proposal, to be applied when the repository is created)
 
@@ -97,6 +117,40 @@ after filling in the App's ID; it must print `OK`.
   **require approval to run workflows for all outside collaborators** (not only first-time contributors).
 - **Environment `registry-checks`**: the App's private key; deployment branches `main` only.
 - **Environment `publish`**: required reviewers = the maintainers, "prevent self-review" on, only `main` can deploy.
+
+## Index tags and releases
+
+What protects the index releases, and what GitHub settings cannot do:
+
+- `github-settings/index-tags-ruleset.json` forbids **updating and deleting** `index-*` tags, for everybody (no
+  bypass actors). A published index can therefore not be moved to another commit.
+- It does **not** forbid **creating** `index-*` tags. A ruleset that forbids creation without a bypass actor would
+  also stop the `publish` workflow, which creates the tag when it publishes the release. The only way to let just
+  the publisher create them is a bypass actor: a dedicated publishing GitHub App (or a deploy key) used only by the
+  `release` job, with `bypass_mode: always` for tag creation only. That is a second App with `contents: write` and
+  is **not set up by this template**; it would be a maintenance change of its own.
+- Even with tag creation restricted, anyone with write access can create a release under another tag name, or
+  mark another release as the latest. Clients fetch `releases/latest`, and an old signed index there is still
+  valid until it expires: clients with saved state refuse it as a rollback (and keep their newer index), and a
+  client without saved state accepts it (docs/registry.md, "Security limits"). This cannot be prevented by the
+  repository settings; it is limited by: write access only for maintainers, the short validity of an index, and
+  watching the releases (the lead checks after every publication, and anyone may, that the latest release is the
+  highest `index-<serial>`).
+
+## Failed publication
+
+The `release` job creates `index-<serial>` as a **draft** first, checks the draft's two assets and GitHub's
+digests against the SHA-256 recorded by the `check` job, and only then publishes it and makes it the latest.
+Nothing is ever deleted or replaced automatically. Depending on where it stopped:
+
+| Where it stopped | State | What the maintainers do |
+|---|---|---|
+| before the draft (checks, an existing release) | nothing published | read the error; an existing release for the serial means a previous attempt exists: inspect it before anything else |
+| the draft's assets or digests | a **draft** (not public, not the latest) | inspect the draft, delete it by hand after recording what was wrong, fix the cause, run the workflow again |
+| published, but not reported immutable, or `verify` failed | a **published** release (possibly the latest), recorded as failed in the job summary | do not delete it in a hurry: its assets are signed, so clients verify them. Check immutable releases and the digests; if it must be withdrawn, publish the next serial and record the decision in an issue |
+
+A re-run never publishes the same serial again: the `check` job refuses a serial that is already published, and
+the `release` job stops if any release (draft or published) exists for that serial.
 - **Releases**: immutable releases on.
 - **Private vulnerability reporting** on.
 

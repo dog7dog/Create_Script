@@ -36,7 +36,10 @@ about it. For a leaked signing key see [SIGNING.md](SIGNING.md).
   serve an older, still valid signed index to a client that has no saved state (first use, cleared cache) can
   still hide removals until that index expires.
 - **The registry's GitHub App key**: whoever has it can report the required checks. It is kept only in the
-  environment `registry-checks`.
+  environment `registry-checks`; the App has only "Checks: read and write", and the installation token that the
+  workflow uses is revoked at the end of the step.
+- **Releases under other names or a changed "latest"**: anyone with write access can create releases or mark
+  another one as the latest; settings cannot prevent it (GOVERNANCE.md, "Index tags and releases").
 - **First use**: a client that has never seen an index (or lost its state) cannot tell an old signed index from the
   newest one before it expires.
 - **Bugs in a reviewed package.** A review is not a guarantee.

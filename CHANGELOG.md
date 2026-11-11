@@ -182,6 +182,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
     `.github/`), CODEOWNERS must list exactly the maintainers, and `check-approvals` refuses everything before the
     bootstrap (P4-L5).
   - The build verifies all dependencies with `gradle/verification-metadata.xml` (SHA-256, strict).
+- S8.3 Phase 7 (`docs/audits/S8.3-Phase7-Remediation.md`), registry template only: the App's installation token is
+  revoked when the report step ends (P6-L1); the App needs only "Checks: read and write" (P6-L2); `publish` creates
+  the release as a draft, checks its assets and digests, then publishes it as the latest, never re-publishes a
+  serial, and records failures without deleting anything (P6-L3); the policy and limits for `index-*` tags are
+  documented (P6-L4); the approval base is rebuilt from the commit's raw blobs instead of `git archive` (P6-L5).
+  `createscript-registry-tool` gains `WorkflowHarnessTest`, which checks the workflows statically and runs their
+  scripts against fake `gh`/`curl` (skipped without python3/PyYAML, jq, openssl, git or bash).
 
 ## [0.1.0-alpha] - 2026-11-04 (pre-release)
 

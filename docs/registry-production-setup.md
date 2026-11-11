@@ -68,6 +68,8 @@
 9. **ruleset：** C-4 の後に適用する。
    - `github-settings/main-ruleset.json`：`~DEFAULT_BRANCH`、2 承認、コードオーナーの承認、古い承認の取り消し、最後の push の承認、スレッドの解決、strict な必須チェック（App の ID つき）、線形の履歴、force push の禁止、削除の禁止、回避者なし。
    - `github-settings/index-tags-ruleset.json`：`index-*` のタグの削除・更新を禁止。
+     - 作成は制限していない。制限すると、回避者のいない ruleset では、公開のワークフローもタグを作れなくなる。
+     - 公開専用の App を回避者にする案と、設定だけでは防げないこと（書き込み権限で latest を変えられる）は、GOVERNANCE.md の「Index tags and releases」に記載。
 10. **CODEOWNERS：** `* @…` の 1 行で、`maintainers.json` のメンテナーと完全に一致させる（ツールが検査する）。
 11. **ワークフローの設定：** 審査を受ける PR で行う。この時点で ruleset が効いている。
     - `TOOL_COMMIT` を、審査済みのコミットにする。
@@ -87,8 +89,8 @@
 
 - Repository permissions：**Checks: Read and write** だけ。
   - Metadata: read は GitHub が必須として付ける。
-  - 「Pull requests: read」は不要。PR の head は、ジョブの `GITHUB_TOKEN` で読む。
-  - GOVERNANCE.md は「Pull requests: read」も挙げているが、これは不要（Phase 6 の指摘 P6-L2）。
+  - 「Pull requests」などのほかの権限は付けない。PR の head は、ジョブの `GITHUB_TOKEN` で読む（GOVERNANCE.md の表で、App の権限とジョブの `GITHUB_TOKEN` の権限を分けて示している。Phase 7 で P6-L2 を修正）。
+  - 権限やインストール先を変えるのは運営の変更で、承認を経てから行う（GOVERNANCE.md）。
 - ワークフローは、さらにトークンを `{"repositories": ["<名前>"], "permissions": {"checks": "write"}}` に絞って発行する。
 
 ### C-3. インストール
@@ -122,7 +124,7 @@
 
 - インストールのトークンの有効期間は、GitHub が決める（約 1 時間）。
 - ワークフローは、トークンを `::add-mask::` で隠し、チェックを 2 つ作るだけに使う。
-- 使い終えたトークンを失効させる処理（`DELETE /installation/token`）は、まだ入っていない（P6-L1）。
+- step を終えるとき（正常に終えたとき・失敗したとき・途中で抜けたときのすべて）に、`DELETE /installation/token` でトークンを失効させる（Phase 7、P6-L1）。失効に失敗したときは、秘密情報を含まない警告を出す。トークンはファイルに書かない。
 
 ## D. Ed25519 の署名
 
@@ -188,7 +190,7 @@
 | E-7 | 署名が不正な index の公開の PR（試験用の鍵。`trusted-keys.json` の値も試験用のもの） | `publish-check` が拒否する |
 | E-8 | serial を巻き戻した、または再利用した index | 拒否する |
 | E-9 | 公開 | `publish` environment の承認の後に Release ができ、`verify` で immutable と digest が確認できる。アセットの差し替え・削除ができないこと |
-| E-10 | 同じ serial の再公開・失敗の後の再実行 | `publish-check` が「already published」で止まる。タグの ruleset が更新を拒否する |
+| E-10 | 同じ serial の再公開・失敗の後の再実行 | `publish-check` が「already published」で止まる。`release` は、同じ serial の Release（下書きを含む）があれば何も作らずに止まる。タグの ruleset が更新を拒否する。途中で止まったときの対応は GOVERNANCE.md の「Failed publication」 |
 | E-11 | GitHub API の制限・失敗 | ジョブが失敗し、チェックは成功にならない |
 | E-12 | Linux CI | `ci.yml` が、`verification-metadata.xml` の strict の検証で成功する |
 | E-13 | 実際の GitHub の HTTPS でのインストール（試験用のクライアントのビルドに、試験用のリポジトリと試験用の鍵を組み込む） | `createscript install <名前>@<版>` が成功する。改ざん・期限切れ・ネットワーク障害の動作が、ドキュメントどおり |

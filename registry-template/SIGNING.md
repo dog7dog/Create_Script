@@ -15,7 +15,9 @@
   and the `publish` environment. Before publishing, the workflow checks the approvals of the merged pull request
   again, and that the merged tree is exactly the tree that was approved.
 - The job that creates the release (the only one with a write token) builds and runs nothing: it compares the two
-  files with the SHA-256 values from the checking job and calls `gh release create`.
+  files with the SHA-256 values from the checking job, stops if a release for the serial already exists, creates
+  the release as a draft, checks the draft's assets and GitHub's digests, and only then publishes it as the
+  latest. Nothing is deleted or replaced automatically (GOVERNANCE.md, "Failed publication").
 
 ## Publishing a new index
 
@@ -37,8 +39,9 @@ tool publish-check --repo . --previous-index index.json --previous-sig index.jso
 Then open a pull request that changes only `signed/index.json` and `signed/index.json.sig`. `validate` runs the
 same `publish-check`. After two approvals and the merge, `publish.yml` checks again (job `check`: the index, the
 approvals of the merged pull request on its head commit, and that the merged tree is that head commit's tree),
-waits for the `publish` environment approval, creates the release `index-<serial>` (job `release`, which builds
-nothing), and checks that GitHub reports it immutable with the right digests (job `verify`).
+waits for the `publish` environment approval, creates the release `index-<serial>` as a draft, checks it and then
+publishes it (job `release`, which builds nothing), and checks that GitHub reports it immutable with the right
+digests (job `verify`, which records a failure in the job summary).
 
 Any maintainer may sign, the lead included: with every maintainer as a code owner, the lead's publication pull
 request is approved by two other maintainers like any other.
@@ -53,9 +56,9 @@ The checks refuse:
 - publishing a commit that does not come from exactly one merged pull request with valid approvals on its head
   commit.
 
-If `check-release` reports that the release is not immutable, immutable releases were not on: turn them on, delete
-that release, and run the workflow again. A published immutable release cannot be changed; a mistake is fixed by
-the next index.
+If the `release` or `verify` job fails, follow GOVERNANCE.md, "Failed publication": a draft that failed its checks
+is inspected and deleted by hand; a published release that is not reported immutable is not deleted in a hurry
+(its assets are signed). A published immutable release cannot be changed; a mistake is fixed by the next index.
 
 The index expires after `indexValidityDays` (30). Publish a new index at least every three weeks, even without
 changes.
