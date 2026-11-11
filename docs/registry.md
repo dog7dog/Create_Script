@@ -1,11 +1,15 @@
 # CreateScript-Registry (S8.3)
 
-> **In development (Phases 1 and 2 of S8.3).** This page describes the file formats and the checks in the library
-> `createscript-project` (Phase 1) and the operation of the registry with `createscript-registry-tool` and the
-> template in `registry-template/` (Phase 2, see [Operating the registry](#operating-the-registry-phase-2)).
-> There is no registry repository yet, no signing key, no published index, and `createscript` does not use the
-> registry. `createscript install <name>@<version>` comes in a later phase. Nothing here has been tried against
-> GitHub.
+> **In development (Phases 1 to 3 of S8.3). The official registry is not published.** There is no registry
+> repository yet, no production signing key and no published index, and the registry is **looking for
+> maintainers** (it needs at least three before anything is registered or published, see
+> [Operating the registry](#operating-the-registry-phase-2)). This page describes the file formats and checks
+> (Phase 1, `createscript-project`), the operation of the registry with `createscript-registry-tool` and the
+> template in `registry-template/` (Phase 2), and the client in `createscript` (Phase 3, see
+> [The client](#the-client-createscript-install-nameversion-phase-3)). Until a production key is built in,
+> `createscript install <name>@<version>` refuses without connecting to anything; every example below that
+> uses it describes how it will work, and was tried only with test keys and an index in memory. Nothing here
+> has been tried against GitHub.
 
 CreateScript-Registry will be a GitHub repository in which each package name is mapped, through reviewed pull
 requests, to a GitHub source and to the SHA-256 of each reviewed version. A signed `index.json` built from it
@@ -240,9 +244,10 @@ index can. The registry repository's history and its required checks (Phase 2) k
 
 `RegistryIndex.status(name, version, source, sha256)` classifies a package (for example one entry of a lock file):
 `REVIEWED`, `YANKED`, `REMOVED`, `VERSION_NOT_REVIEWED`, `NOT_IN_REGISTRY`, `NAME_USED_BY_ANOTHER_SOURCE`,
-`SHA256_MISMATCH` and `NAME_MISMATCH`. Phase 3 will refuse `SHA256_MISMATCH` and `NAME_MISMATCH`, warn about
-packages that are not reviewed and still allow them when given directly as `github:owner/repo`, and show the
-status of every package.
+`SHA256_MISMATCH` and `NAME_MISMATCH`. The client (Phase 3) refuses `SHA256_MISMATCH`, `NAME_MISMATCH` and
+`REMOVED`, refuses newly installing `YANKED` versions, warns about packages that are not reviewed and still
+allows them when given directly as `github:owner/repo`, and shows the status of every package (see
+[The client](#the-client-createscript-install-nameversion-phase-3)).
 
 ## Security limits
 
@@ -264,9 +269,9 @@ These are known limits of the design, not bugs to be fixed later:
   programs have no access to files, the network or the operating system, which limits what a package can do, but a
   reviewed package can still be wrong.
 - **Similar names** catch hyphens, `0`/`o` and `1`/`l`; other confusable names rely on the review.
-- **Not in Phase 1**: downloading the index, storing the accepted index, the registry repository and its
-  workflows, the production key, and any command. Linux, Windows and real GitHub downloads have not been tried for
-  any of it.
+- **Not done yet**: the registry repository itself, the production key and a published index. Downloading
+  and storing the index (Phase 3) were tried only with test keys, an index in memory and a local HTTP server.
+  Linux, Windows and real GitHub downloads have not been tried for any of it.
 
 ## Operating the registry (Phase 2)
 
@@ -327,4 +332,105 @@ valid; compared with the published index there is no rollback, no reused serial,
 and nothing removed; the serial is exactly the next one; and the signed index is byte for byte the index built from
 the repository at that commit. The signing and publishing procedure, key rotation, and what to do when a key is
 lost or leaks are in `registry-template/SIGNING.md`.
+
+## The client: `createscript install <name>@<version>` (Phase 3)
+
+> Not usable yet: no production key is built into `createscript`, so this command stops with exit code 69
+> and the message that the official registry has not been published. It does not connect to anything and
+> does not create the cache. The behaviour below was tried only with test keys (`test-only-…`, made in
+> memory by the tests) and an index in memory or on a local HTTP server.
+
+```bash
+createscript install vector-math@1.2.0 [directory] [--offline]
+```
+
+The version must be exact (`1.2.0`, no `v`, no ranges; ranges are S8.4). An argument with `@` and without `/`
+or `\` is a package name; a directory whose name contains `@` must be written with a path (`./odd@dir`).
+
+1. **The index.** `RegistryClient` downloads `index.json` and `index.json.sig` from the latest release of the
+   registry repository (`https://github.com/<registry>/releases/latest/download/…`) through `GitHubReleases`:
+   HTTPS only, the same fixed hosts, redirect checks, time limits and retries as package downloads, at most
+   16 MiB for the index and 4 KiB for the signature. The repository is built in
+   (`RegistryTrust.OFFICIAL_REPOSITORY`); no option, environment variable or file can change it. If the
+   signature file is missing, the index is treated as unsigned. If the signature does not match, both files are
+   downloaded once more (a new index may have been published between the two downloads).
+2. **Verification** with `IndexVerifier` and the built-in keys: signature, contents, expiry, and the comparison
+   with the index accepted before. A refused index is never used, and nothing is installed from it.
+3. **The plan**, before the installation starts: the name must be in the index, not removed; the version must be
+   reviewed and not yanked; every package of its closure (`RegistryIndex.lockedClosure`) must be reviewed, not
+   yanked and not removed. The registered `source` and the reviewed SHA-256 of every package of the closure are
+   then used.
+4. **The S8.2 installer** does the rest, with the reviewed SHA-256 values pinned: the archives (from the cache
+   when the SHA-256 is there, otherwise downloaded) must have exactly those SHA-256 values, the resolved
+   packages must be exactly the closure in the index (names, versions, sources, SHA-256 values, dependencies),
+   and a lock file entry with another SHA-256 stops it before anything is downloaded. `createscript.json` and
+   `createscript.lock` are written in the S8.2 formats (the dependency is recorded with its `github:` source),
+   with the same transaction, journal and recovery.
+5. **After the installation** the manifest, the lock file and the package directories are read again and
+   compared with the index.
+
+If the index cannot be used, nothing is changed and the command fails: 69 when the registry is not
+configured, cannot be reached and nothing usable is saved, the saved index has expired, or an archive is not
+in the cache offline; 65 when the index is refused or the name or version is not allowed; 73 when the cache
+directory is unsafe; 75 when another `createscript` holds the cache lock for more than 30 seconds.
+
+### Review status of other installs
+
+`createscript install github:owner/repo@v1.2.0` and `createscript install` (restoring from the lock file) work
+as in S8.2. When the registry is configured they also look up the index (from the cache when `--offline`) and
+show `registry: …` for every package:
+
+| Status | Direct install (new) | Restore from `createscript.lock` |
+|---|---|---|
+| reviewed | installed | restored |
+| yanked | refused | restored with a warning |
+| removed | refused | refused |
+| SHA-256 or name differs from the registry | refused | refused |
+| not reviewed (not in the registry, or another version) | installed with a warning | restored (status shown) |
+
+When no usable index is available, the status is reported as **could not be checked**, never as "not
+reviewed": a warning for a direct install, and for a restore only when the registry is configured. The S8.2
+behaviour does not depend on the registry: a lock file is restored offline from the cache even without an index.
+`createscript run` never uses the network or the registry.
+
+### Keys
+
+`RegistryTrust.official()` is the only production configuration. Its key list is empty until the production
+key has been generated and approved (see `registry-template/SIGNING.md`); while it is empty the client does
+not connect and does not touch the cache. It refuses keys whose ID starts with `test-only-`, and any
+configuration for the official repository refuses them too. The tests pass their own `RegistryTrust` (another
+repository name, test keys made in memory). Rotation: the client trusts a list of keys, and an index may carry
+several signatures (see [Signatures](#signatures-indexjsonsig)).
+
+### The saved index
+
+Accepted indexes are saved in `<cache>/registry/<owner>/<repository>/` (the cache directory of
+`docs/packages.md`):
+
+- `index-<SHA-256>.json` and `signature-<SHA-256>.sig`: the bytes as downloaded, named by their SHA-256;
+- `trusted.json`: the history, `{"format":1,"generated":…,"indexSha256":…,"repository":…,"serial":…,"signatureSha256":…}`;
+- `lock`: held while the history is read and updated.
+
+Only accepted indexes are saved. Saving writes the two files first (a temporary file, written to disk, then an
+atomic rename), and then replaces `trusted.json` by an atomic rename. A process stopped at any point leaves
+either the old or the new state (tested by stopping at each step, and on macOS by killing a separate JVM with
+SIGKILL at each step); leftover temporary files are removed by the next update. Every read checks the SHA-256
+of the files and verifies the signature again with the current keys.
+
+- A saved index whose files are damaged is not used; offline this is an error, online the new index is still
+  compared with the serial, SHA-256 and time in `trusted.json`.
+- A damaged or changed `trusted.json` stops the command (73) and says how to start again (removing the
+  directory, which also removes the rollback protection). It is not reset silently.
+- An older index (smaller serial) than the saved one is refused; if the saved one is still valid it is used
+  instead (this is also what happens when two `createscript` processes update the cache at the same time). The
+  same serial with other bytes is refused.
+- Offline, only a saved index that has not expired is used, with a note that it may not show the latest
+  review status. Online, when the registry cannot be reached, the same applies.
+- The `registry`, owner and repository directories are created with mode 0700 and must not be symbolic links,
+  must belong to the user and must not be writable by group or others; otherwise the cache is not used (73).
+  Files are read without following links. The cache root itself may be a link, as for the archive cache.
+
+Limits: the history is protected only by the user's file permissions (see [Security limits](#security-limits)).
+A program running as the same user can delete or replace the cache; after that, the next index is accepted as
+on first use.
 

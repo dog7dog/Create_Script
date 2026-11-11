@@ -148,6 +148,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   owners, unchanged reviewed versions) and approvals (two maintainers other than the author and the package
   owners), builds the next index, signs it locally (test keys only), and checks it before and after publishing.
   `GitHubReleases.repositoryInfo` reads a repository's numeric IDs.
+- `createscript install <name>@<version>` (S8.3 Phase 3; **the official registry is not published and has no
+  production key yet, so the command refuses with exit code 69 without connecting**): installs a reviewed
+  package and its reviewed dependencies by name from the Ed25519-signed CreateScript-Registry index, with the
+  S8.2 installer and the reviewed SHA-256 values pinned, and checks the result after the installation. Exact
+  versions only. Yanked versions are refused, removed packages are refused, and an index that is unsigned,
+  wrongly signed, signed by an unknown key, expired, rolled back or reusing a serial is never used.
+- `createscript-install`: `RegistryTrust` (the built-in configuration; no production key yet, test keys are
+  refused for the official registry), `RegistryClient` (downloads `index.json` and `index.json.sig` from the
+  latest release with the `GitHubReleases` rules, `GitHubReleases.latestAsset`), `RegistryCache` (keeps the
+  accepted index bytes, the signature and the history, `trusted.json`, with atomic updates, a lock, and checks
+  against links, damage and other users) and the review checks. `Installer.install` has overloads that take the
+  registry lookup; `InstallResult` has `reviews` and `notes`. The manifest, lock file and archive formats are
+  unchanged.
+- `createscript install github:owner/repo@v…` and `createscript install` show the registry review status of each
+  package when an index is available (refusing removed packages, newly installed yanked versions and SHA-256
+  values that differ from the registry; warning about packages that are not reviewed), and otherwise warn that
+  the review status **could not be checked** (for direct installs; for restores only when the registry is
+  configured). With no production key, a direct install now prints that warning; nothing else changes.
 
 ## [0.1.0-alpha] - 2026-11-04 (pre-release)
 

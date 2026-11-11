@@ -305,9 +305,12 @@ limit.
 | `immutable` of the release (from the API) | GitHub | the release assets cannot be replaced after publishing | whether they were good when published |
 | The cache | nobody | — | it is read only when the lock file gives a SHA-256, and that SHA-256 is checked every time |
 
-Reviewed hashes in an official registry with a signed index are planned for S8.3 (see [registry.md](registry.md);
-Phase 1, the formats and checks, is in development). Signatures by the authors of packages themselves are not
-planned yet.
+Reviewed hashes in an official registry with a signed index are being built in S8.3 (see [registry.md](registry.md)).
+The client is in place (Phase 3: `createscript install <name>@<version>`, and a review status for direct installs
+and restores), but **the official registry is not published and has no production key yet, and it is looking for
+maintainers**; until then `createscript install <name>@<version>` refuses (exit code 69) without connecting, and
+direct installs report that their review status could not be checked. Signatures by the authors of packages
+themselves are not planned yet.
 
 ### Cache
 
@@ -417,18 +420,23 @@ know it; we did not run them for S8.1.
   the JDK, and never touches files or the network; it takes bytes and returns values and diagnostics.
 - `createscript-install` (S8.2 Phases 2 and 3): downloads package archives from GitHub Releases with the JDK HTTP
   client, checks their SHA-256 and GitHub's digest, keeps the cache, resolves dependencies, and installs them
-  with the journal. It never runs what it downloads.
+  with the journal. It never runs what it downloads. S8.3 Phase 3 adds the registry client (`RegistryTrust`,
+  `RegistryClient`, `RegistryCache`, `RegistryReview`): it downloads and verifies the signed index, keeps the
+  accepted index and its history, and checks the review status of what is installed ([registry.md](registry.md#the-client-createscript-install-nameversion-phase-3)).
 - `createscript-registry-tool` (S8.3 Phase 2): checks registry pull requests and approvals, and builds, signs
   (test keys only for now), checks and verifies the index for the planned registry ([registry.md](registry.md)).
   It is not part of the `createscript` packages.
 - `createscript-cli`: reads and writes the files, checks the entry file on disk, and implements `init`,
-  `manifest check`, `lock check`, `pack` and `install`.
+  `manifest check`, `lock check`, `pack` and `install` (including `install <name>@<version>`).
 - `createscript-core` (the language, compiler and virtual machine) is unchanged.
 
 ## Installing packages (S8.2 Phase 3)
 
 > **In development.** Installed packages are used by `createscript run [directory]` (S8.2 Phase 4; see
 > [Running a project](cli.md#running-a-project) and [Modules from packages](language.md#modules-from-packages)).
+> `createscript install <name>@<version>` (installing by name from the signed registry index, S8.3 Phase 3) uses
+> the same installer; it is described in [registry.md](registry.md#the-client-createscript-install-nameversion-phase-3)
+> and does not work until the official registry is published.
 
 ```text
 $ createscript install github:owner/vector-math@v1.2.0
@@ -712,7 +720,8 @@ this; keep projects in directories that only you can write to.
 
 ### Still planned
 
-- An official registry reviewed through pull requests (S8.3, [registry.md](registry.md)). Packages keep
-  `source: "github:owner/repo"`, so the manifest, lock file and archive formats do not change; packages that are
-  not in the registry can still be installed directly.
+- The official registry reviewed through pull requests (S8.3, [registry.md](registry.md)): the formats, the
+  operating tools and the client exist, but the registry repository, its maintainers (at least three are needed)
+  and the production key do not yet. Packages keep `source: "github:owner/repo"`, so the manifest, lock file and
+  archive formats do not change; packages that are not in the registry can still be installed directly.
 - Version ranges and dependency resolution (S8.4).

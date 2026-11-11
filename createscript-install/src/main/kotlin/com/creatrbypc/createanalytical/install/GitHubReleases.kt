@@ -94,6 +94,15 @@ class GitHubReleases internal constructor(
         return RepositoryInfo(long(json, "id"), text(json, "full_name"), long(ownerJson, "id"), text(ownerJson, "login"), text(ownerJson, "type"))
     }
 
+    // 最新のリリースのアセット（S8.3 Phase 3: レジストリの署名済み index）。https://github.com/持ち主/リポジトリ/releases/latest/download/<asset>。
+    // repository は呼び出し側が組み込みの設定から渡す（利用者の入力からは受け取らない）。接続先・リダイレクト・大きさは、パッケージのダウンロードと同じ規則
+    fun latestAsset(repository: String, asset: String, maxBytes: Long): ByteArray {
+        require(ProjectRules.isValidSource("github:$repository")) { "invalid repository: $repository" }
+        require(Regex("[A-Za-z0-9][A-Za-z0-9._-]{0,99}").matches(asset)) { "invalid asset name: $asset" }
+        val uri = URI(endpoints.download.scheme, endpoints.download.rawAuthority, "/$repository/releases/latest/download/$asset", null, null)
+        return http.get(uri, minOf(maxBytes, limits.maxDownloadBytes), "application/octet-stream").body
+    }
+
     companion object {
         fun sha256Hex(bytes: ByteArray): String = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
     }

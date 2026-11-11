@@ -80,7 +80,13 @@ class InstallCliTest {
             ),
             result.out.lines().dropLast(1),
         )
-        assertEquals("warning: vector-math 1.2.0: the release is not immutable; its owner can still replace its assets\n", result.err)
+        // S8.3 Phase 3: 公式のレジストリはまだ無い（本番の鍵が無い）ので、審査の状態は「確かめられない」（未審査とは言わない）
+        assertEquals(
+            "warning: vector-math 1.2.0: the release is not immutable; its owner can still replace its assets\n" +
+                "warning: the review status of github:owner/vector-math@v1.2.0 could not be checked: the official CreateScript-Registry has not been published yet: " +
+                "no registry signing key is built into this createscript\n",
+            result.err,
+        )
         // 再実行（キャッシュから。.gitignore があれば案内しない）
         Files.writeString(project.resolve(".gitignore"), "build/\n/.createscript/\n")
         val again = install(project.toString())

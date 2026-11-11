@@ -134,6 +134,9 @@ In development (not in v0.1.0-alpha). See [Project files](packages.md) for the f
   (schema version 2). The same files always give the same bytes; an existing file is never overwritten.
 - `createscript install [github:<owner>/<repo>@v<version>] [directory] [--offline]` installs the dependencies
   and, with a package, adds it to `createscript.json` (see [Installing packages](packages.md#installing-packages-s82-phase-3)).
+- `createscript install <name>@<version> [directory] [--offline]` installs a package reviewed in the signed
+  CreateScript-Registry index (S8.3 Phase 3). **The official registry is not published yet**, so this currently
+  stops with exit code 69 without connecting (see [registry.md](registry.md#the-client-createscript-install-nameversion-phase-3)).
 - The directory defaults to the current directory. The checks only read files. `createscript run [directory]`
   reads them; `createscript run <file>.cscr` does not.
 

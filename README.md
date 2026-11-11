@@ -16,6 +16,11 @@ that run untrusted scripts. This repository contains:
 - **`createscript-registry-tool`** and **`registry-template/`** (in development, not in service): the tool and
   the template for operating the planned registry. Not part of the `createscript` packages.
 
+> **CreateScript-Registry is not published yet, and it is looking for maintainers.** The client side exists
+> (`createscript install <name>@<version>` checks an Ed25519-signed index), but there is no registry repository,
+> no production signing key and no published index, so that command currently refuses without connecting.
+> Install packages with `createscript install github:owner/repo@v1.2.0`. See [docs/registry.md](docs/registry.md).
+
 > **Status: 0.1.0-alpha.** The language and the APIs can still change.
 > [v0.1.0-alpha](https://github.com/dog7dog/Create_Script/releases/tag/v0.1.0-alpha) is published as a
 > pre-release on GitHub Releases (2026-11-04), with packages for Linux x86_64 and aarch64 (`.tar.gz`), an
@@ -55,6 +60,8 @@ println(fib(10))   // 55
   the same files) from a library project; `createscript install github:owner/repo@v1.2.0` installs a package and its dependencies from
   GitHub Releases with SHA-256 checks, and `createscript run` runs the project with them, without the network; only
   public modules of direct dependencies can be imported (see [Project files](docs/packages.md)).
+  `createscript install <name>@<version>` will install reviewed packages by name from the signed CreateScript-Registry
+  index once the registry is published (not yet; see [docs/registry.md](docs/registry.md)).
 - A safe execution model: fixed limits on stack, call depth, objects and list elements; an instruction budget
   per tick; input and program size limits chosen by the host: small for embedding hosts (4096 characters and
   4096 instructions), large for the `createscript` command (1,000,000 characters per file, 1024 modules, no

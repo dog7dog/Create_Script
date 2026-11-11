@@ -383,6 +383,9 @@ class CreateScriptCli(private val out: PrintStream, private val err: PrintStream
             |  createscript pack [directory] [--output <file>]  make createscript-package.zip from a library
             |  createscript install [github:<owner>/<repo>@v<version>] [directory] [--offline]
             |                                    install the dependencies (and add the given package to createscript.json)
+            |  createscript install <name>@<version> [directory] [--offline]
+            |                                    install a package reviewed in the signed CreateScript-Registry index
+            |                                    (the official registry is not published yet; this refuses until it is)
             |  createscript --help
             |  createscript --version
             |

@@ -11,6 +11,10 @@ CreateScript は、Kotlin に似た書き方の、静的型付けの小さなス
 - **`createscript-project`**（開発中。v0.1.0-alpha には入っていません）：プロジェクトのファイル `createscript.json`・`createscript.lock` の読み取り（厳密な JSON）・検査・正規形と、計画中のパッケージのレジストリの形式・署名の検証（[docs/registry.md](docs/registry.md)）。ファイルとネットワークには触れません。
 - **`createscript-registry-tool`**・**`registry-template/`**（開発中。運用していません）：計画中のレジストリを運営するための道具と雛形。`createscript` の配布物には含まれません。
 
+> **CreateScript-Registry はまだ公開していません。メンテナーを募集しています。** クライアント側（Ed25519 の署名を確かめた index を使う
+> `createscript install <名前>@<版>`）はありますが、レジストリのリポジトリ・本番の署名鍵・公開した index が無いため、このコマンドは今は通信せずに拒否します。
+> パッケージは `createscript install github:owner/repo@v1.2.0` でインストールしてください（[docs/registry.md](docs/registry.md)）。
+
 > **状態：0.1.0-alpha。** 言語と API は、まだ変わることがあります。
 > [v0.1.0-alpha](https://github.com/dog7dog/Create_Script/releases/tag/v0.1.0-alpha) を、GitHub Releases にプレリリースとして公開しています（2026-11-04）。
 > Linux x86_64・aarch64 用の `.tar.gz`、署名なしの macOS arm64 用の `.pkg`、`SHA256SUMS` があります。[対応環境](#対応環境)を参照してください。
@@ -45,6 +49,8 @@ println(fib(10))   // 55
   パッケージのアーカイブ（`createscript-package.zip`。同じファイルからは同じバイト列）を作れます。`createscript install github:owner/repo@v1.2.0` で、
   GitHub Releases からパッケージと依存を SHA-256 を確かめてインストールでき、`createscript run` で、通信せずにそれらを使って実行できます。
   import できるのは、直接の依存の公開モジュールだけです（[Project files](docs/packages.md)）。
+  レジストリが公開された後は、`createscript install <名前>@<版>` で、署名済みの CreateScript-Registry の index で審査済みのパッケージを名前でインストールできます
+  （まだ使えません。[docs/registry.md](docs/registry.md)）。
 - 安全な実行：スタック・呼び出しの深さ・オブジェクト・リストの要素に固定の上限があり、1 tick の命令の数も決まっています。
   入力とプログラムの大きさの上限はホストが選びます。埋め込み先では小さく（4096 文字・4096 命令）、`createscript` コマンドでは大きくなります
   （1 ファイル 1,000,000 文字・モジュール 1024 個・命令数の固定の上限なし。開発中。[Limits and safety](docs/language.md#limits-and-safety)）。

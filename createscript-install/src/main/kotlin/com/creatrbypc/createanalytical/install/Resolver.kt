@@ -37,7 +37,9 @@ internal class ResolvedPackage(
 //   その場合、アーカイブのマニフェストの依存とロックファイルの dependencies が違えば、ロックファイルが書き換えられたとみなしてエラー
 // - アーカイブは PackageArchives.read で検査する（library・name・version の一致・パス・ソース）。コードは実行しない
 // - アーカイブは正規形（createscript pack が書く形。PackageArchives.isCanonical）でなければならない（S8.2 M-1）
-internal class Resolver(private val fetcher: PackageFetcher, private val limits: InstallLimits, private val offline: Boolean) {
+// - pins（S8.3 Phase 3: install <名前>@<版>）は、レジストリで審査済みの SHA-256（取得元を小文字にしたもの@版 → SHA-256）。それと違うアーカイブは拒否する。
+//   ロックファイルの SHA-256 と pins が違えば、取得せずにエラー
+internal class Resolver(private val fetcher: PackageFetcher, private val limits: InstallLimits, private val offline: Boolean, private val pins: Map<String, String> = emptyMap()) {
     private class Fetched(val sha256: String, val archive: PackageArchives.Archive, val summary: FetchSummary)
 
     private val fetched = HashMap<String, Fetched>()
@@ -46,7 +48,12 @@ internal class Resolver(private val fetcher: PackageFetcher, private val limits:
     private fun invalid(message: String): Nothing = throw InstallFailure(InstallFailure.Kind.INVALID, message)
 
     // source の version のアーカイブを得て検査する。expectedName が null なら、名前はアーカイブのマニフェストのものを使う（install github:…@v… のとき）
-    fun fetch(source: String, version: String, expectedSha256: String?, expectedName: String?): Pair<String, PackageArchives.Archive> {
+    fun fetch(source: String, version: String, lockedSha256: String?, expectedName: String?): Pair<String, PackageArchives.Archive> {
+        val pinned = pins[RegistryPlan.key(source, version)]
+        if (lockedSha256 != null && pinned != null && lockedSha256 != pinned) {
+            invalid("createscript.lock records the SHA-256 $lockedSha256 for $source $version, but the CreateScript-Registry reviewed $pinned; nothing was changed")
+        }
+        val expectedSha256 = lockedSha256 ?: pinned
         val key = "$source@$version"
         fetched[key]?.let { cached ->
             if (expectedSha256 != null && cached.sha256 != expectedSha256) throw FetchFailure.HashMismatch(expectedSha256, cached.sha256).asInstallFailure(source, version)
@@ -55,6 +62,9 @@ internal class Resolver(private val fetcher: PackageFetcher, private val limits:
         }
         val result = try {
             fetcher.fetch(source, version, expectedSha256, offline)
+        } catch (failure: FetchFailure.HashMismatch) {
+            if (lockedSha256 != null) throw failure.asInstallFailure(source, version)
+            invalid("$source $version does not match the SHA-256 reviewed in the CreateScript-Registry: expected ${failure.expected}, got ${failure.actual}. The release asset was replaced or damaged; it was not installed")
         } catch (failure: FetchFailure) {
             throw failure.asInstallFailure(source, version)
         }

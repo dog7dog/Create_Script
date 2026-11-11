@@ -59,6 +59,9 @@ class InstallResult(
     val manifestChanged: Boolean,
     val lockChanged: Boolean,
     val warnings: List<String>,
+    // レジストリによる審査の状態（S8.3 Phase 3。index を使えたときだけ）と、index について知らせること
+    val reviews: List<PackageReview> = emptyList(),
+    val notes: List<String> = emptyList(),
 )
 
 // install.lock を待つ時間（S8.2 L-8）。待ち始めて notifyAfterMillis たったら、onWait で一度知らせる
@@ -108,7 +111,31 @@ class Installer internal constructor(
 
     private fun invalid(message: String): Nothing = throw InstallFailure(InstallFailure.Kind.INVALID, message)
 
-    fun install(spec: PackageSpec?, offline: Boolean): InstallResult {
+    fun install(spec: PackageSpec?, offline: Boolean): InstallResult = start(spec, null, offline, null)
+
+    // 審査の状態をレジストリの index で確かめる（S8.3 Phase 3）。registry は RegistryClient.lookup の結果（null なら確かめない: S8.2 と同じ）
+    fun install(spec: PackageSpec?, offline: Boolean, registry: RegistryLookup?): InstallResult = start(spec, null, offline, registry)
+
+    // install <名前>@<版>（S8.3 Phase 3）。署名と履歴を確かめた index だけを使い、取得元・SHA-256・依存を index から決める。
+    // index が無い・拒否された・名前や版が審査済みでなければ、インストールを始めずに失敗する（何も変えない）
+    fun install(request: RegistryRequest, offline: Boolean, registry: RegistryLookup): InstallResult {
+        val available = when (registry) {
+            is RegistryLookup.Available -> registry
+            is RegistryLookup.Refused -> invalid("cannot install $request: ${registry.message}. Nothing was changed")
+            is RegistryLookup.Unavailable -> when (registry.reason) {
+                RegistryLookup.Reason.NOT_CONFIGURED -> throw InstallFailure(
+                    InstallFailure.Kind.NETWORK,
+                    "cannot install $request: ${registry.message}. Nothing was changed. Packages can still be installed from GitHub with github:<owner>/<repo>@v<version>",
+                )
+                RegistryLookup.Reason.CACHE_UNUSABLE -> invalid("cannot install $request: ${registry.message}. Nothing was changed")
+                else -> throw InstallFailure(InstallFailure.Kind.NETWORK, "cannot install $request: ${registry.message}. Nothing was changed")
+            }
+        }
+        val plan = RegistryReview.plan(available, request)
+        return start(plan.spec, plan, offline, registry)
+    }
+
+    private fun start(spec: PackageSpec?, plan: RegistryPlan?, offline: Boolean, registry: RegistryLookup?): InstallResult {
         val realRoot = try {
             root.toRealPath()
         } catch (error: IOException) {
@@ -134,7 +161,7 @@ class Installer internal constructor(
                         "Move the project to a drive formatted as APFS or Mac OS Extended",
                 )
             }
-            run(layout, owner, spec, offline)
+            run(layout, owner, spec, offline, plan, registry)
         }
     }
 
@@ -199,7 +226,7 @@ class Installer internal constructor(
         }
     }
 
-    private fun run(layout: Layout, owner: Owner, spec: PackageSpec?, offline: Boolean): InstallResult {
+    private fun run(layout: Layout, owner: Owner, spec: PackageSpec?, offline: Boolean, plan: RegistryPlan?, registry: RegistryLookup?): InstallResult {
         var recovery: String? = null
         if (SafeIo.exists(layout.journal)) {
             val outcome = Recovery(layout, owner, limits, hooks, keys).recover(preferForward = true)
@@ -209,15 +236,15 @@ class Installer internal constructor(
             }
         }
         // 復旧した後の失敗でも、復旧したこと（createscript.json・createscript.lock が変わったかもしれないこと）を知らせる（S8.2 L-2）
-        if (recovery == null) return install(layout, owner, spec, offline, null)
+        if (recovery == null) return install(layout, owner, spec, offline, null, plan, registry)
         try {
-            return install(layout, owner, spec, offline, recovery)
+            return install(layout, owner, spec, offline, recovery, plan, registry)
         } catch (failure: InstallFailure) {
             throw InstallFailure(failure.kind, "first $recovery (check ${Manifests.FILE_NAME} and ${Lockfiles.FILE_NAME}); then this installation failed: ${failure.message}")
         }
     }
 
-    private fun install(layout: Layout, owner: Owner, spec: PackageSpec?, offline: Boolean, recovery: String?): InstallResult {
+    private fun install(layout: Layout, owner: Owner, spec: PackageSpec?, offline: Boolean, recovery: String?, plan: RegistryPlan?, registry: RegistryLookup?): InstallResult {
         val warnings = ArrayList<String>()
         // ジャーナルから参照されない作業用のディレクトリ（S8.2 L-3）。記録（journal.tmp・印）と完全に一致するものだけを消し、ほかは残して知らせる
         warnings += Leftovers(layout, owner, limits).clean()
@@ -240,13 +267,13 @@ class Installer internal constructor(
         }
 
         // 依存の解決と取得（プロジェクトのファイルは変えない）
-        val resolver = Resolver(fetcher, limits, offline)
+        val resolver = Resolver(fetcher, limits, offline, plan?.pins ?: emptyMap())
         var dependencies = manifest.dependencies
         var added: Dependency? = null
         var manifestNew = manifestFile.bytes
         if (spec != null) {
             val lockedEntry = lock?.packages?.firstOrNull { it.source == spec.source && it.version == spec.version }
-            val (_, archive) = resolver.fetch(spec.source, spec.version, lockedEntry?.sha256, null)
+            val (_, archive) = resolver.fetch(spec.source, spec.version, lockedEntry?.sha256, plan?.request?.name)
             val name = archive.manifest.name
             if (name == manifest.name) invalid("${spec.source} ${spec.version} is the package $name, which has the name of this project")
             val existing = manifest.dependencies.firstOrNull { it.name == name }
@@ -264,6 +291,9 @@ class Installer internal constructor(
             }
         }
         val packages = resolver.resolve(manifest.name, dependencies, lock)
+        // レジストリによる確認（S8.3 Phase 3）。拒否するもの（SHA-256 の違い・削除・新しく入れる取り下げ済みの版・index と違う依存）があれば、ここで止まる（何も変えていない）
+        val (reviews, reviewWarnings) = RegistryReview(registry, plan).check(packages, lock, if (plan == null) spec else null)
+        warnings += reviewWarnings
         hooks.reached("resolved")
         val lockNew = if (lockFile == null && packages.isEmpty()) {
             null
@@ -298,11 +328,30 @@ class Installer internal constructor(
         if (manifestChanged || lockChanged || toCreate.isNotEmpty()) {
             transact(layout, owner, manifestFile, manifestNew, lockFile, lockNew, toCreate).forEach { warnings += "not removed after the installation: $it" }
         }
+        plan?.let { verifyInstalled(layout, owner, it) }
         packages.flatMap { it.fetch.warnings }.forEach { warnings += it }
         val reports = packages.map { p ->
             InstalledPackage(p.name, p.version, p.source, p.sha256, p in toCreate, relative(layout, layout.packageDirectory(p.name, p.version)), p.requiredBy, p.fetch)
         }
-        return InstallResult(recovery, reports, added, manifestChanged, lockChanged, warnings)
+        return InstallResult(recovery, reports, added, manifestChanged, lockChanged, warnings, reviews, (registry as? RegistryLookup.Available)?.notes.orEmpty())
+    }
+
+    // install <名前>@<版> の後の確認（S8.3 Phase 3）: プロジェクトのファイルとパッケージのディレクトリを読み直し、index の審査済みのものと同じであること
+    private fun verifyInstalled(layout: Layout, owner: Owner, plan: RegistryPlan) {
+        fun failed(reason: String): Nothing = unsafe("${plan.request} was installed, but the check after the installation failed: $reason. Run createscript install again to check the project")
+        val manifest = readProjectFile(layout.manifest, Manifests.MAX_BYTES)?.let { Manifests.parse(it.bytes).manifest } ?: failed("${Manifests.FILE_NAME} cannot be read")
+        if (manifest.dependencies.none { it.name == plan.request.name && it.version == plan.request.version }) failed("${Manifests.FILE_NAME} does not list ${plan.request.name} ${plan.request.version}")
+        val lock = readProjectFile(layout.lockfile, Lockfiles.MAX_BYTES)?.let { Lockfiles.parse(it.bytes).lockfile } ?: failed("${Lockfiles.FILE_NAME} cannot be read")
+        for (expected in plan.closure) {
+            val entry = lock.packages.firstOrNull { it.name == expected.name } ?: failed("${Lockfiles.FILE_NAME} does not list ${expected.name}")
+            if (entry.version != expected.version || !entry.source.equals(expected.source, ignoreCase = true) || entry.sha256 != expected.sha256 || entry.dependencies != expected.dependencies) {
+                failed("${Lockfiles.FILE_NAME} lists ${entry.name} ${entry.version} differently from the registry")
+            }
+            val directory = layout.packageDirectory(entry.name, entry.version)
+            val state = PackageDirectories.inspect(directory, owner, keepContents = true)
+            if (state !is PackageState.Valid) failed("${relative(layout, directory)} is not installed correctly")
+            if (state.marker.sha256 != expected.sha256 || !PackageDirectories.matchesArchive(state, expected.sha256)) failed("${relative(layout, directory)} does not match the reviewed archive")
+        }
     }
 
     private fun readProjectFile(path: Path, maxBytes: Int): ReadFile? = try {
