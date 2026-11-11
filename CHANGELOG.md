@@ -195,6 +195,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   file outside the project changes. L-5 itself is still unresolved; no installer code changed. A dedicated
   publishing GitHub App that alone may create `index-*` tags is proposed in the registry template's documents (not
   adopted).
+- S8.3 Phase 9 (documents only, `docs/audits/S8.3-Phase9-Integration-Preparation.md`): the design with two GitHub
+  Apps (Registry Checks App for the required checks, Registry Publisher App for publishing and the only creator of
+  `index-*` tags) is adopted in `docs/registry-github-architecture.md` but not implemented; the test plan on GitHub
+  (`docs/registry-github-integration-test.md`, IT-01 to IT-28) is written but not run.
 
 ## [0.1.0-alpha] - 2026-11-04 (pre-release)
 

@@ -137,16 +137,19 @@ What protects the index releases, and what GitHub settings cannot do:
   watching the releases (the lead checks after every publication, and anyone may, that the latest release is the
   highest `index-<serial>`).
 
-### Proposed: a publishing GitHub App (recommended in S8.3 Phase 8, **not adopted yet**)
+### The publishing GitHub App (design adopted in S8.3 Phase 9, **not implemented yet**)
 
-The template still publishes with the `release` job's `GITHUB_TOKEN`. The following design is the recommendation
-of `docs/audits/S8.3-Phase8-Security-Hardening.md`; adopting it needs the approval of the lead and the
-maintainers, a change of `publish.yml` and the rulesets, and the tests on GitHub listed in
-`docs/registry-github-integration-test.md` (scenarios 21 to 25). Nothing of it has been tried on GitHub.
+The design below was adopted in S8.3 Phase 9 (`docs/registry-github-architecture.md`). The template does **not**
+implement it yet: it still publishes with the `release` job's `GITHUB_TOKEN`, and the tag ruleset is still the
+single one without a creation rule. Implementing it is the change plan W1 to W7 of
+`docs/audits/S8.3-Phase9-Integration-Preparation.md`, followed by the tests IT-09 and IT-21 to IT-27 of
+`docs/registry-github-integration-test.md`. Nothing of it has been tried on GitHub; in particular, how a bypass
+actor of a ruleset acts on the creation of tags is not verified.
 
 - **A second App, "CreateScript Registry Publisher"**: repository permission "Contents: read and write" only,
   installed only on the registry repository, no webhook. It is separate from the checks App, so that neither key
-  can do the other's job.
+  can do the other's job: the checks App cannot create releases or tags, and the publishing App cannot create the
+  required checks or approve pull requests. Neither ever sees the index signing key, which stays offline.
 - **Its private key** is a secret of the environment `publish` (required reviewers = the maintainers, "prevent
   self-review", deployment branches `main` only), so a workflow can use it only after the second approval. It is
   never stored anywhere else; it is rotated like the checks App's key.

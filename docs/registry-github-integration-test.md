@@ -1,98 +1,374 @@
 # CreateScript-Registry GitHub 実環境テスト手順書
 
-> **この文書は計画です。ここに書いたテストは、どれも実施していません（2026-11-11、S8.3 Phase 7 の時点）。**
+> **この文書は計画です。ここに書いたテストは、どれも実施していません（2026-11-11、S8.3 Phase 9 の時点）。**
 >
-> - 実施するには、運営責任者の明示の許可が必要です。テスト用のリポジトリ・App・鍵の作成も含め、GitHub への変更を伴います。
+> - 実施には、運営責任者の明示の許可が必要です。テスト用のリポジトリ・App・鍵の作成も含め、GitHub への変更を伴います。
 > - 本番の CreateScript-Registry では行わず、本番の鍵も使いません。
-> - 前提になる文書：`docs/registry-production-setup.md`、`registry-template/GOVERNANCE.md`・`SIGNING.md`、`docs/audits/S8.3-Phase7-Remediation.md`。
+> - 構成は `docs/registry-github-architecture.md`（Phase 9 で採用した、Checks App と Publisher App の 2 つの App の設計）に従います。
+> - Publisher App・ruleset A・B は、**まだ雛形に実装されていません**（`docs/audits/S8.3-Phase9-Integration-Preparation.md` の変更計画 W1〜W7）。IT-09・IT-21〜IT-27 は、その実装の後に行います。
+> - 前提の ID（P-1〜P-17）は、architecture の 7 章のものです。
 
 ## A. テスト環境
 
 | 項目 | 内容 |
 |---|---|
-| リポジトリ | 本番とは別の **テスト専用のリポジトリ**（例：`<owner>/CreateScript-Registry-Test`。public。名前に Test を含める）。テストが終わったら削除するか、アーカイブする |
-| GitHub App | テスト専用の App（例：「CreateScript Registry Checks (Test)」）。権限は Checks: read and write だけ。テスト用のリポジトリだけにインストールする。本番の App は使わない |
-| 署名の鍵 | テスト専用の Ed25519 の鍵。鍵の ID は `test-only-` で始める（例：`test-only-integration-1`）。テスト用の機械で作り、テストの後に破棄する。**本番の公開鍵・秘密鍵は使わない**。本番の `RegistryTrust.official()` は `test-only-` の鍵を拒否する |
-| テストの鍵の信頼 | テスト用のリポジトリの `keys/trusted-keys.json` に、テスト用の公開鍵を入れる（`publish-check` は、テストの鍵を拒否する。そのため、公開の流れの試験には、テスト用のツールのビルド（`allowTestKeys` を有効にした試験用の構成）が必要。これはコードの変更を伴うので、別に承認を得る） |
-| クライアント | 試験用のビルド：`RegistryTrust` に、テスト用のリポジトリとテスト用の鍵を渡したもの（本番の配布物ではない） |
-| メンテナー | テスト用のアカウントを 3 つ以上（2 要素認証あり）。作成者・承認者・パッケージの持ち主・外部の協力者（fork）の役を分ける |
-| Release | テスト用のリポジトリの `index-*` の Release だけ。本番のレジストリの Release とは混ぜない |
-| 記録 | 各テストの証拠（画面の写し・API の応答・ワークフローの実行の URL・ログ）を、テスト用のリポジトリの issue と、`docs/audits/` の結果の報告書に残す |
+| リポジトリ | テスト専用（例：`<owner>/CreateScript-Registry-Test`。public。名前に Test を含める）。本番とは別のリポジトリなので、変数・secret・environment・ruleset・Release はすべて別 |
+| Registry Checks App（テスト用） | 例：「CreateScript Registry Checks (Test)」。権限は Checks: read and write だけ。テスト用のリポジトリだけにインストールする。鍵は、テスト用のリポジトリの environment `registry-checks` |
+| Registry Publisher App（テスト用） | 例：「CreateScript Registry Publisher (Test)」。権限は Contents: read and write だけ。テスト用のリポジトリだけにインストールする。鍵は、テスト用のリポジトリの environment `publish` |
+| 署名の鍵 | テスト専用の Ed25519 の鍵。鍵の ID は `test-only-integration-1`（`test-only-` で始める）。テスト用の機械で作り、テストの後に破棄する。**本番の CLI・ツールの信頼の一覧には入れない** |
+| ツール | `publish-check` は、テスト用の鍵を拒否する。そのため、公開の流れの試験には、**テスト専用のツールのビルド**（テスト用の鍵を受け入れるもの。計画 W7）が必要。本番のツールには、その経路を加えない |
+| クライアント | テスト専用のビルド。`RegistryTrust(<テスト用のリポジトリ>, <テスト用の公開鍵>)` を渡すもの（計画 W7）。本番の配布物ではない。`CREATESCRIPT_CACHE_DIR` はテスト専用のディレクトリにする |
+| `maintainers.json` | テスト用のアカウント 3 つ以上（2 要素認証あり）。役割を分ける：運営責任者（T-lead）、メンテナー（T-m2・T-m3）、パッケージの持ち主（T-owner）、外部の協力者（T-outside、fork から PR を出す） |
+| ruleset | テスト用のリポジトリに、`main`（App の ID はテスト用の Checks App）、A（作成、回避者はテスト用の Publisher App）、B（更新・削除、回避者なし） |
+| environment | `registry-checks`（main だけ）、`publish`（承認者は T-m2・T-m3、自分の承認の禁止、main だけ） |
+| Release | テスト用のリポジトリの `index-*` だけ |
+| 証拠の保存先 | テスト用のリポジトリの issue「Integration test run <日付>」に、試験ごとのコメントとして残す（ワークフローの実行の URL、API の応答の JSON、画面の写し、ログ）。まとめを `docs/audits/` の結果の報告書に残す |
 
-## B. テストのシナリオ
+## B. 全体の停止条件（どの試験の途中でも、すぐに止める）
 
-| # | シナリオ | 事前条件 | 操作 | 期待する結果 |
-|---|---|---|---|---|
-| 1 | 正常な PR の検証 | 雛形・ruleset・App・environment を適用済み。テスト用のパッケージの immutable な Release | 登録の PR を出し、2 人が承認し、`recheck` を付ける | `registry/validate`・`registry/approvals` が App（`integration_id`）から成功で付き、マージできる |
-| 2 | 必須チェックの偽装 | 外部の協力者のアカウント（fork） | `registry/validate`・`registry/approvals` という名前のジョブを持つワークフローを、fork の PR に加える | ワークフローの実行は承認待ちになる。実行させても、必須チェックは満たされない（App が違う）。`validate` は `.github/` の変更を拒否する |
-| 3 | 承認の不足 | 1 と同じ | 承認 1 人で `recheck` | `registry/approvals` が失敗。GitHub もマージを拒否する |
-| 4 | 作成者による自己承認 | メンテナーが作成した PR | 作成者が承認しようとする | GitHub が拒否する。`check-approvals` も作成者を数えない |
-| 5 | 利益相反のある承認 | パッケージの持ち主であるメンテナー | その持ち主が、自分のパッケージの更新を承認する | `registry/approvals` が「conflict of interest」で数えない |
-| 6 | PR の更新の後の古い承認 | 承認済みの PR | 新しいコミットを push する。古い実行を再実行する | GitHub が古い承認を取り消す。古い実行は「outdated」で止まり、チェックを報告しない |
-| 7 | GitHub App が入っていない | App をアンインストールする | PR を更新する | `report` が「not installed」で失敗し、必須チェックが付かず、マージできない |
-| 8 | App のトークンの失効 | 1 と同じ | `report` の実行の後に、ログに残ったトークンが無いことを確かめる。トークンを（テストの範囲で）記録した場合は、その後に使えないことを確かめる | ログにはマスクされた値だけがある。実行の後、トークンは失効している（API が 401） |
-| 9 | 署名の不正 | テスト用の鍵 | 1 バイト変えた署名の公開の PR | `validate`（`publish-check`）が拒否する |
-| 10 | index の serial の巻き戻し | serial 2 を公開済み | serial 1 の index の公開の PR | 拒否される（serial は直前の次でなければならない） |
-| 11 | immutable な Release | immutable releases が有効 | 公開した後に、アセットを差し替えようとする・Release を編集する | GitHub が拒否する。`verify` が `immutable: true` を確認する |
-| 12 | Release のアセットの digest の不一致 | （再現方法は要検討。GitHub が digest を正しく計算する限り、通常は起きない） | 下書きの段階でアセットを差し替える | `release` が下書きのまま止まり、公開されず、latest にならない |
-| 13 | 公開の途中の失敗 | 公開の PR をマージ済み | `release` の途中で失敗させる（例：一時的に権限を外す） | 失敗が記録される。下書きは公開されない。何も自動では削除されない（GOVERNANCE.md「Failed publication」） |
-| 14 | 同じ serial での再実行 | 13 の後、または正常な公開の後 | ワークフローを再実行する | `check` が「already published」で止まるか、`release` が「already exists」で止まる。同じ serial は再び公開されない |
-| 15 | `latest` の更新 | 公開済みの index | 正常な公開 | 新しい `index-<serial>` が latest になる。書き込み権限で古い Release を latest にした場合に、保存した状態のあるクライアントが巻き戻しとして拒否することも確かめる（GOVERNANCE.md「Index tags and releases」） |
-| 16 | Linux CI | CreateScript のリポジトリ（push の許可が必要） | `ci.yml` を実行する | `verification-metadata.xml` の strict の検証を含めて、全テストが成功する。`WorkflowHarnessTest` が実行される（スキップされない）ことも確かめる |
-| 17 | 実際の HTTPS でのインストール | 試験用のクライアントのビルド | `createscript install <name>@<version>` | 成功する。改ざん・期限切れ・ネットワーク障害（オンラインでは失敗し、`--offline` を案内する）が、ドキュメントどおり |
-| 18 | yanked・removed のパッケージ | 公開済みの index | 取り下げ・削除の PR を公開する | 新しいインストールを拒否する。復元は、取り下げなら警告して行い、削除なら拒否する |
-| 19 | オフラインでの復元 | ロックファイルのあるプロジェクトと、キャッシュ | ネットワークを切って `install --offline` | ロックファイルから復元できる。index が無ければ「確かめられない」と示す |
-| 20 | L-5 の残存リスクの確認 | macOS・Linux のテスト用の機械 | 同じユーザーの権限での symlink の差し替えの競合（`CREATESCRIPT_L5_RACE=1 ./gradlew :createscript-install:test --tests '*L5RaceTest*'`） | 誤った成功が 0 であることを確かめる。プロジェクトの外への書き込みは、起こりうるもの（未解決）として記録する。GitHub のテストとは別の問題として扱う |
-| 21 | （案 2 を採用した場合）公開専用の App だけがタグを作れる | 案 2 の ruleset・App | メンテナーの権限で `index-99` のタグ・Release を作ろうとする | ruleset が拒否する。公開専用の App の token では作れる |
-| 22 | （案 2）作成の後の更新・削除 | 公開済みの `index-*` | 公開専用の App とメンテナーの両方で、タグの移動・削除を試す | どちらも拒否される（回避者のいない ruleset） |
-| 23 | （案 2）App の鍵は environment の承認の後だけ使える | `publish` environment の承認者 | 承認しないまま `release` を待たせる。別のワークフローから secret を読もうとする | secret は渡されない |
-| 24 | （案 2）App のトークンの失効 | 公開の後 | トークンが使えないことを確かめる | 失効している |
-| 25 | 緊急の公開の停止 | — | `publish` を無効にし、App のインストールを停止する | 公開できない。公開済みの Release は残る |
+1. 本番のリポジトリ・本番の App・本番の鍵に、何かの操作が及んだ、または及びそうになった。
+2. 秘密情報（App の鍵、トークン、署名の鍵）が、ログ・issue・画面の写しに現れた。
+   - その鍵を直ちに無効にし（App の鍵の削除、インストールの停止）、試験を中止して、運営責任者に報告する。
+3. 「拒否されるはず」の操作が成功した（偽装のチェックでマージできた、Publisher App 以外がタグを作れた、など）。
+   - それ以上の操作をせずに、状態を記録して止める。前提（P-x）が誤っていたものとして、architecture の 3 章の代替案を検討する。
+4. テスト用の鍵・設定が、本番の信頼の設定（`RegistryTrust.official()`、本番の `keys/trusted-keys.json`）に入っていることが分かった。
 
-## C. テスト結果の記録の様式
+各試験の「停止条件」は、上に加えて、その試験に固有のもの。
 
-各シナリオについて、次の表を 1 つずつ作る。
+## C. 試験
+
+判定は、まだすべて **NOT VERIFIED（未実施）**。
+
+### IT-01 正常な PR の検証
+- **事前条件：** 雛形・ruleset main・Checks App・environment を適用済み。テスト用のパッケージの immutable な Release がある。
+- **操作：** T-owner が登録の PR を出す。T-m2・T-m3 が承認する。ラベル `recheck` を付ける。
+- **期待結果：** `registry/validate`・`registry/approvals` が、テスト用の Checks App から head SHA に成功で付く（P-2・P-3）。マージできる。
+- **停止条件：** チェックが GitHub Actions の App から付いた。
+- **証拠：** 実行の URL、`GET /repos/{r}/commits/{sha}/check-runs` の応答（`app.id`）。
+- **判定：** NOT VERIFIED
+
+### IT-02 必須チェックの偽装
+- **事前条件：** IT-01 と同じ。外部の協力者のワークフローの実行に、承認を求める設定。
+- **操作：**
+  1. T-outside の fork から、`registry/validate`・`registry/approvals` という名前のジョブを持つワークフローを加えた PR を出す。
+  2. ワークフローの実行を承認する。
+  3. 本物の検査が失敗するように、PR を作っておく。
+- **期待結果：** 偽のチェックは GitHub Actions の App から付き、必須チェックを満たさない（P-1）。`validate` は `.github/` の変更を拒否する。マージできない。承認の前は、偽のワークフローは動かない（P-16）。
+- **停止条件：** マージのボタンが有効になった（**前提 P-1 が誤り**）。
+- **証拠：** check run の一覧（`app.id`）、マージの可否の画面、ruleset の評価の記録。
+- **判定：** NOT VERIFIED
+
+### IT-03 承認の不足
+- **事前条件：** IT-01 と同じ。
+- **操作：** T-m2 だけが承認し、`recheck` を付ける。
+- **期待結果：** `registry/approvals` が失敗する。GitHub もマージを拒否する。
+- **停止条件：** マージできた。
+- **証拠：** 実行のログ（`1 of the 2 approvals`）、マージの画面。
+- **判定：** NOT VERIFIED
+
+### IT-04 作成者による自己承認
+- **事前条件：** T-m2 が作成した運営の PR。
+- **操作：** T-m2 が承認しようとする。T-lead と T-m3 が承認する。
+- **期待結果：** GitHub が作成者の承認を拒否する。T-lead と T-m3 の承認でマージできる（デッドロックしない）。
+- **停止条件：** 作成者の承認が数えられた。
+- **証拠：** レビューの一覧、`approvals` のログ。
+- **判定：** NOT VERIFIED
+
+### IT-05 利益相反のある承認
+- **事前条件：** T-m3 がパッケージの持ち主として登録されている。
+- **操作：** そのパッケージの更新の PR を、T-m2 と T-m3 が承認する。
+- **期待結果：** `registry/approvals` が、T-m3 を「conflict of interest」で数えず、失敗する。
+- **停止条件：** 成功した。
+- **証拠：** ログ。
+- **判定：** NOT VERIFIED
+
+### IT-06 PR の更新の後の古い承認
+- **事前条件：** 承認済みで、チェックが成功している PR。
+- **操作：**
+  1. 新しいコミットを push する。
+  2. 古い実行を「Re-run」する。
+  3. 承認し直した後に `recheck` を付ける。
+- **期待結果：** GitHub が古い承認を取り消す。古い実行は「outdated」で止まり、チェックを報告しない。承認し直した後だけ成功する。
+- **停止条件：** 古い実行が、新しい head にチェックを付けた。
+- **証拠：** 実行のログ、check run の `head_sha`。
+- **判定：** NOT VERIFIED
+
+### IT-07 Checks App が入っていない
+- **事前条件：** テスト用の Checks App のインストールを停止する。
+- **操作：** PR を更新する。
+- **期待結果：** `report` が「not installed」で失敗し、必須チェックが付かず、マージできない。
+- **停止条件：** マージできた。
+- **証拠：** ログ。
+- **判定：** NOT VERIFIED
+
+### IT-08 Checks App のトークンの失効
+- **事前条件：** IT-01 と同じ。
+- **操作：**
+  1. `report` の実行の後に、ログにトークンが無いことを確かめる。
+  2. 確認用の step で、マスクされない形でトークンの末尾だけを記録する（全体は記録しない）。
+  3. 実行の後、そのトークンが無効であることを、API の 401 で確かめる。この確認は、テスト用の別のワークフローで、テストの範囲だけで行う。
+- **期待結果：** ログにはマスクされた値だけがある。トークンは失効している（P-14）。
+- **停止条件：** ログにトークン全体が出た（B の 2）。
+- **証拠：** ログ、401 の応答。
+- **判定：** NOT VERIFIED
+
+### IT-09 正常な公開（Publisher App）
+- **事前条件：** W1〜W2・W7 を実装済み。テスト用の署名の鍵。ruleset A・B を適用済み。
+- **操作：**
+  1. テスト用のツールで `build-index`・`sign` を行う（テスト用の機械で）。
+  2. 公開の PR を出し、2 人が承認し、マージする。
+  3. `publish` environment を承認する。
+- **期待結果：**
+  - `check` が成功する（P-15）。
+  - `release` が Publisher App のトークンで、下書き → 確認 → 公開を行う（P-5・P-12）。
+  - `index-1` が latest になる。
+  - `verify` が成功する。
+  - ジョブの `GITHUB_TOKEN` は読み取りだけ。
+- **停止条件：** `GITHUB_TOKEN` で書き込みが行われた。タグが Publisher App 以外の主体で作られた。
+- **証拠：** 実行の URL、Release の JSON（`author`・`immutable`）、タグを作った主体（監査ログ）。
+- **判定：** NOT VERIFIED
+
+### IT-10 署名の不正
+- **事前条件：** IT-09 と同じ。
+- **操作：** 1 バイト変えた署名の公開の PR を出す。
+- **期待結果：** `validate`（`publish-check`）が `CS_REG_SIGNATURE_INVALID` で拒否する。マージしても、`check` で止まり、公開されない。
+- **停止条件：** Release ができた。
+- **証拠：** ログ。
+- **判定：** NOT VERIFIED
+
+### IT-11 immutable な Release
+- **事前条件：** IT-09 で公開した Release がある。immutable releases が有効。
+- **操作：** アセットを差し替える。タグを移す。Release を削除しようとする（admin・メンテナー・Publisher App のそれぞれで）。
+- **期待結果：** アセットとタグの変更は拒否される（P-10）。削除の可否を記録する（P-17）。
+- **停止条件：** アセットが差し替えられた。
+- **証拠：** API の応答。
+- **判定：** NOT VERIFIED
+
+### IT-12 下書きの検証の失敗では公開しない
+- **事前条件：** IT-09 と同じ。
+- **操作：** テスト用のワークフローの変形で、下書きのアセットを 1 つ変える（または 1 つ足す）。
+- **期待結果：** `release` が「left as a draft」で止まる。公開されず、latest にならない。タグはまだ無い（P-8・P-9）。要約に記録される。
+- **停止条件：** 下書きが公開された。
+- **証拠：** Release の一覧、要約。
+- **判定：** NOT VERIFIED
+
+### IT-13 アセットの digest の不一致
+- **事前条件：** IT-12 と同じ。
+- **操作：** 記録した SHA-256 と違う digest になるように、アセットを差し替える（IT-12 と同じ方法）。
+- **期待結果：** 公開されない（IT-12 と同じ）。
+- **停止条件：** 公開された。
+- **証拠：** 下書きの JSON（`digest`）。
+- **判定：** NOT VERIFIED
+
+### IT-14 公開の途中の失敗
+- **事前条件：** IT-09 と同じ。
+- **操作：** `release` の途中で失敗させる。例えば、Publisher App のインストールを一時的に停止する。
+- **期待結果：** 失敗が要約に記録され、何も自動では削除されない。下書きが残った場合は、GOVERNANCE.md「Failed publication」の手順で扱う。
+- **停止条件：** Release が自動で削除・上書きされた。
+- **証拠：** 要約、Release の一覧。
+- **判定：** NOT VERIFIED
+
+### IT-15 同じ serial での再実行と latest
+- **事前条件：** IT-09 の後。
+- **操作：**
+  1. 公開のワークフローを再実行する。
+  2. 下書きが残った状態でも再実行する。
+  3. 次の serial を公開する。
+- **期待結果：**
+  - 再実行は、`check` の「already published」か、`release` の「already exists」で止まる。
+  - 次の serial は latest になる（P-11）。
+- **停止条件：** 同じ serial が 2 回公開された。
+- **証拠：** ログ、Release の一覧。
+- **判定：** NOT VERIFIED
+
+### IT-16 古い serial の拒否
+- **事前条件：** serial 2 を公開済み。
+- **操作：** serial 1 の index の公開の PR を出す。
+- **期待結果：** `publish-check` が拒否する（serial は直前の次でなければならない）。
+- **停止条件：** 公開された。
+- **証拠：** ログ。
+- **判定：** NOT VERIFIED
+
+### IT-17 Linux CI
+- **事前条件：** CreateScript のリポジトリへの push の許可。
+- **操作：** `ci.yml` を実行する。
+- **期待結果：**
+  - `verification-metadata.xml` の strict な検証を含めて、全テストが成功する。
+  - `WorkflowHarnessTest` が、スキップされずに実行される（ランナーの python3 に PyYAML があるか、確かめる）。
+- **停止条件：** 依存の検証の失敗（改ざんの疑い）。
+- **証拠：** CI の実行の URL、テストの結果。
+- **判定：** NOT VERIFIED
+
+### IT-18 実際の HTTPS でのインストール
+- **事前条件：** テスト用のクライアントのビルド（W7）、IT-09 で公開した index。
+- **操作：**
+  1. `createscript install <name>@<version>` を実行する。
+  2. 改ざんを試す（テスト用のリポジトリの別の Release を latest にする）。
+  3. ネットワークを切って、オンラインのまま実行する。その後、`--offline` で実行する。
+- **期待結果：**
+  - インストールが成功する。
+  - 古い index を latest にしても、保存した状態のあるクライアントは、巻き戻しとして拒否する。
+  - オンラインで失敗したときは `--offline` を案内する。
+- **停止条件：** 署名の検証を通らない index でインストールできた。
+- **証拠：** コマンドの出力、キャッシュの `trusted.json`。
+- **判定：** NOT VERIFIED
+
+### IT-19 yanked・removed のパッケージ
+- **事前条件：** 公開済みの index。
+- **操作：** 取り下げの PR と削除の PR を公開し、インストールと復元を試す。
+- **期待結果：** 新しいインストールは拒否される。取り下げは警告して復元し、削除は復元も拒否する。
+- **停止条件：** 削除したパッケージがインストールされた。
+- **証拠：** 出力。
+- **判定：** NOT VERIFIED
+
+### IT-20 オフラインでの復元と、L-5 の残存リスクの確認
+- **事前条件：** ロックファイルのあるプロジェクトと、キャッシュ。macOS と Linux のテスト用の機械。
+- **操作：**
+  1. ネットワークを切って `install --offline` を実行する。
+  2. `CREATESCRIPT_L5_RACE=1 ./gradlew :createscript-install:test --tests '*L5RaceTest*'` を実行する。
+- **期待結果：**
+  - ロックファイルから復元できる。index が無ければ「確かめられない」と示す。
+  - `L5RaceTest` では、誤った成功が 0、既存のファイルの変更が 0。外への書き込みは、起こりうるもの（**L-5 は未解決**）として、回数を記録する。
+- **停止条件：** 誤った成功、または既存のファイルの変更が起きた（L-5 の悪化）。
+- **証拠：** 出力の `AUDIT-L5` の行。
+- **判定：** NOT VERIFIED
+
+### IT-21 Publisher App 以外による `index-*` のタグの作成の拒否
+- **事前条件：** ruleset A を適用済み（回避者はテスト用の Publisher App だけ）。
+- **操作：** T-m2（write）と T-lead（admin）で、次のことを試す。
+  - `git push origin index-99`
+  - Release の API で、`tag_name: index-99` の Release を作る（下書き・公開の両方）
+  - Checks App のトークンでも同じことを試す
+- **期待結果：** すべて拒否される（P-4）。Publisher App のトークンでは作れる（P-5）。
+- **停止条件：** Publisher App 以外で作れた（**前提 P-4 が誤り**。architecture の 3 章の代替案へ）。
+- **証拠：** git・API の応答、ruleset の評価の記録（rule insights）。
+- **判定：** NOT VERIFIED
+
+### IT-22 作成済みのタグの更新・削除の拒否
+- **事前条件：** 公開済みの `index-*` がある。ruleset B を適用済み。
+- **操作：** T-m2・T-lead・Publisher App のそれぞれで、タグの移動（force push）と削除を試す。
+- **期待結果：** すべて拒否される（P-6・P-7）。
+- **停止条件：** どれかが成功した。
+- **証拠：** 応答。
+- **判定：** NOT VERIFIED
+
+### IT-23 Publisher App の鍵は、承認の後だけ使える
+- **事前条件：** environment `publish`（承認者 T-m2・T-m3、自分の承認の禁止）。
+- **操作：**
+  1. 承認しないまま、`release` を待たせる。
+  2. 公開の PR の作成者が、自分で承認しようとする。
+  3. 別のワークフロー（main 以外のブランチから）で、`publish` の secret を読もうとする。
+- **期待結果：** secret は承認の後のジョブにだけ渡る。自分の承認は拒否される。main 以外からは使えない（P-13）。
+- **停止条件：** 承認の前、または main 以外で、secret が使えた。
+- **証拠：** 実行の画面、ログ（secret の値は残さない）。
+- **判定：** NOT VERIFIED
+
+### IT-24 Publisher App のトークンの失効
+- **事前条件：** IT-09 の後。
+- **操作：** IT-08 と同じ方法。
+- **期待結果：** 失効している（P-14）。
+- **停止条件：** IT-08 と同じ。
+- **証拠：** 401 の応答。
+- **判定：** NOT VERIFIED
+
+### IT-25 緊急の公開の停止
+- **事前条件：** IT-09 の後。
+- **操作：** `publish` のワークフローを無効にし、Publisher App のインストールを停止する。公開の PR をマージする。
+- **期待結果：** 公開されない。公開済みの Release は残る。元に戻すと、公開できる。
+- **停止条件：** 停止中に公開された。
+- **証拠：** 画面、ログ。
+- **判定：** NOT VERIFIED
+
+### IT-26 Checks App ではタグ・Release を作れない
+- **事前条件：** IT-01 と同じ。
+- **操作：** テスト用の Checks App のトークン（checks: write）で、Release の作成とタグの作成を試す。
+- **期待結果：** 権限が無いので拒否される。
+- **停止条件：** 作れた。
+- **証拠：** 応答（403）。
+- **判定：** NOT VERIFIED
+
+### IT-27 Publisher App では必須チェックを作れない
+- **事前条件：** IT-09 と同じ。
+- **操作：** テスト用の Publisher App のトークン（contents: write）で、check run の作成を試す。
+- **期待結果：** 権限が無いので拒否される。Publisher App の check run は、ruleset main の必須チェックを満たさない（`integration_id` が違う）。
+- **停止条件：** 必須チェックが満たされた。
+- **証拠：** 応答。
+- **判定：** NOT VERIFIED
+
+### IT-28 テスト用の鍵が本番の経路で信頼されないこと
+- **事前条件：** 本番の設定の CLI（公式の配布物と同じビルド）。
+- **操作：** テスト用のリポジトリの index（テスト用の鍵で署名したもの）を、本番の CLI で使おうとする。
+- **期待結果：**
+  - 本番の CLI は、テスト用のリポジトリを読まない（URL は組み込み）。
+  - 本番の鍵が無い間は、`install <名前>@<版>` を 69 で拒否する。
+  - `RegistryTrust.official()` は `test-only-` の鍵を拒否する（ローカルの試験：`RegistryClientTest.productionConfiguration`）。
+- **停止条件：** 本番の CLI がテスト用の index を受け入れた。
+- **証拠：** 出力。
+- **判定：** NOT VERIFIED（ローカルの単体テストは成功している）
+
+## D. 結果の記録の様式
+
+各試験について、次の表を 1 つずつ作り、証拠のリンクを付ける。
 
 | 項目 | 記入 |
 |---|---|
-| シナリオ | （#と名前） |
+| 試験 ID・名前 | |
 | 実施日・実施者 | |
-| 事前条件 | （設定の状態。ruleset・App・environment の値） |
-| 操作 | （手順。実行した URL） |
-| 期待する結果 | （B 章の記載） |
+| 事前条件（実際の設定の値） | |
+| 操作（実行の URL） | |
+| 期待結果 | |
 | 実際の結果 | |
 | 判定 | PASS / FAIL / NOT VERIFIED |
-| 証拠の保存場所 | （issue のリンク・ワークフローの実行・API の応答の保存先） |
+| 証拠の保存場所 | |
+| 停止条件に当たったか | |
 | 残存リスク | |
 
 ### 結果の一覧（記入用）
 
-| # | シナリオ | 判定 | 証拠 | 残存リスク |
+| ID | 名前 | 判定 | 証拠 | 残存リスク |
 |---|---|---|---|---|
-| 1 | 正常な PR の検証 | NOT VERIFIED（未実施） | | |
-| 2 | 必須チェックの偽装 | NOT VERIFIED（未実施） | | |
-| 3 | 承認の不足 | NOT VERIFIED（未実施） | | |
-| 4 | 作成者による自己承認 | NOT VERIFIED（未実施） | | |
-| 5 | 利益相反のある承認 | NOT VERIFIED（未実施） | | |
-| 6 | PR の更新の後の古い承認 | NOT VERIFIED（未実施） | | |
-| 7 | GitHub App が入っていない | NOT VERIFIED（未実施） | | |
-| 8 | App のトークンの失効 | NOT VERIFIED（未実施） | | |
-| 9 | 署名の不正 | NOT VERIFIED（未実施） | | |
-| 10 | serial の巻き戻し | NOT VERIFIED（未実施） | | |
-| 11 | immutable な Release | NOT VERIFIED（未実施） | | |
-| 12 | digest の不一致 | NOT VERIFIED（未実施） | | |
-| 13 | 公開の途中の失敗 | NOT VERIFIED（未実施） | | |
-| 14 | 同じ serial での再実行 | NOT VERIFIED（未実施） | | |
-| 15 | `latest` の更新 | NOT VERIFIED（未実施） | | |
-| 16 | Linux CI | NOT VERIFIED（未実施） | | |
-| 17 | 実際の HTTPS でのインストール | NOT VERIFIED（未実施） | | |
-| 18 | yanked・removed | NOT VERIFIED（未実施） | | |
-| 19 | オフラインでの復元 | NOT VERIFIED（未実施） | | |
-| 20 | L-5 の残存リスク | NOT VERIFIED（未実施。L-5 自体は未解決） | | |
-| 21〜25 | 公開専用の App（案 2）と緊急停止 | NOT VERIFIED（未実施。案 2 は未採用） | | |
+| IT-01 | 正常な PR の検証 | NOT VERIFIED（未実施） | | |
+| IT-02 | 必須チェックの偽装 | NOT VERIFIED（未実施） | | |
+| IT-03 | 承認の不足 | NOT VERIFIED（未実施） | | |
+| IT-04 | 作成者による自己承認 | NOT VERIFIED（未実施） | | |
+| IT-05 | 利益相反のある承認 | NOT VERIFIED（未実施） | | |
+| IT-06 | PR の更新の後の古い承認 | NOT VERIFIED（未実施） | | |
+| IT-07 | Checks App が入っていない | NOT VERIFIED（未実施） | | |
+| IT-08 | Checks App のトークンの失効 | NOT VERIFIED（未実施） | | |
+| IT-09 | 正常な公開（Publisher App） | NOT VERIFIED（未実施・W1〜W2・W7 の実装が前提） | | |
+| IT-10 | 署名の不正 | NOT VERIFIED（未実施） | | |
+| IT-11 | immutable な Release | NOT VERIFIED（未実施） | | |
+| IT-12 | 下書きの検証の失敗 | NOT VERIFIED（未実施） | | |
+| IT-13 | digest の不一致 | NOT VERIFIED（未実施） | | |
+| IT-14 | 公開の途中の失敗 | NOT VERIFIED（未実施） | | |
+| IT-15 | 同じ serial での再実行と latest | NOT VERIFIED（未実施） | | |
+| IT-16 | 古い serial の拒否 | NOT VERIFIED（未実施） | | |
+| IT-17 | Linux CI | NOT VERIFIED（未実施） | | |
+| IT-18 | 実際の HTTPS でのインストール | NOT VERIFIED（未実施） | | |
+| IT-19 | yanked・removed | NOT VERIFIED（未実施） | | |
+| IT-20 | オフラインでの復元・L-5 | NOT VERIFIED（未実施。L-5 は未解決） | | |
+| IT-21 | Publisher App 以外のタグの作成の拒否 | NOT VERIFIED（未実施・ruleset A の実装が前提） | | |
+| IT-22 | タグの更新・削除の拒否 | NOT VERIFIED（未実施） | | |
+| IT-23 | 鍵は承認の後だけ | NOT VERIFIED（未実施） | | |
+| IT-24 | Publisher App のトークンの失効 | NOT VERIFIED（未実施） | | |
+| IT-25 | 緊急の公開の停止 | NOT VERIFIED（未実施） | | |
+| IT-26 | Checks App ではタグ・Release を作れない | NOT VERIFIED（未実施） | | |
+| IT-27 | Publisher App では必須チェックを作れない | NOT VERIFIED（未実施） | | |
+| IT-28 | テスト用の鍵が本番で信頼されない | NOT VERIFIED（未実施。ローカルの単体テストは成功） | | |
 
-## D. 注意
+Phase 8 までのシナリオの番号との対応：旧 1〜8 → IT-01〜08、旧 9 → IT-10、旧 10 → IT-16、旧 11〜15 → IT-11〜15、旧 16 → IT-17、旧 17 → IT-18、旧 18 → IT-19、旧 19・20 → IT-20、旧 21〜25 → IT-21〜25。
+
+## E. リスクの登録簿（実環境テストに関わるもの）
+
+| ID | リスク | 影響 | 対応 |
+|---|---|---|---|
+| RR-1 | **L-5（未解決）**：同じユーザーの権限のプログラムによる symlink の差し替えの競合。Java 21・macOS には開いたディレクトリを基準にする API が無い。インストール中に、プロジェクトの外へ新しいファイル・パッケージのディレクトリが作られる（観測では 0.2〜0.7%）。理論上は、マニフェスト・ロックファイルの置き換えの直前の窓で、既存のファイルを置き換えうる（観測されていない） | 利用者の機械のファイルシステム | `L5RaceTest` で再現・監視する（IT-20）。**GitHub の統合テストが成功しても、L-5 は解決しない**（別の問題） |
+| RR-2 | GitHub の前提（P-1〜P-17）が誤っている | 設計の変更 | B の停止条件の 3。architecture の 3 章の代替案 |
+| RR-3 | テストの秘密情報の漏えい | テスト環境の乗っ取り | B の停止条件の 2。テストの後に、鍵を破棄・App を削除 |
+| RR-4 | テストの設定が本番に混ざる | 本番の信頼の境界の破れ | B の停止条件の 4。IT-28 |
+| RR-5 | テストの操作が本番に及ぶ | 本番の破損 | B の停止条件の 1。テスト用のリポジトリの名前に Test を含め、操作の前に対象を確かめる |
+
+## F. 注意
 
 - テスト用の鍵・App・アカウントを、本番の設定に流用しない。テストの後に、App の秘密鍵と署名の鍵を破棄し、そのことを記録する。
-- ローカルの模擬の試験（`WorkflowHarnessTest`：ワークフローの `run` を偽物の `gh`・`curl` で動かすもの）は、GitHub の実際の動作の代わりにはならない。ここでの実地の試験で確かめる。
-- **L-5 は、GitHub の設定とは別の、利用者の機械のファイルシステムの問題です。** 実環境のテストが成功しても、L-5 が解決したことにはならない。
+- ローカルの模擬の試験（`WorkflowHarnessTest`）は、GitHub の実際の動作の代わりにはならない。
