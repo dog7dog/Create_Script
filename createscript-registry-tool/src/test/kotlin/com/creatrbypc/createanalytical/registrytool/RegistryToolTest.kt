@@ -119,9 +119,16 @@ class RegistryToolTest {
         // --from-fork は true か false だけ
         assertEquals(2, run("validate-pr", "--base", "$base", "--head", "$head", "--pr", "9", "--author", "dog7dog", "--author-id", "1", "--from-fork", "yes").first)
         // check-settings: 雛形の ruleset は、App の ID がまだ無いことを示して失敗する
-        val settings = run("check-settings", "--ruleset", "../registry-template/github-settings/main-ruleset.json")
+        val settings = run(
+            "check-settings", "--ruleset", "../registry-template/github-settings/main-ruleset.json",
+            "--tag-creation-ruleset", "../registry-template/github-settings/index-tags-creation-ruleset.json",
+            "--tag-protection-ruleset", "../registry-template/github-settings/index-tags-protection-ruleset.json",
+        )
         assertEquals(1, settings.first)
-        assertTrue(settings.second.contains("integration_id is not set yet"), settings.second)
+        assertTrue(settings.second.contains("integration_id is not set yet") && settings.second.contains("Publisher App ID (actor_id) is not set yet"), settings.second)
+        // タグの ruleset を渡さなければ、使い方の誤り（A と B の両方が要る）
+        assertEquals(2, run("check-settings", "--ruleset", "../registry-template/github-settings/main-ruleset.json").first)
+        assertEquals(2, run("check-live-rulesets", "--repo", "$base", "--live", "$base", "--checks-app-id", "0", "--publisher-app-id", "2").first)
     }
 
     @Test

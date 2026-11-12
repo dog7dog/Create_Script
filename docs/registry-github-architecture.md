@@ -1,9 +1,10 @@
 # CreateScript-Registry の GitHub の構成（設計）
 
-> **状態（2026-11-11、S8.3 Phase 9）：設計として採用しました。実装と、GitHub 上での検証は、まだです。**
+> **状態（2026-11-12、S8.3 Phase 10A）：Phase 9 で設計として採用し、Phase 10A で雛形とツールに実装しました。GitHub 上での検証は、まだです。**
 >
 > - 公開専用の GitHub App（Registry Publisher App）を使う方式を、設計の方針として採用しました。
-> - 雛形のワークフロー（`registry-template/.github/workflows/`）と ruleset の JSON は、**まだ変えていません**。今の `publish.yml` は、`release` ジョブの `GITHUB_TOKEN` で公開します。移行のための変更は、計画（`docs/audits/S8.3-Phase9-Integration-Preparation.md` の「ワークフローの変更計画」）だけです。
+> - 雛形の `publish.yml` の `release` ジョブは、Publisher App のトークンだけで公開します（W1）。ruleset は A・B の 2 つのファイルです（W2）。`check-settings`・`check-live-rulesets` がそれらを検査します（W3）。テスト専用のビルドもあります（W7）。詳細は `docs/audits/S8.3-Phase10A-Local-Implementation.md`。
+> - どれも、ローカルの模擬の試験だけで確かめています。
 > - この文書の GitHub の動作に関する記述は、すべて GitHub の文書の理解に基づく **前提** です。前提は 7 章に一覧し、`docs/registry-github-integration-test.md` で検証します。
 >   - **特に、ruleset の回避者（bypass actor）の設定がタグの作成にどう作用するかは、未検証です。**
 >
@@ -48,7 +49,7 @@ Contents: write は、Release とタグの操作に必要な最小限の権限�
 | `validate` / `validate`・`approvals` | `contents: read`、`pull-requests: read` | 同じ |
 | `validate` / `report` | `pull-requests: read` | 同じ |
 | `publish` / `check` | `contents: read`、`pull-requests: read` | 同じ |
-| `publish` / `release` | **`contents: write`**（environment `publish`） | **`contents: read`**。書き込みは Publisher App のトークンだけ |
+| `publish` / `release` | Phase 9 まで：`contents: write`（environment `publish`） | **Phase 10A から：`contents: read`**。書き込みは Publisher App のトークンだけ（`GITHUB_TOKEN` への切り替えは無い） |
 | `publish` / `verify` | `contents: read` | 同じ |
 
 ### 人
@@ -65,12 +66,12 @@ Contents: write は、Release とタグの操作に必要な最小限の権限�
 | ruleset | 対象 | 規則 | 回避者 | ファイル |
 |---|---|---|---|---|
 | main | `~DEFAULT_BRANCH` | 削除・force push の禁止、線形の履歴、PR（2 承認、コードオーナー、古い承認の取り消し、最後の push の承認、スレッドの解決）、strict な必須チェック（`registry/validate`・`registry/approvals`、`integration_id` = Checks App） | なし | `github-settings/main-ruleset.json`（実装済み） |
-| **A：タグの作成** | `refs/tags/index-*` | `creation` | **Publisher App だけ**（`actor_type: Integration`、`bypass_mode: always`） | 計画（下の JSON） |
-| **B：タグの更新・削除** | `refs/tags/index-*` | `update`、`deletion`、`non_fast_forward` | **なし** | 今の `github-settings/index-tags-ruleset.json`（実装済み）と同じ内容 |
+| **A：タグの作成** | `refs/tags/index-*` | `creation` | **Publisher App だけ**（`actor_type: Integration`、`bypass_mode: always`） | `github-settings/index-tags-creation-ruleset.json`（Phase 10A。`actor_id` は仮の値 0） |
+| **B：タグの更新・削除** | `refs/tags/index-*` | `update`、`deletion`、`non_fast_forward` | **なし** | `github-settings/index-tags-protection-ruleset.json`（Phase 9 までの `index-tags-ruleset.json` の名前を変えたもの） |
 
 A と B を分ける理由：回避者は、その ruleset のすべての規則に及ぶ（前提 P-6）。1 つにまとめると、Publisher App がタグを更新・削除できてしまう。
 
-ruleset A の案（Publisher App の ID は、App を作った後に入れる。`0` は仮の値）：
+ruleset A（`index-tags-creation-ruleset.json` と同じ内容。Publisher App の ID は、App を作った後に入れる。`0` は仮の値）：
 
 ```json
 {
@@ -109,11 +110,12 @@ index の公開は、2 つの PR と 1 つの公開のワークフローで行�
 | — | 公開の PR（`signed/index.json`・`.sig` だけを変える） | 1〜5 と同じ流れ（`validate` が `publish-check` を行う） | 実装済み |
 | 9 | 署名・serial・SHA-256 の再検証 | `publish.yml` / `check`：`publish-check`（署名、serial が直前の次、履歴、そのコミットから作り直した index とバイト列まで同じ）と、マージ済みの PR の承認の再検査（最新のコミット、ツリーの一致）。2 つのファイルの SHA-256 を記録 | 実装済み |
 | 10 | `publish` environment での承認 | メンテナー（自分の承認は禁止） | 設定（未適用） |
-| 11 | Publisher App の短い期間のトークンの取得 | `publish.yml` / `release`（`contents: write` とこのリポジトリに限る。マスク、step の終わりに失効） | **計画**（今は `GITHUB_TOKEN`） |
+| 11 | Publisher App の短い期間のトークンの取得 | `publish.yml` / `release`（ファイルの照合の後、最初の使用の直前に、`contents: write` とこのリポジトリに限って取る。すぐにマスクし、与えられた権限が `contents: write`（と `metadata: read`）だけで、このリポジトリだけであることを確かめる。step の終わりに失効させる） | 実装済み（Phase 10A。GitHub では未検証） |
 | 12 | 下書きの Release の作成 | `release`：同じ serial の Release（下書きを含む）があれば止まる。`--draft` で作る | 実装済み |
 | 13 | アセットの digest の検証 | `release`：アセットがちょうど 2 つ、`uploaded`、GitHub の digest = 記録した SHA-256 | 実装済み |
 | 14 | Release の公開 | `release`：`PATCH draft=false, make_latest=true` | 実装済み |
 | 15 | 公開の後の immutable の確認 | `release`（応答の `immutable`）と `verify`（`check-release`） | 実装済み |
+| 9' | リポジトリのタグの ruleset の確認 | `publish.yml` / `check`：実際の ruleset（API）と `github-settings/` の A・B、App の ID を照合する（`check-live-rulesets`）。確かめられない項目があれば失敗する | 実装済み（Phase 10A）。**`bypass_actors` は、ruleset に書き込める利用者にだけ返される（GitHub の文書）。読み取りのトークンでは、ここで止まる見込み（P-19）** |
 | 16 | 公開の結果の記録 | ジョブの要約（失敗のとき）。成功の記録（公開の issue への記載）は手順 | 一部実装。手順を GOVERNANCE.md に追加する |
 
 守ること（どれも、今の実装か計画に含まれる）：
@@ -141,11 +143,11 @@ index の公開は、2 つの PR と 1 つの公開のワークフローで行�
 | App の秘密鍵 | 本番のリポジトリの environment | テスト用のリポジトリの environment | 別の secret。共有しない |
 | インストール先 | 本番のリポジトリだけ | テスト用のリポジトリだけ | 「Only select repositories」 |
 | index の署名の公開鍵 | `RegistryTrust.PRODUCTION_KEYS`（今は空）と、本番のリポジトリの `keys/trusted-keys.json` | テスト用のリポジトリの `keys/trusted-keys.json`。鍵の ID は `test-only-` で始める | **本番の CLI には入れない。** `RegistryTrust.official()` と、公式のリポジトリの名前の設定は、`test-only-` の鍵を拒否する（実装済み） |
-| レジストリの URL | 組み込み（`https://github.com/<公式>/releases/latest/download/…`）。利用者の入力・環境変数では変えられない | テスト用のクライアントのビルドの中で、`RegistryTrust(<テスト用のリポジトリ>, <テスト用の鍵>)` を渡す | テスト用のビルドは、本番の配布物とは別に作る（計画 W7）。本番の CLI に、URL や鍵を変えるオプション・環境変数を **加えない** |
+| レジストリの URL | 組み込み（`https://github.com/<公式>/releases/latest/download/…`）。利用者の入力・環境変数では変えられない | テスト用のクライアントのビルドの中で、`RegistryTrust(<テスト用のリポジトリ>, <テスト用の鍵>)` を渡す | テスト用のクライアント `createscript-TEST-REGISTRY`（`./gradlew :createscript-cli:testRegistryCli`。テストのソースだけにあり、本番の配布物に入らない。Phase 10A）。本番の CLI に、URL や鍵を変えるオプション・環境変数を **加えない** |
 | Release のアセットの名前 | `index.json`・`index.json.sig` | 同じ | リポジトリが別なので衝突しない |
 | キャッシュの置き場所 | `<キャッシュ>/registry/<owner>/<repo>/` | 同じ規則で、テスト用のリポジトリの名前の下（自動で分かれる） | テストでは、さらに `CREATESCRIPT_CACHE_DIR` を専用のディレクトリにする |
 | 環境変数 | `CREATESCRIPT_CACHE_DIR`・`CREATESCRIPT_GITHUB_TOKEN`（任意） | 同じ。加えて、テスト用のディレクトリ | 本番の信頼の設定を変える環境変数は無い（加えない） |
-| ツールの公開の確認 | `publish-check` はテスト用の鍵を拒否する | テスト用の鍵を受け入れる、テスト用のツールのビルドが必要 | 本番のツールに、テスト用の鍵を許すオプションを **加えない**。テスト専用のビルドとして別に作る（計画 W7、承認が必要） |
+| ツールの公開の確認 | `publish-check` はテスト用の鍵を拒否する | テスト用の鍵を受け入れる、テスト用のツールのビルドが必要 | テスト用のツール `createscript-registry-tool-TEST-ONLY`（`./gradlew :createscript-registry-tool:testRegistryTool`。Phase 10A）。本番のツールに、テスト用の鍵を許す CLI のオプションを **加えない**（本番の main は `allowTestKeys` を渡さない） |
 | ワークフロー | `TOOL_COMMIT` = 審査済みの本番用のコミット | テスト用のリポジトリのワークフローは、テスト用のツールのビルドを指す | テスト用のリポジトリの中だけで変える |
 
 **本番の信頼の境界は緩めない。** テストのために、本番の CLI・ツールに、信頼する鍵・リポジトリ・URL を変える経路を加えない。
@@ -169,10 +171,12 @@ index の公開は、2 つの PR と 1 つの公開のワークフローで行�
 | P-11 | `make_latest` は、Contents: write を持つ主体が変えられる | IT-15 |
 | P-12 | Publisher App の Contents: write のトークンで、Release の作成・編集ができる | IT-09 |
 | P-13 | environment `publish` の secret は、承認の後のジョブにだけ渡る。自分の承認の禁止が効く | IT-23 |
-| P-14 | `DELETE /installation/token` で、トークンが直ちに使えなくなる | IT-08・IT-24 |
+| P-14 | `DELETE /installation/token` で、トークンが直ちに使えなくなる（エンドポイントと 204 の応答は、GitHub の REST の文書で確認した（2026-11-12）。実際の動作は未検証） | IT-08・IT-24 |
 | P-15 | `commits/{sha}/pulls` が、squash・rebase のマージの後のコミットから PR を返す。マージの後でも、PR の head を fetch できる | IT-09 |
 | P-16 | 外部の協力者の fork の PR のワークフローは、承認まで実行されない | IT-02 |
 | P-17 | Release の削除の可否（immutable な Release を含む） | IT-11 |
+| P-18 | ジョブの `GITHUB_TOKEN`（`contents: read`）で、`GET /repos/{owner}/{repo}/rulesets` と `…/rulesets/{id}` を読める | IT-21 |
+| P-19 | `bypass_actors` が、読み取りのトークンに返されるか。**GitHub の文書では「ruleset に書き込める利用者にだけ返す」**とあり、返されない見込み。返されなければ、公開の前の確認（`check-live-rulesets`）は失敗し、公開は止まる。その場合の確かめ方（例：運営責任者が管理者の権限で確認して記録する手順）は Phase 10B で決める | IT-21 |
 
 ## 8. 失敗のときの停止と復旧
 

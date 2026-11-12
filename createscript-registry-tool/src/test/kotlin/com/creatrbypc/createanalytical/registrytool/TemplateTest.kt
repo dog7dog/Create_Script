@@ -93,9 +93,16 @@ class TemplateTest {
                     assertFalse(body.contains("secrets.") || body.contains("vars.") || body.contains("contents: write") || body.contains("environment:"), "$name/$job reads the pull request and has secrets or write access")
                 }
                 // 秘密情報を使うジョブは、チェックアウトもビルドもしない（PR のデータに触れない）
+                // 秘密情報（App の鍵）を使うジョブは、PR のデータに触れず、ビルドもツールの実行もしない。チェックアウトするなら、信頼する main のコミット
+                // （github.sha）だけ。鍵は、そのジョブの App のものだけで、environment で守る（S8.3 Phase 5・10A）
                 if (body.contains("secrets.")) {
-                    assertFalse(body.contains("actions/checkout") || body.contains("gradlew") || body.contains("\$TOOL") || body.contains("head/"), "$name/$job uses a secret and touches code or data")
-                    assertTrue(body.contains("environment: registry-checks"), "$name/$job")
+                    assertFalse(body.contains("path: head") || body.contains("head/") || body.contains("gradlew") || body.contains("\$TOOL") || body.contains("setup-java"), "$name/$job uses a secret and touches code or data")
+                    assertTrue(Regex("ref: \\\$\\{\\{ github.sha }}").findAll(body).count() == Regex("uses: actions/checkout@").findAll(body).count(), "$name/$job checks out only github.sha")
+                    val secrets = Regex("secrets\\.([A-Z_]+)").findAll(body).map { it.groupValues[1] }.toSet()
+                    when (name) {
+                        "validate.yml" -> assertTrue(secrets == setOf("REGISTRY_CHECKS_APP_KEY") && body.contains("environment: registry-checks"), "$name/$job: $secrets")
+                        else -> assertTrue(secrets == setOf("REGISTRY_PUBLISHER_APP_KEY") && body.contains("environment: publish"), "$name/$job: $secrets")
+                    }
                 }
                 // 書き込みの権限のあるジョブは、Gradle もツールも動かさない（P4-M3）
                 if (body.contains("contents: write")) {
@@ -176,8 +183,35 @@ class TemplateTest {
         assertTrue(types.containsAll(listOf("deletion", "non_fast_forward", "pull_request", "required_status_checks")), types.toString())
         val pullRequest = rules.single { (it.members.getValue("type") as com.creatrbypc.createanalytical.project.JsonString).value == "pull_request" }.members.getValue("parameters") as JsonObject
         assertEquals(2L, (pullRequest.members.getValue("required_approving_review_count") as JsonInteger).value)
-        val tags = JsonParser.parse(read("github-settings/index-tags-ruleset.json").toByteArray(), 1 shl 20).value as JsonObject
-        assertEquals(0, (tags.members.getValue("bypass_actors") as JsonArray).elements.size)
+        // S8.3 Phase 10A（W2）: タグの ruleset A（作成。回避者は Publisher App だけ）と B（更新・削除。回避者なし）。App の ID は仮の値 0
+        val problems = TagRulesets.fileProblems(read(TagRulesets.CREATION_FILE).toByteArray(), read(TagRulesets.PROTECTION_FILE).toByteArray(), null, null)
+        assertEquals(listOf("the tag creation ruleset (A): the Publisher App ID (actor_id) is not set yet"), problems)
+        val protection = JsonParser.parse(read(TagRulesets.PROTECTION_FILE).toByteArray(), 1 shl 20).value as JsonObject
+        assertEquals(0, (protection.members.getValue("bypass_actors") as JsonArray).elements.size)
+        assertFalse(Files.exists(template.resolve("github-settings/index-tags-ruleset.json")), "the single tag ruleset was split into A and B")
+    }
+
+    // S8.3 Phase 10A（W1）: 公開は Publisher App のトークンだけで行い、ジョブの GITHUB_TOKEN は読み取りだけ（書き込みの権限を持つジョブは無い）
+    @Test
+    fun releaseUsesThePublisherApp() {
+        val publish = read(".github/workflows/publish.yml")
+        // どのジョブの permissions にも contents: write が無い（文言の中の「contents: write」は数えない）
+        for ((job, body) in jobs(publish)) {
+            val block = Regex("\n    permissions:\n((?:      \\S.*\n)*)").find(body)?.groupValues?.get(1) ?: ""
+            assertTrue(block.contains("contents: read"), "publish.yml/$job: the permissions block was not found ($block)")
+            assertFalse(block.contains("contents: write"), "publish.yml/$job has a writing GITHUB_TOKEN")
+        }
+        val release = jobs(publish).getValue("release")
+        assertTrue(release.contains("permissions:\n      contents: read\n"), release)
+        assertFalse(release.contains("github.token") || release.contains("GH_TOKEN:"), "no GITHUB_TOKEN (and so no fallback to it) in the release job")
+        assertTrue(release.contains("'{repositories: [\$repo], permissions: {contents: \"write\"}}'"), "the token is limited to contents: write on this repository")
+        assertTrue(release.contains("trap cleanup EXIT") && release.contains("-X DELETE") && release.contains("https://api.github.com/installation/token"), "the token is revoked")
+        assertTrue(release.indexOf("echo \"::add-mask::\$token\"") < release.indexOf("export GH_TOKEN=\"\$token\""), "masked before use")
+        assertTrue(release.indexOf("sha256sum -c -") < release.indexOf("access_tokens"), "the token is obtained after the files are checked, just before its first use")
+        assertTrue(release.indexOf("does not have exactly contents: write") < release.indexOf("gh api --paginate"), "the granted permissions are checked before any gh call")
+        val check = jobs(publish).getValue("check")
+        assertTrue(check.contains("check-live-rulesets --repo registry --live live-rulesets"), "the tag rulesets are checked before publishing")
+        assertTrue(check.indexOf("check-live-rulesets") < check.indexOf("Record the files to publish"))
     }
 
     // テンプレートには、鍵（秘密鍵・テスト専用の鍵）も、署名済みの index も無い

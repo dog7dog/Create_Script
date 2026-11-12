@@ -33,6 +33,9 @@ import hashlib, json, os, re, sys
 fake = os.environ["FAKE"]
 args = sys.argv[1:]
 with open(os.path.join(fake, "log"), "a") as f: f.write(json.dumps(args) + "\n")
+# which token each call used (never the token itself): "app" when it is the token the test expects
+with open(os.path.join(fake, "gh-tokens.log"), "a") as f:
+    f.write(("app" if os.environ.get("GH_TOKEN") and os.environ.get("GH_TOKEN") == os.environ.get("FAKE_EXPECT_TOKEN") else "other") + "\n")
 state_path = os.path.join(fake, "releases.json")
 releases = json.load(open(state_path)) if os.path.exists(state_path) else []
 def save(): json.dump(releases, open(state_path, "w"))
@@ -175,7 +178,8 @@ def report_fake(installed=True, checks_ok=True, revoke_ok=True, current=HEAD):
     if revoke_ok: curl_response(fake, "DELETE", "https://api.github.com/installation/token", {})
     return fake
 
-def token_leaked(fake, out, err):
+def token_leaked(fake, out, err, token=None):
+    TOKEN = token or globals()["TOKEN"]
     # the token may appear only in the mask command; never in other output or in a file
     printed = (out.replace(f"::add-mask::{TOKEN}", "") + err)
     # files the script could have written (the fake's own canned responses and logs are not)
@@ -241,7 +245,7 @@ publish = wf("publish.yml")
 find = step(publish, "check", "pr")
 compare = step(publish, "check", "Check that the merged tree is the approved tree, and the approvals")
 record = step(publish, "check", "files")
-release = step(publish, "release", "Publish the release")
+release = step(publish, "release", "Publish the release as the registry's publishing GitHub App")
 
 def fixture(target, extra=None):
     """An open registry (three maintainers) made from the template."""
@@ -346,14 +350,30 @@ code, o, e = bash(record, env, work)
 outputs = dict(l.split("=", 1) for l in out.read_text().splitlines())
 expect("publish/check: records serial and SHA-256 of both files", code == 0 and outputs.get("serial") == "2" and len(outputs.get("index_sha256", "")) == 64, o + e)
 
-def release_run(prepare=None, **flags):
+PUB_TOKEN = "ghs_mockpublisher0987654321"
+GRANTED = {"token": PUB_TOKEN, "expires_at": "x", "permissions": {"contents": "write", "metadata": "read"},
+           "repository_selection": "selected", "repositories": [{"name": "CreateScript-Registry"}]}
+
+def release_run(prepare=None, installed=True, granted=GRANTED, revoke_ok=True, extra_env=None, **flags):
+    """The release job's step with the publishing App (W1). The step's env has no GH_TOKEN; extra_env can add one
+    (to show that there is no fallback to it)."""
     fake = new_fake()
     if prepare: prepare(fake)
-    env = env_for(fake, {"GH_TOKEN": "t", "REPOSITORY": REPOSITORY, "SERIAL": outputs["serial"], "INDEX_SHA256": outputs["index_sha256"], "SIG_SHA256": outputs["sig_sha256"], "GITHUB_SHA": merged, **flags})
+    if installed: curl_response(fake, "GET", f"https://api.github.com/repos/{REPOSITORY}/installation", {"id": 77})
+    if granted is not None: curl_response(fake, "POST", "https://api.github.com/app/installations/77/access_tokens", granted)
+    if revoke_ok: curl_response(fake, "DELETE", "https://api.github.com/installation/token", {})
+    env = env_for(fake, {"APP_ID": "222", "APP_KEY": KEY, "FAKE_EXPECT_TOKEN": PUB_TOKEN, "REPOSITORY": REPOSITORY,
+                         "SERIAL": outputs["serial"], "INDEX_SHA256": outputs["index_sha256"], "SIG_SHA256": outputs["sig_sha256"],
+                         "GITHUB_SHA": merged, **(extra_env or {}), **flags})
     code, o, e = bash(release, env, work)
     state = json.loads((fake / "releases.json").read_text()) if (fake / "releases.json").exists() else []
     summary = (fake / "summary.md").read_text() if (fake / "summary.md").exists() else ""
+    release_run.last = (fake, o, e)
     return code, o + e, state, gh_log(fake), summary
+
+def gh_tokens(fake):
+    p = fake / "gh-tokens.log"
+    return p.read_text().split() if p.exists() else []
 
 code, log, state, calls, summary = release_run()
 creates = [c for c in calls if c[:2] == ["release", "create"]]
@@ -363,6 +383,36 @@ expect("publish/release: created as a draft, not as latest", len(creates) == 1 a
 expect("publish/release: created with exactly the two files at the commit", creates and creates[0][3:5] == ["registry/signed/index.json", "registry/signed/index.json.sig"] and merged in creates[0], creates)
 expect("publish/release: published (draft=false) and made latest only after the draft check", len(patches) == 1 and "draft=false" in patches[0] and "make_latest=true" in patches[0] and calls.index(patches[0]) > calls.index(creates[0]), calls)
 expect("publish/release: the release ends published and immutable", len(state) == 1 and state[0]["draft"] is False and state[0]["immutable"] is True, state)
+fake, o, e = release_run.last
+# W1: the publishing App
+expect("W1: every gh call uses the Publisher App token (never GITHUB_TOKEN)", gh_tokens(fake) and set(gh_tokens(fake)) == {"app"}, gh_tokens(fake))
+token_req = next((x for x in curl_log(fake) if x["url"].endswith("/access_tokens")), None)
+expect("W1: the token is requested for this repository and contents: write only", token_req and json.loads(token_req["body"]) == {"repositories": ["CreateScript-Registry"], "permissions": {"contents": "write"}}, token_req)
+expect("W1: the Publisher App token is masked", f"::add-mask::{PUB_TOKEN}" in o)
+expect("W1: the Publisher App token is never printed or written to a file", not token_leaked(fake, o, e, PUB_TOKEN))
+pub_revocations = [x for x in curl_log(fake) if x["method"] == "DELETE" and x["url"] == "https://api.github.com/installation/token"]
+expect("W1: the token is revoked at the end with the token itself", len(pub_revocations) == 1 and f"Authorization: Bearer {PUB_TOKEN}" in pub_revocations[0]["headers"] and curl_log(fake)[-1]["method"] == "DELETE", curl_log(fake))
+expect("W1: the private key file is removed", not [x for x in fake.rglob("tmp.*") if x.is_file()])
+# W1: fail-closed, no fallback
+for name, kwargs in (("the App is not installed (authentication or lookup fails)", {"installed": False}),
+                     ("no token is issued (missing permission or 401/422)", {"granted": None})):
+    code, log, state, calls, summary = release_run(extra_env={"GH_TOKEN": "a-github-token"}, **kwargs)
+    fake, o, e = release_run.last
+    expect(f"W1: {name} -> stops before any gh call, no fallback to GITHUB_TOKEN", code != 0 and calls == [] and state == [] and "nothing was published" in log, log)
+for name, granted in (("contents: read only", {**GRANTED, "permissions": {"contents": "read", "metadata": "read"}}),
+                      ("an extra permission", {**GRANTED, "permissions": {"contents": "write", "metadata": "read", "issues": "write"}}),
+                      ("no permissions in the response", {k: v for k, v in GRANTED.items() if k != "permissions"}),
+                      ("all repositories", {**GRANTED, "repository_selection": "all"}),
+                      ("another repository", {**GRANTED, "repositories": [{"name": "other"}]})):
+    code, log, state, calls, summary = release_run(granted=granted)
+    fake, o, e = release_run.last
+    expect(f"W1: token with {name} -> stops before any gh call", code != 0 and calls == [] and "does not have exactly contents: write" in log, log)
+    expect(f"W1: ... and that token is still revoked ({name})", len([x for x in curl_log(fake) if x["method"] == "DELETE"]) == 1)
+code, log, state, calls, summary = release_run(APP_ID="")
+fake, o, e = release_run.last
+expect("W1: REGISTRY_PUBLISHER_APP_ID not set -> stops before any App call", code != 0 and curl_log(fake) == [] and calls == [], log)
+code, log, state, calls, summary = release_run(revoke_ok=False)
+expect("W1: revocation fails -> published anyway, warning without secrets", code == 0 and "::warning::the Publisher App installation token could not be revoked" in log and not token_leaked(release_run.last[0], release_run.last[1], release_run.last[2], PUB_TOKEN), log)
 code, log, state, calls, summary = release_run(FAKE_DIGEST_OVERRIDE="1")
 expect("publish/release: digest mismatch on the draft -> stops, stays a draft, never latest", code != 0 and state and state[0]["draft"] is True and not [c for c in calls if "PATCH" in c] and "left as a draft" in log, log)
 expect("publish/release: ... and the failure is recorded in the job summary", "Publication of index-2 stopped" in summary, summary)
@@ -386,6 +436,55 @@ git(work / "registry", "checkout", "-q", "--", "signed/index.json")
 for name, over in (("serial empty", {"SERIAL": ""}), ("serial with ;", {"SERIAL": "2;id"}), ("serial negative", {"SERIAL": "-1"}), ("SHA-256 malformed", {"INDEX_SHA256": "zz"})):
     code, log, state, calls, summary = release_run(**over)
     expect(f"publish/release: {name} refused before any release call", code != 0 and not [c for c in calls if c[0] == "release"], log)
+# W3: the tag rulesets of the repository, checked before publishing
+gate = step(publish, "check", "Check the repository's tag rulesets (fails when they cannot be verified)")
+CHECKS_ID, PUBLISHER_ID = 111, 222
+A = {"name": "index tags: creation", "target": "tag", "enforcement": "active",
+     "bypass_actors": [{"actor_id": PUBLISHER_ID, "actor_type": "Integration", "bypass_mode": "always"}],
+     "conditions": {"ref_name": {"include": ["refs/tags/index-*"], "exclude": []}}, "rules": [{"type": "creation"}]}
+B = {"name": "index tags: update and deletion", "target": "tag", "enforcement": "active", "bypass_actors": [],
+     "conditions": {"ref_name": {"include": ["refs/tags/index-*"], "exclude": []}}, "rules": [{"type": "deletion"}, {"type": "update"}, {"type": "non_fast_forward"}]}
+
+def gate_run(live_a=A, live_b=B, list_ok=True, checks_id=str(CHECKS_ID), publisher_id=str(PUBLISHER_ID)):
+    work = pathlib.Path(tempfile.mkdtemp(dir=RUNS))
+    fixture(work / "registry")
+    (work / "registry/github-settings").mkdir()
+    (work / "registry/github-settings/index-tags-creation-ruleset.json").write_text(json.dumps(A, indent=2))
+    (work / "registry/github-settings/index-tags-protection-ruleset.json").write_text(json.dumps(B, indent=2))
+    fake = new_fake()
+    live = [x for x in ((1, live_a), (2, live_b)) if x[1] is not None]
+    if list_ok:
+        api(fake, f"repos/{REPOSITORY}/rulesets?per_page=100", [[{"id": i, "name": r["name"], "target": "tag"} for i, r in live] + [{"id": 3, "name": "main", "target": "branch"}]])
+    for i, r in live:
+        api(fake, f"repos/{REPOSITORY}/rulesets/{i}", {"id": i, "source_type": "Repository", **r})
+    code, o, e = bash(gate, env_for(fake, {"GH_TOKEN": "t", "REPOSITORY": REPOSITORY, "CHECKS_APP_ID": checks_id, "PUBLISHER_APP_ID": publisher_id}), work)
+    return code, o + e
+
+code, log = gate_run()
+expect("W3: live tag rulesets equal to github-settings with visible bypass actors -> passes", code == 0 and "the tag rulesets match" in log, log)
+code, log = gate_run(live_a={k: v for k, v in A.items() if k != "bypass_actors"})
+expect("W3: bypass_actors not returned (token cannot read them) -> fails closed", code != 0 and "bypass_actors is not visible" in log, log)
+code, log = gate_run(live_b={k: v for k, v in B.items() if k != "bypass_actors"})
+expect("W3: B's bypass_actors not returned -> fails closed", code != 0 and "cannot be verified that nobody bypasses it" in log, log)
+code, log = gate_run(live_b={**B, "bypass_actors": [{"actor_id": PUBLISHER_ID, "actor_type": "Integration", "bypass_mode": "always"}]})
+expect("W3: B with a bypass actor -> fails", code != 0 and "bypass_actors must be empty" in log, log)
+code, log = gate_run(live_a={**A, "bypass_actors": [{"actor_id": CHECKS_ID, "actor_type": "Integration", "bypass_mode": "always"}]})
+expect("W3: A bypassed by the Checks App -> fails", code != 0 and "not the Registry Publisher App" in log, log)
+code, log = gate_run(live_a={**A, "bypass_actors": A["bypass_actors"] + [{"actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "always"}]})
+expect("W3: A with an extra bypass actor (e.g. a repository role) -> fails", code != 0 and "exactly one actor" in log, log)
+code, log = gate_run(live_a={**A, "enforcement": "disabled"})
+expect("W3: A not active -> fails", code != 0 and "enforcement must be active" in log, log)
+code, log = gate_run(live_b={**B, "rules": [{"type": "deletion"}]})
+expect("W3: B without update -> fails", code != 0 and "are missing" in log, log)
+code, log = gate_run(live_b=None)
+expect("W3: B missing on the repository -> fails", code != 0 and "exactly one ruleset named" in log, log)
+code, log = gate_run(publisher_id="333")
+expect("W3: the App ID variable differs from github-settings -> fails", code != 0 and "not the Registry Publisher App (333)" in log, log)
+code, log = gate_run(publisher_id="")
+expect("W3: the App ID variable is not set -> fails", code != 0, log)
+code, log = gate_run(list_ok=False)
+expect("W3: the rulesets cannot be read (API error) -> fails", code != 0, log)
+
 verify_failed = step(publish, "verify", "Record a failed verification")
 fake = new_fake(); code, o, e = bash(verify_failed, env_for(fake, {"SERIAL": "2"}), fake)
 expect("publish/verify: a failed verification is recorded in the summary and as an error", code == 0 and "published, but the verification failed" in (fake / "summary.md").read_text() and "::error::index-2" in o, o + e)

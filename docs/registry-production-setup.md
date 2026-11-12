@@ -67,9 +67,10 @@
    - `publish`：必須の承認者はメンテナー、「prevent self-review」を有効、deployment branches は `main` だけ。
 9. **ruleset：** C-4 の後に適用する。
    - `github-settings/main-ruleset.json`：`~DEFAULT_BRANCH`、2 承認、コードオーナーの承認、古い承認の取り消し、最後の push の承認、スレッドの解決、strict な必須チェック（App の ID つき）、線形の履歴、force push の禁止、削除の禁止、回避者なし。
-   - `github-settings/index-tags-ruleset.json`：`index-*` のタグの削除・更新を禁止。
-     - 作成は制限していない。制限すると、回避者のいない ruleset では、公開のワークフローもタグを作れなくなる。
-     - 公開専用の App を回避者にする案と、設定だけでは防げないこと（書き込み権限で latest を変えられる）は、GOVERNANCE.md の「Index tags and releases」に記載。
+   - `github-settings/index-tags-creation-ruleset.json`（ruleset A）：`index-*` のタグの作成を禁止。回避者は公開専用の App だけ（`actor_id` に App の ID を入れる）。
+   - `github-settings/index-tags-protection-ruleset.json`（ruleset B）：`index-*` のタグの更新・削除を禁止。回避者なし。
+   - 適用の前に、`check-settings` に 2 つの App の ID を渡して `OK` になることを確かめる（GOVERNANCE.md）。
+   - 設定だけでは防げないこと（書き込み権限で別の名前の Release を作る・latest を変える）は、GOVERNANCE.md の「Index tags and releases」に記載。
 10. **CODEOWNERS：** `* @…` の 1 行で、`maintainers.json` のメンテナーと完全に一致させる（ツールが検査する）。
 11. **ワークフローの設定：** 審査を受ける PR で行う。この時点で ruleset が効いている。
     - `TOOL_COMMIT` を、審査済みのコミットにする。
@@ -120,11 +121,13 @@
   2. 未マージの PR のチェックを確かめ直す。
   3. 鍵の漏えいの期間にマージされた PR を監査する。
 
-### C-7'. 公開専用の GitHub App（Phase 9 で設計として採用。**未実装**）
+### C-7'. 公開専用の GitHub App（Phase 9 で採用、Phase 10A で雛形に実装。**GitHub では未検証**）
 
 - `index-*` のタグを作れる主体を限定するための設計です。全体は `docs/registry-github-architecture.md` にあります。
-- まだ実装していません：`publish.yml` と ruleset の変更が必要です（`docs/audits/S8.3-Phase9-Integration-Preparation.md` の W1〜W7）。
-- 実装の後に、GitHub 上で試験します（`docs/registry-github-integration-test.md` の IT-09・IT-21〜IT-27）。
+- 雛形の `publish.yml` の `release` ジョブは、この App のトークンだけで公開します（ジョブの `GITHUB_TOKEN` は読み取りだけ）。
+- 必要な設定：変数 `REGISTRY_PUBLISHER_APP_ID`、environment `publish` の secret `REGISTRY_PUBLISHER_APP_KEY`、ruleset A・B。
+- 公開の前に、`check` ジョブがリポジトリの実際のタグの ruleset を確かめます。GitHub の文書によると、`bypass_actors` は ruleset に書き込める利用者にだけ返されるので、読み取りのトークンでは確かめられず、公開がここで止まる見込みです。どう確かめるかは Phase 10B で決めます。
+- GitHub 上で試験します（`docs/registry-github-integration-test.md` の IT-09・IT-21〜IT-27）。
 - 設計の内容：
   - 2 つめの App「CreateScript Registry Publisher」を作る。権限は Contents: read and write だけで、レジストリのリポジトリだけにインストールする。
   - 秘密鍵は environment `publish` の secret にだけ置く（必須の承認者・自分の承認の禁止・main だけ）。

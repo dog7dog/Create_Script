@@ -13,8 +13,10 @@
 #      this commit. It then checks the approvals again (P4-M4): the pushed commit must come from exactly one merged
 #      pull request, whose head commit has the same tree, and whose reviews (read with the token) pass
 #      check-approvals against the commit before the push. It passes on the SHA-256 of the two files.
-#   2. release (the only job with a write token; environment "publish" with required reviewers): runs no Gradle
-#      and no tool (P4-M3). It checks that the files still have the SHA-256 from step 1, stops if any release
+#      It also checks the repository's index-* tag rulesets against github-settings/ (P6-L4, W3): this fails when
+#      they differ or cannot be verified (GitHub returns a ruleset's bypass actors only to users who can write it).
+#   2. release (environment "publish" with required reviewers; the only job that writes, through the registry's
+#      publishing GitHub App, with its own GITHUB_TOKEN read-only): runs no Gradle and no tool (P4-M3, W1). It checks that the files still have the SHA-256 from step 1, stops if any release
 #      for this serial already exists (draft or published), creates the release index-<serial> as a draft, checks
 #      the draft's two assets and GitHub's digests against the recorded SHA-256, and only then publishes it and
 #      makes it the latest; it then checks that GitHub reports it published and immutable (P6-L3). A failure
@@ -111,6 +113,23 @@ jobs:
           if [ -f published/index.json ]; then set -- --previous-index published/index.json --previous-sig published/index.json.sig; fi
           "$TOOL" publish-check --repo registry "$@"
 
+      - name: Check the repository's tag rulesets (fails when they cannot be verified)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          CHECKS_APP_ID: ${{ vars.REGISTRY_CHECKS_APP_ID }}
+          PUBLISHER_APP_ID: ${{ vars.REGISTRY_PUBLISHER_APP_ID }}
+        run: |
+          set -euo pipefail
+          mkdir live-rulesets
+          gh api --paginate --slurp "repos/$REPOSITORY/rulesets?per_page=100" > live-rulesets/list.json
+          for id in $(jq -r '.[][] | select(.target == "tag") | .id' live-rulesets/list.json); do
+            case "$id" in ''|*[!0-9]*) echo "unexpected ruleset id" >&2; exit 1 ;; esac
+            gh api "repos/$REPOSITORY/rulesets/$id" > "live-rulesets/ruleset-$id.json"
+          done
+          echo "::stop-commands::$(uuidgen)"
+          "$TOOL" check-live-rulesets --repo registry --live live-rulesets --checks-app-id "$CHECKS_APP_ID" --publisher-app-id "$PUBLISHER_APP_ID"
+
       - name: Find the merged pull request and read its reviews
         id: pr
         env:
@@ -194,6 +213,10 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
   # The only job with a write token. It builds and runs nothing but sha256sum and gh.
+  # The only job that writes to the repository, through the registry's publishing GitHub App (S8.3 Phase 10A, W1).
+  # It builds and runs nothing but sha256sum, jq, openssl, curl and gh. Its own GITHUB_TOKEN is read-only; there is
+  # no fallback to it. The App's private key is a secret of the environment "publish", so it is available only
+  # after the environment's approval.
   release:
     needs: check
     runs-on: ubuntu-24.04
@@ -201,7 +224,7 @@ jobs:
     # A protected environment with required reviewers (GOVERNANCE.md).
     environment: publish
     permissions:
-      contents: write
+      contents: read
     steps:
       - name: Check out main
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -210,27 +233,77 @@ jobs:
           path: registry
           persist-credentials: false
 
-      - name: Publish the release
+      - name: Publish the release as the registry's publishing GitHub App
         env:
-          GH_TOKEN: ${{ github.token }}
+          APP_ID: ${{ vars.REGISTRY_PUBLISHER_APP_ID }}
+          APP_KEY: ${{ secrets.REGISTRY_PUBLISHER_APP_KEY }}
           REPOSITORY: ${{ github.repository }}
           SERIAL: ${{ needs.check.outputs.serial }}
           INDEX_SHA256: ${{ needs.check.outputs.index_sha256 }}
           SIG_SHA256: ${{ needs.check.outputs.sig_sha256 }}
         run: |
           set -euo pipefail
+          # One cleanup for every way out: remove the key file and revoke the App token. The token is never written
+          # to a file or printed; a failed revocation is reported without any secret (DELETE /installation/token,
+          # documented by GitHub as returning 204).
+          key=""
+          token=""
+          cleanup() {
+            status=$?
+            if [ -n "$key" ]; then rm -f "$key"; fi
+            if [ -n "$token" ] && [ "$token" != null ]; then
+              if ! curl -fsS --max-time 30 -X DELETE -o /dev/null -H "Authorization: Bearer $token" -H "Accept: application/vnd.github+json" \
+                  "https://api.github.com/installation/token" 2>/dev/null; then
+                echo "::warning::the Publisher App installation token could not be revoked; it expires by itself within an hour"
+              fi
+              token=""
+            fi
+            exit "$status"
+          }
+          trap cleanup EXIT
           stop() {
             echo "::error::$1"
             if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then printf '### Publication of index-%s stopped\n\n%s\n\nNothing was deleted or replaced automatically (GOVERNANCE.md, "Failed publication").\n' "$SERIAL" "$1" >> "$GITHUB_STEP_SUMMARY"; fi
             exit 1
           }
           case "$SERIAL" in ''|*[!0-9]*) echo "unexpected serial" >&2; exit 1 ;; esac
+          case "$APP_ID" in ''|*[!0-9]*) stop "REGISTRY_PUBLISHER_APP_ID is not set; nothing was published." ;; esac
           for value in "$INDEX_SHA256" "$SIG_SHA256"; do
             case "$value" in ''|*[!0-9a-f]*) echo "unexpected SHA-256" >&2; exit 1 ;; esac
             [ "${#value}" = 64 ] || { echo "unexpected SHA-256" >&2; exit 1; }
           done
           echo "$INDEX_SHA256  registry/signed/index.json" | sha256sum -c -
           echo "$SIG_SHA256  registry/signed/index.json.sig" | sha256sum -c -
+          # The App token, obtained just before its first use: limited to this repository and contents: write.
+          b64url() { openssl base64 -A | tr '+/' '-_' | tr -d '='; }
+          now="$(date +%s)"
+          header="$(printf '{"alg":"RS256","typ":"JWT"}' | b64url)"
+          payload="$(printf '{"iat":%d,"exp":%d,"iss":"%s"}' "$((now - 60))" "$((now + 540))" "$APP_ID" | b64url)"
+          key="$(mktemp)"
+          printf '%s\n' "$APP_KEY" > "$key"
+          signature="$(printf '%s.%s' "$header" "$payload" | openssl dgst -sha256 -sign "$key" | b64url)" ||
+            stop "the Publisher App key cannot be used; nothing was published."
+          rm -f "$key"
+          key=""
+          jwt="$header.$payload.$signature"
+          installation="$(curl -fsS --max-time 30 -H "Authorization: Bearer $jwt" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$REPOSITORY/installation" | jq -r .id)" ||
+            stop "the Publisher App could not be authenticated or is not installed on $REPOSITORY; nothing was published."
+          case "$installation" in ''|*[!0-9]*) stop "the Publisher App is not installed on $REPOSITORY; nothing was published." ;; esac
+          response="$(jq -n --arg repo "${REPOSITORY#*/}" '{repositories: [$repo], permissions: {contents: "write"}}' |
+            curl -fsS --max-time 30 -X POST -H "Authorization: Bearer $jwt" -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/app/installations/$installation/access_tokens" -d @-)" ||
+            stop "the Publisher App token could not be obtained (missing permission or authentication failure); nothing was published."
+          token="$(printf '%s' "$response" | jq -r '.token // empty')"
+          if [ -z "$token" ]; then response=""; stop "the Publisher App returned no token; nothing was published."; fi
+          echo "::add-mask::$token"
+          # Exactly contents: write (and metadata: read) on exactly this repository; anything else stops it.
+          printf '%s' "$response" | jq -e --arg repo "${REPOSITORY#*/}" \
+            '((.permissions // {}) | (.contents == "write") and (to_entries | all(.key == "contents" or (.key == "metadata" and .value == "read"))))
+              and .repository_selection == "selected" and ([.repositories[]?.name] == [$repo])' > /dev/null ||
+            { response=""; stop "the Publisher App token does not have exactly contents: write on $REPOSITORY; nothing was published."; }
+          response=""
+          export GH_TOKEN="$token"
           tag="index-$SERIAL"
           # A re-run never publishes the same serial again: any release for this tag, draft or published, stops it.
           gh api --paginate --slurp "repos/$REPOSITORY/releases?per_page=100" > releases.json

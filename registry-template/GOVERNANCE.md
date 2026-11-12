@@ -99,15 +99,18 @@ The App is separate from the workflows' own `GITHUB_TOKEN`, whose permissions ar
 
 ## GitHub settings (proposal, to be applied when the repository is created)
 
-Before applying, run `createscript-registry-tool check-settings --ruleset github-settings/main-ruleset.json`
-after filling in the App's ID; it must print `OK`.
+Before applying, fill in the two Apps' IDs and run
+`createscript-registry-tool check-settings --ruleset github-settings/main-ruleset.json --tag-creation-ruleset
+github-settings/index-tags-creation-ruleset.json --tag-protection-ruleset github-settings/index-tags-protection-ruleset.json
+--checks-app-id <checks App ID> --publisher-app-id <publisher App ID>`; it must print `OK`.
 
 - **Rulesets**: `github-settings/main-ruleset.json` for `main` (pull requests with 2 approvals, code owner review,
   stale approvals dismissed, approval of the last push, resolved threads, required checks `registry/validate` and
   `registry/approvals` **from the registry's GitHub App** on the latest `main`, linear history, no force push, no
-  deletion, **no bypass actors**) and `github-settings/index-tags-ruleset.json` (tags `index-*` cannot be moved or
-  deleted). The value `0` of `integration_id` in the template is a placeholder that GitHub and `check-settings`
-  refuse.
+  deletion, **no bypass actors**), `github-settings/index-tags-creation-ruleset.json` (ruleset A: only the
+  publishing App may create `index-*` tags) and `github-settings/index-tags-protection-ruleset.json` (ruleset B:
+  `index-*` tags cannot be moved or deleted by anybody). The value `0` of `integration_id` and of A's `actor_id`
+  in the template is a placeholder that `check-settings` refuses.
 - **CODEOWNERS**: one rule, `*` followed by every maintainer (`createscript-registry-tool` refuses anything else).
   GitHub never counts an author's own approval, so with the lead as the only code owner the lead's pull requests
   could never be merged (finding P4-M1). With every maintainer as a code owner, any pull request can get the code
@@ -115,20 +118,25 @@ after filling in the App's ID; it must print `OK`.
 - **Collaborators**: only maintainers, with the `write` role; the lead as admin. No deploy keys.
 - **Actions**: allow only actions pinned to a full commit SHA; workflow permissions read-only by default;
   **require approval to run workflows for all outside collaborators** (not only first-time contributors).
-- **Environment `registry-checks`**: the App's private key; deployment branches `main` only.
-- **Environment `publish`**: required reviewers = the maintainers, "prevent self-review" on, only `main` can deploy.
+- **Environment `registry-checks`**: the checks App's private key; deployment branches `main` only.
+- **Environment `publish`**: required reviewers = the maintainers, "prevent self-review" on, only `main` can deploy;
+  the publishing App's private key `REGISTRY_PUBLISHER_APP_KEY`.
+- **Repository variables**: `REGISTRY_CHECKS_APP_ID` and `REGISTRY_PUBLISHER_APP_ID` (the two Apps' IDs).
 
 ## Index tags and releases
 
 What protects the index releases, and what GitHub settings cannot do:
 
-- `github-settings/index-tags-ruleset.json` forbids **updating and deleting** `index-*` tags, for everybody (no
-  bypass actors). A published index can therefore not be moved to another commit.
-- It does **not** forbid **creating** `index-*` tags. A ruleset that forbids creation without a bypass actor would
-  also stop the `publish` workflow, which creates the tag when it publishes the release. The only way to let just
-  the publisher create them is a bypass actor: a dedicated publishing GitHub App (or a deploy key) used only by the
-  `release` job, with `bypass_mode: always` for tag creation only. That is a second App with `contents: write` and
-  is **not set up by this template**; it would be a maintenance change of its own.
+- Ruleset B (`github-settings/index-tags-protection-ruleset.json`) forbids **updating and deleting** `index-*`
+  tags, for everybody (no bypass actors). A published index can therefore not be moved to another commit.
+- Ruleset A (`github-settings/index-tags-creation-ruleset.json`) forbids **creating** `index-*` tags, with the
+  publishing GitHub App as the only bypass actor (see below). Whether GitHub applies the bypass to the tag that is
+  created when a draft release is published is **not verified** (test IT-21 and IT-09).
+- Before publishing, the `check` job compares the repository's live tag rulesets with these two files and the App
+  IDs (`check-live-rulesets`), and stops on any difference. According to GitHub's REST documentation, a ruleset's
+  `bypass_actors` are returned only to users who can write the ruleset; the job's read-only token therefore may not
+  see them, and then the check **fails** (it never assumes them). How the bypass actors are verified before each
+  publication is decided after the tests on GitHub (Phase 10B); until then, publication stops at this check.
 - Even with tag creation restricted, anyone with write access can create a release under another tag name, or
   mark another release as the latest. Clients fetch `releases/latest`, and an old signed index there is still
   valid until it expires: clients with saved state refuse it as a rollback (and keep their newer index), and a
@@ -137,14 +145,12 @@ What protects the index releases, and what GitHub settings cannot do:
   watching the releases (the lead checks after every publication, and anyone may, that the latest release is the
   highest `index-<serial>`).
 
-### The publishing GitHub App (design adopted in S8.3 Phase 9, **not implemented yet**)
+### The publishing GitHub App (adopted in S8.3 Phase 9, in the template since Phase 10A, **not tried on GitHub**)
 
-The design below was adopted in S8.3 Phase 9 (`docs/registry-github-architecture.md`). The template does **not**
-implement it yet: it still publishes with the `release` job's `GITHUB_TOKEN`, and the tag ruleset is still the
-single one without a creation rule. Implementing it is the change plan W1 to W7 of
-`docs/audits/S8.3-Phase9-Integration-Preparation.md`, followed by the tests IT-09 and IT-21 to IT-27 of
-`docs/registry-github-integration-test.md`. Nothing of it has been tried on GitHub; in particular, how a bypass
-actor of a ruleset acts on the creation of tags is not verified.
+The design (`docs/registry-github-architecture.md`) is in the template since S8.3 Phase 10A: the `release` job
+publishes with the publishing App's token and its own `GITHUB_TOKEN` is read-only, and the tag rulesets are A and
+B. None of it has been tried on GitHub (tests IT-09 and IT-21 to IT-27 of `docs/registry-github-integration-test.md`);
+in particular, how a bypass actor of a ruleset acts on the creation of tags is not verified.
 
 - **A second App, "CreateScript Registry Publisher"**: repository permission "Contents: read and write" only,
   installed only on the registry repository, no webhook. It is separate from the checks App, so that neither key
@@ -153,17 +159,17 @@ actor of a ruleset acts on the creation of tags is not verified.
 - **Its private key** is a secret of the environment `publish` (required reviewers = the maintainers, "prevent
   self-review", deployment branches `main` only), so a workflow can use it only after the second approval. It is
   never stored anywhere else; it is rotated like the checks App's key.
-- **The `release` job** would keep `GITHUB_TOKEN` read-only (`contents: read`), ask for an installation token of
-  the publishing App limited to this repository and `contents: write`, mask it, use it only for the draft, the
-  draft check and the publication, and revoke it when the step ends (as the `report` job does).
+- **The `release` job** keeps `GITHUB_TOKEN` read-only (`contents: read`) and never falls back to it. Just before
+  its first use, after the files were checked, it asks for an installation token of the publishing App limited to
+  this repository and `contents: write`, masks it, stops unless GitHub reports exactly `contents: write` (and
+  `metadata: read`) on exactly this repository, uses it only for the draft, the draft check and the publication,
+  and revokes it (`DELETE /installation/token`) when the step ends, however it ends. A failed authentication or a
+  missing permission stops it before anything is created.
 - **Two tag rulesets** for `refs/tags/index-*`:
-  1. update, deletion and non-fast-forward forbidden, **no bypass actors** (as today);
-  2. creation forbidden, with the publishing App as the **only** bypass actor (`actor_type: Integration`). A
+  1. B: update, deletion and non-fast-forward forbidden, **no bypass actors**;
+  2. A: creation forbidden, with the publishing App as the **only** bypass actor (`actor_type: Integration`). A
      bypass applies to every rule of its ruleset, which is why creation is in a ruleset of its own.
-  Proposed JSON for the second ruleset (the App ID is filled in when the App exists):
-  `{"name": "index tags: creation", "target": "tag", "enforcement": "active", "conditions": {"ref_name":
-  {"include": ["refs/tags/index-*"], "exclude": []}}, "rules": [{"type": "creation"}], "bypass_actors":
-  [{"actor_id": <publisher App ID>, "actor_type": "Integration", "bypass_mode": "always"}]}`.
+  The files are in `github-settings/`; A's `actor_id` is filled in when the App exists.
 - **What it does not change**: maintainers with write access can still create releases under other tag names and
   change the latest release; an administrator can still change the rulesets; whoever has the publishing App's
   key can create `index-*` tags and releases, though not sign an index (an old signed index can be published

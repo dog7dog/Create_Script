@@ -19,7 +19,14 @@ fun main(args: Array<String>) {
     exitProcess(RegistryTool(System.out, System.err, { Instant.now() }, { LiveGitHub(GitHubReleases()) }).run(args.toList()))
 }
 
-class RegistryTool(private val out: PrintStream, private val err: PrintStream, private val clock: () -> Instant, private val github: () -> RegistryGitHub) {
+// allowTestKeys は、テスト専用のビルド（src/test の TestRegistryTool、S8.3 Phase 10A の W7）だけが true にする。本番の main は渡さない
+class RegistryTool(
+    private val out: PrintStream,
+    private val err: PrintStream,
+    private val clock: () -> Instant,
+    private val github: () -> RegistryGitHub,
+    private val allowTestKeys: Boolean = false,
+) {
     private val usage = """
         usage: createscript-registry-tool <command> [options]
           check-repo --repo DIR
@@ -30,7 +37,8 @@ class RegistryTool(private val out: PrintStream, private val err: PrintStream, p
           verify-index --index FILE --sig FILE --repo DIR [--previous-index FILE --previous-sig FILE]
           publish-check --repo DIR [--previous-index FILE --previous-sig FILE]
           check-release --release FILE --index FILE --sig FILE
-          check-settings --ruleset FILE
+          check-settings --ruleset FILE --tag-creation-ruleset FILE --tag-protection-ruleset FILE [--checks-app-id ID --publisher-app-id ID]
+          check-live-rulesets --repo DIR --live DIR --checks-app-id ID --publisher-app-id ID
     """.trimIndent()
 
     private class Usage(message: String) : Exception(message)
@@ -51,7 +59,8 @@ class RegistryTool(private val out: PrintStream, private val err: PrintStream, p
                 "verify-index" -> verifyIndex(options)
                 "publish-check" -> publishCheck(options)
                 "check-release" -> IndexPublishing.checkRelease(file(options, "release"), file(options, "index"), file(options, "sig"))
-                "check-settings" -> Report().also { r -> GitHubSettings.rulesetProblems(file(options, "ruleset")).forEach(r::error) }
+                "check-settings" -> checkSettings(options)
+                "check-live-rulesets" -> checkLiveRulesets(options)
                 else -> throw Usage("unknown command ${args[0]}")
             }
             report.lines().forEach(out::println)
@@ -195,6 +204,51 @@ class RegistryTool(private val out: PrintStream, private val err: PrintStream, p
 
     private fun publishCheck(options: Map<String, String>): Report {
         val repository = repository(options)
-        return IndexPublishing.publishCheck(repository, repository.signedIndex, repository.signedSignature, previous(options), clock(), allowTestKeys = false)
+        return IndexPublishing.publishCheck(repository, repository.signedIndex, repository.signedSignature, previous(options), clock(), allowTestKeys = allowTestKeys)
+    }
+
+    // GitHub App の ID（正の整数）。無ければ null
+    private fun appId(options: Map<String, String>, name: String): Long? {
+        val text = options[name] ?: return null
+        return text.toLongOrNull()?.takeIf { it > 0 } ?: throw Usage("--$name must be a positive number")
+    }
+
+    // ruleset の案のファイル（S8.3 Phase 5・10A）: main の ruleset と、index-* のタグの ruleset A（作成）・B（更新・削除）。
+    // App の ID を渡せば、必須チェックの App（Checks）と、A の回避者（Publisher）を照合する
+    private fun checkSettings(options: Map<String, String>): Report {
+        val report = Report()
+        val main = file(options, "ruleset")
+        GitHubSettings.rulesetProblems(main).forEach(report::error)
+        val checks = appId(options, "checks-app-id")
+        val publisher = appId(options, "publisher-app-id")
+        if (checks != null) {
+            val parsed = TagRulesets.parse(main)
+            if (parsed != null) {
+                for (check in GitHubSettings.requiredChecks(parsed)) {
+                    if (check.integrationId != checks) report.error("the required check ${check.context} comes from App ${check.integrationId}, not the Registry Checks App ($checks)")
+                }
+            }
+        }
+        TagRulesets.fileProblems(file(options, "tag-creation-ruleset"), file(options, "tag-protection-ruleset"), publisher, checks).forEach(report::error)
+        return report
+    }
+
+    // 公開の前の、リポジトリの実際の ruleset の確認（S8.3 Phase 10A、W3）。--live は、GitHub の API の応答
+    // （GET /repos/{owner}/{repo}/rulesets/{id}）を ruleset-<id>.json として保存したディレクトリ。--repo のリポジトリの案のファイルと比べる。
+    // 確かめられない項目（bypass_actors が返されない、など）は失敗にする
+    private fun checkLiveRulesets(options: Map<String, String>): Report {
+        val report = Report()
+        val checks = appId(options, "checks-app-id") ?: throw Usage("--checks-app-id is required")
+        val publisher = appId(options, "publisher-app-id") ?: throw Usage("--publisher-app-id is required")
+        val repo = path(options, "repo")
+        val live = path(options, "live")
+        if (!Files.isDirectory(live, LinkOption.NOFOLLOW_LINKS)) throw ToolFailure("$live is not a directory")
+        val files = Files.list(live).use { s -> s.filter { Regex("ruleset-[0-9]+\\.json").matches(it.fileName.toString()) }.sorted().toList() }
+        if (files.size > 100) throw ToolFailure("more than 100 rulesets")
+        val objects = files.map { f -> TagRulesets.parse(readFile(f)) ?: throw ToolFailure("${f.fileName} is not a JSON object") }
+        if (objects.isEmpty()) report.error("no ruleset of the repository could be read, so the tag protection cannot be verified")
+        TagRulesets.liveProblems(readFile(repo.resolve(TagRulesets.CREATION_FILE)), readFile(repo.resolve(TagRulesets.PROTECTION_FILE)), objects, publisher, checks).forEach(report::error)
+        if (report.ok) report.notice("the tag rulesets match ${TagRulesets.CREATION_FILE} and ${TagRulesets.PROTECTION_FILE}")
+        return report
     }
 }

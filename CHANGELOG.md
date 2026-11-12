@@ -199,6 +199,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   Apps (Registry Checks App for the required checks, Registry Publisher App for publishing and the only creator of
   `index-*` tags) is adopted in `docs/registry-github-architecture.md` but not implemented; the test plan on GitHub
   (`docs/registry-github-integration-test.md`, IT-01 to IT-28) is written but not run.
+- S8.3 Phase 10A (`docs/audits/S8.3-Phase10A-Local-Implementation.md`), local only, nothing tried on GitHub:
+  - The registry template's `release` job publishes with the Registry Publisher App's installation token
+    (limited to `contents: write` on the repository, checked, masked, revoked at the end); its `GITHUB_TOKEN` is
+    read-only and there is no fallback to it (W1).
+  - The `index-*` tag ruleset is split into A (creation; the Publisher App is the only bypass actor) and B (update
+    and deletion; no bypass actor) (W2).
+  - `createscript-registry-tool check-settings` checks A and B and the two Apps' IDs; `check-live-rulesets`
+    compares the repository's live rulesets with them before publishing and fails when they cannot be verified
+    (GitHub returns `bypass_actors` only to users who can write the ruleset) (W3).
+  - Test-only builds, made only by `./gradlew :createscript-cli:testRegistryCli` and
+    `:createscript-registry-tool:testRegistryTool`, use a test registry and test keys; they are built from the
+    test sources and are not part of any release (W7).
 
 ## [0.1.0-alpha] - 2026-11-04 (pre-release)
 

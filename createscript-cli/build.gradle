@@ -64,3 +64,28 @@ tasks.named('test', Test) {
     systemProperty 'createscript.samples', file('samples').absolutePath
     systemProperty 'createscript.scripts', layout.buildDirectory.dir('scripts').get().asFile.absolutePath
 }
+
+// テスト専用のクライアント（S8.3 Phase 10A、W7。GitHub の実環境のテスト用）。`./gradlew :createscript-cli:testRegistryCli` と明示した
+// ときだけ build/test-registry-cli/ に作る（build・installDist・パッケージには含まれない）。テスト用のレジストリとテスト用の鍵を引数で受け取る
+def testRegistryCliJar = tasks.register('testRegistryCliJar', Jar) {
+    description = 'TEST ONLY: test classes for the test-only createscript client'
+    archiveFileName = 'createscript-TEST-REGISTRY-tests.jar'
+    destinationDirectory = layout.buildDirectory.dir('test-registry-cli-jar')
+    from sourceSets.test.output
+}
+def testRegistryCliScripts = tasks.register('testRegistryCliScripts', CreateStartScripts) {
+    description = 'TEST ONLY: launcher of the test-only createscript client'
+    mainClass = 'com.creatrbypc.createanalytical.cli.TestRegistryCliKt'
+    applicationName = 'createscript-TEST-REGISTRY'
+    outputDir = layout.buildDirectory.dir('test-registry-cli-scripts').get().asFile
+    classpath = files(testRegistryCliJar, tasks.named('jar')) + configurations.testRuntimeClasspath
+}
+tasks.register('testRegistryCli', Sync) {
+    group = 'test registry'
+    description = 'TEST ONLY: builds build/test-registry-cli (a client that trusts a test registry; never a release)'
+    into layout.buildDirectory.dir('test-registry-cli')
+    from(testRegistryCliScripts) { into 'bin' }
+    from(testRegistryCliJar) { into 'lib' }
+    from(tasks.named('jar')) { into 'lib' }
+    from(configurations.testRuntimeClasspath) { into 'lib' }
+}
