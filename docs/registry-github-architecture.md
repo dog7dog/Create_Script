@@ -177,6 +177,8 @@ index の公開は、2 つの PR と 1 つの公開のワークフローで行�
 | P-17 | Release の削除の可否（immutable な Release を含む） | IT-11 |
 | P-18 | ジョブの `GITHUB_TOKEN`（`contents: read`）で、`GET /repos/{owner}/{repo}/rulesets` と `…/rulesets/{id}` を読める | IT-21 |
 | P-19 | `bypass_actors` が、読み取りのトークンに返されるか。**GitHub の文書では「ruleset に書き込める利用者にだけ返す」**とあり、返されない見込み。返されなければ、公開の前の確認（`check-live-rulesets`）は失敗し、公開は止まる。その場合の確かめ方（例：運営責任者が管理者の権限で確認して記録する手順）は Phase 10B で決める | IT-21 |
+| P-20 | ruleset の `bypass_actors`（など、どの項目）を変えても、`updated_at` が変わる（W3 の推奨案 B' の前提。Phase 10B-1 の監査報告書 4 章） | PT-5 |
+| P-21 | `current_user_can_bypass` が、要求したトークンの主体について、A では Publisher App だけ `always`、それ以外と B では `never` を返す（文書には値の一覧だけがあり、意味の説明は無い） | PT-5 |
 
 ## 8. 失敗のときの停止と復旧
 
