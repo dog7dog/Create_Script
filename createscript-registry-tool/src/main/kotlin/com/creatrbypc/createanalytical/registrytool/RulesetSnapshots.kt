@@ -7,14 +7,29 @@ import com.creatrbypc.createanalytical.project.JsonObject
 import com.creatrbypc.createanalytical.project.JsonString
 import com.creatrbypc.createanalytical.project.JsonValue
 import com.creatrbypc.createanalytical.project.JsonWriter
+import com.creatrbypc.createanalytical.install.GitHubReleases
+import com.creatrbypc.createanalytical.project.registry.IndexSignature
 import com.creatrbypc.createanalytical.project.registry.IndexSignatures
 import java.security.GeneralSecurityException
 import java.security.KeyFactory
+import java.security.PrivateKey
 import java.security.Signature
 import java.security.spec.X509EncodedKeySpec
+import java.time.Duration
 import java.time.Instant
 import java.time.OffsetDateTime
 import java.time.format.DateTimeParseException
+import java.time.temporal.ChronoUnit
+
+// T3（S8.3 U-1）: 設定の証明用の鍵（スナップショットの署名鍵）の、ツールに固定した信頼済みの指紋（鍵の ID → 32 バイトの公開鍵の SHA-256、
+// 16 進の小文字）。keys/settings-keys.json の本番の鍵（test-only- でないもの）は、ここに同じ指紋で無ければ信頼しない。
+// 本番の鍵はまだ無い（鍵の作成の儀式は未承認）ので空。空のあいだ、本番の経路はスナップショットを信頼できず、公開は止まる（fail-closed）。
+// 指紋を変えるのは CreateScript のソースの変更（レビューとリリース）で、レジストリのリポジトリの管理者だけでは変えられない。
+// ただし、レジストリのワークフローの TOOL_COMMIT を別のコミットに替えれば、別の固定値のツールを使わせることはできる
+// （docs/registry-settings-key.md の「信頼の起点の限界」）
+object SettingsKeyPins {
+    val OFFICIAL: Map<String, String> = emptyMap()
+}
 
 // 案 B'（S8.3 Phase 10B-2A）: index-* のタグの ruleset A・B の、管理者が記録したスナップショットとの照合。
 // GitHub は bypass_actors を、その ruleset に書き込める利用者にだけ返す（文書、P-19 は実測）。公開のワークフローの読み取りのトークンでは
@@ -27,15 +42,24 @@ object RulesetSnapshots {
     const val FILE = "github-settings/verified-rulesets.json"
     const val SIGNATURE_FILE = "github-settings/verified-rulesets.json.sig"
     const val KEYS_FILE = "keys/settings-keys.json"
-    const val SNAPSHOT_VERSION = 1L
+    const val SNAPSHOT_VERSION = 2L
     const val MAX_BYTES = 64 * 1024
+
+    // 記録の有効期間の上限（U-1 で決定）と、記録の時刻が未来にあるとみなすまでの時計のずれの許容
+    const val MAX_VALIDITY_DAYS = 180L
+    val CLOCK_SKEW: Duration = Duration.ofMinutes(5)
+
+    // 本番の鍵での署名は、設定の鍵の作成の儀式が承認されるまで行わない（テスト用の鍵 test-only- だけが署名できる）
+    const val PRODUCTION_SIGNING_ENABLED = false
 
     // ドメインを分ける前置き。index の署名（IndexSignatures.DOMAIN）とは別の用途として区別する
     const val DOMAIN = "CreateScript-Registry ruleset snapshot signature v1"
 
     // 記録する項目（GitHub の「Get a repository ruleset」の応答の項目）
     val RULESET_FIELDS = listOf("id", "name", "target", "source_type", "source", "enforcement", "conditions", "rules", "bypass_actors", "created_at", "updated_at")
-    private val TOP_FIELDS = setOf("snapshotVersion", "repository", "recordedAt", "recordedBy", "rulesets")
+    private val TOP_FIELDS = setOf("snapshotVersion", "repository", "recordedAt", "expires", "recordedBy", "rulesets")
+    // recordedAt・expires は秒までの UTC（record-ruleset-snapshot が書く形）
+    private val SECONDS = Regex("\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z")
     private const val INDEX_PREFIX = "index-"
     private val LOGIN = Regex("[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})")
     private val REPOSITORY = Regex("[A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100}")
@@ -48,6 +72,18 @@ object RulesetSnapshots {
         WORKFLOW("never", "never"),
         PUBLISHER("always", "never"),
     }
+
+    fun seconds(text: String?): Instant? {
+        if (text == null || !SECONDS.matches(text)) return null
+        return try {
+            Instant.parse(text)
+        } catch (error: DateTimeParseException) {
+            null
+        }
+    }
+
+    // 公開鍵（32 バイト）の指紋: SHA-256 の 16 進（小文字）
+    fun fingerprint(rawPublicKey: ByteArray): String = GitHubReleases.sha256Hex(rawPublicKey)
 
     fun timestamp(text: String?): Instant? {
         if (text == null || !TIMESTAMP.matches(text)) return null
@@ -111,8 +147,10 @@ object RulesetSnapshots {
         recordedAt: Instant,
         publisherAppId: Long,
         checksAppId: Long,
+        validDays: Long = MAX_VALIDITY_DAYS,
     ): Parsed<ByteArray> {
         val problems = ArrayList<String>()
+        if (validDays !in 1..MAX_VALIDITY_DAYS) problems += "the snapshot must be valid for 1 to $MAX_VALIDITY_DAYS days"
         if (!REPOSITORY.matches(repository)) problems += "the repository must be owner/name"
         if (!LOGIN.matches(recordedBy)) problems += "--recorded-by must be a GitHub login"
         problems += TagRulesets.liveProblems(expectedCreation, expectedProtection, live, publisherAppId, checksAppId)
@@ -131,10 +169,12 @@ object RulesetSnapshots {
         val rulesets = chosen.sortedBy { string(it, "name") }.map { ruleset ->
             JsonWriter.obj(*RULESET_FIELDS.map { field -> field to ruleset.members.getValue(field) }.toTypedArray())
         }
+        val at = recordedAt.truncatedTo(ChronoUnit.SECONDS)
         val snapshot = JsonWriter.obj(
             "snapshotVersion" to JsonWriter.integer(SNAPSHOT_VERSION),
             "repository" to JsonWriter.string(repository),
-            "recordedAt" to JsonWriter.string(recordedAt.toString()),
+            "recordedAt" to JsonWriter.string(at.toString()),
+            "expires" to JsonWriter.string(at.plus(Duration.ofDays(validDays)).toString()),
             "recordedBy" to JsonWriter.string(recordedBy),
             "rulesets" to JsonWriter.array(rulesets),
         )
@@ -147,25 +187,90 @@ object RulesetSnapshots {
 
     // 署名の形は index.json.sig と同じ（signatureVersion 1）。署名はすべて、keys/settings-keys.json の鍵の正しい署名であること。
     // テスト用の鍵（test-only-）は、テスト専用のビルド（allowTestKeys）でだけ受け入れる
-    fun signatureProblems(snapshot: ByteArray, signatureFile: ByteArray?, keysFile: ByteArray?, allowTestKeys: Boolean): List<String> {
-        signatureFile ?: return listOf("$SIGNATURE_FILE is missing, so the snapshot is not signed")
-        keysFile ?: return listOf("$KEYS_FILE is missing, so the snapshot's signature cannot be checked")
+    // 鍵の一覧（keys/settings-keys.json）と T3 の指紋の照合。本番の鍵（test-only- でないもの）は、すべて pins に同じ指紋で載っていること。
+    // テスト用の鍵は、テスト専用のビルド（allowTestKeys）でだけ受け入れる（指紋の照合はしない。テスト用の鍵は実行のたびに作るため）
+    fun keyProblems(keysFile: ByteArray?, allowTestKeys: Boolean, pins: Map<String, String>): Pair<TrustedKeysFile?, List<String>> {
+        keysFile ?: return null to listOf("$KEYS_FILE is missing, so the snapshot's signature cannot be checked")
         val keys = TrustedKeysFile.parse(keysFile)
-        val trusted = keys.value ?: return keys.problems.map { "$KEYS_FILE: $it" }
+        val trusted = keys.value ?: return null to keys.problems.map { "$KEYS_FILE: $it" }
         val problems = ArrayList<String>()
         if (trusted.keys.keys.isEmpty()) problems += "$KEYS_FILE has no keys"
         if (trusted.hasTestKeys && !allowTestKeys) problems += "$KEYS_FILE has test keys (${TrustedKeysFile.TEST_KEY_PREFIX}…); a real registry never trusts a test key"
+        for (key in trusted.keys.keys) {
+            if (key.keyId.startsWith(TrustedKeysFile.TEST_KEY_PREFIX)) continue
+            when (val pinned = pins[key.keyId]) {
+                null -> problems += if (pins.isEmpty()) {
+                    "$KEYS_FILE: the key ${key.keyId} cannot be trusted: this build of the tool pins no settings key (none has been made yet)"
+                } else {
+                    "$KEYS_FILE: the key ${key.keyId} is not pinned in this build of the tool (removed or never added)"
+                }
+                fingerprint(key.publicKey) -> {}
+                else -> problems += "$KEYS_FILE: the key ${key.keyId} does not match the fingerprint pinned in this build of the tool"
+            }
+        }
+        return trusted to problems
+    }
+
+    // 署名の形は index.json.sig と同じ（signatureVersion 1、署名は最大 4 つ、同じ鍵の ID は 1 回だけ）。署名はすべて、
+    // keys/settings-keys.json の鍵（本番の鍵は T3 の指紋とも一致するもの）の正しい署名であること。一覧に無い鍵（外した鍵）の署名があれば失敗する
+    fun signatureProblems(snapshot: ByteArray, signatureFile: ByteArray?, keysFile: ByteArray?, allowTestKeys: Boolean, pins: Map<String, String> = SettingsKeyPins.OFFICIAL): List<String> {
+        signatureFile ?: return listOf("$SIGNATURE_FILE is missing, so the snapshot is not signed")
+        val (trusted, problems) = keyProblems(keysFile, allowTestKeys, pins).let { it.first to it.second.toMutableList() }
+        trusted ?: return problems
         val parsed = IndexSignatures.parse(signatureFile)
-        val signatures = parsed.value ?: return problems + "$SIGNATURE_FILE is not a valid signature file"
+        val signatures = parsed.value ?: return problems + "$SIGNATURE_FILE is not a valid signature file (at most ${IndexSignatures.MAX_SIGNATURES} signatures, each key once)"
         for (signature in signatures) {
             val key = trusted.keys.find(signature.keyId)
             if (key == null) {
-                problems += "$SIGNATURE_FILE: the key ${signature.keyId} is not in $KEYS_FILE"
+                problems += "$SIGNATURE_FILE: the key ${signature.keyId} is not in $KEYS_FILE (when replacing a key, sign with the new key first and remove the old key's signature before removing the key)"
                 continue
             }
             if (!verify(key.publicKey, message(signature.keyId, snapshot), signature.signature)) problems += "$SIGNATURE_FILE: the signature by ${signature.keyId} does not match the snapshot"
         }
         return problems
+    }
+
+    // 署名（sign-ruleset-snapshot）。署名するのは、方針・期限の検査に通るスナップショットだけ。署名した後、鍵の一覧の公開鍵で確かめる
+    // （別の鍵のファイルで署名した誤りを見つける）。existing は、鍵を替えるあいだに並べる既存の署名のファイル（同じ鍵の ID は加えない）
+    fun sign(snapshot: ByteArray, key: PrivateKey, keyId: String, keysFile: ByteArray?, existing: ByteArray?, allowTestKeys: Boolean, pins: Map<String, String>): Parsed<ByteArray> {
+        val testKey = keyId.startsWith(TrustedKeysFile.TEST_KEY_PREFIX)
+        if (!PRODUCTION_SIGNING_ENABLED && !testKey) {
+            return Parsed(null, listOf("signing with the key $keyId is refused: only test keys (${TrustedKeysFile.TEST_KEY_PREFIX}…) may sign until the settings key ceremony is approved (docs/registry-settings-key.md)"))
+        }
+        val (trusted, problems) = keyProblems(keysFile, allowTestKeys || testKey, pins)
+        if (trusted == null || problems.isNotEmpty()) return Parsed(null, problems)
+        val listed = trusted.keys.find(keyId) ?: return Parsed(null, listOf("the key $keyId is not in $KEYS_FILE; add its public key first"))
+        val others = if (existing == null) emptyList() else IndexSignatures.parse(existing).value ?: return Parsed(null, listOf("the existing signature file is not valid"))
+        if (others.any { it.keyId == keyId }) return Parsed(null, listOf("the existing signature file already has a signature by $keyId"))
+        if (others.size >= IndexSignatures.MAX_SIGNATURES) return Parsed(null, listOf("the existing signature file already has ${IndexSignatures.MAX_SIGNATURES} signatures"))
+        val signature = try {
+            Signature.getInstance("Ed25519").run {
+                initSign(key)
+                update(message(keyId, snapshot))
+                sign()
+            }
+        } catch (error: GeneralSecurityException) {
+            return Parsed(null, listOf("the key file cannot sign with Ed25519"))
+        }
+        if (!verify(listed.publicKey, message(keyId, snapshot), signature)) return Parsed(null, listOf("the key file is not the private key of $keyId in $KEYS_FILE; nothing was written"))
+        val all = others + IndexSignature(keyId, signature)
+        val bytes = IndexSignatures.write(all)
+        val check = signatureProblems(snapshot, bytes, keysFile, allowTestKeys || testKey, pins)
+        return if (check.isEmpty()) Parsed(bytes, emptyList()) else Parsed(null, check)
+    }
+
+    // 署名する人が確かめる要約（秘密の情報は含まない）
+    fun summary(snapshot: ByteArray, keyId: String): List<String> {
+        val obj = TagRulesets.parse(snapshot) ?: return listOf("the snapshot cannot be read")
+        val lines = ArrayList<String>()
+        lines += "snapshot sha256 ${GitHubReleases.sha256Hex(snapshot)}, version ${(obj.members["snapshotVersion"] as? JsonInteger)?.value}"
+        lines += "repository ${string(obj, "repository")}, recorded by ${string(obj, "recordedBy")} at ${string(obj, "recordedAt")}, expires ${string(obj, "expires")}"
+        for (ruleset in (obj.members["rulesets"] as? JsonArray)?.elements.orEmpty().mapNotNull { it as? JsonObject }) {
+            lines += "ruleset ${id(ruleset)} \"${string(ruleset, "name")}\": target ${string(ruleset, "target")}, enforcement ${string(ruleset, "enforcement")}, " +
+                "conditions ${conditions(ruleset.members["conditions"])}, rules ${unordered(ruleset.members["rules"])}, bypass_actors ${unordered(ruleset.members["bypass_actors"])}, updated_at ${string(ruleset, "updated_at")}"
+        }
+        lines += "signing key $keyId"
+        return lines
     }
 
     private val X509_PREFIX = byteArrayOf(0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x03, 0x21, 0x00)
@@ -184,6 +289,46 @@ object RulesetSnapshots {
         }
     }
 
+    // スナップショットそのものの検査（形・版・リポジトリ・期限・方針）。署名・実際の ruleset との照合は別。
+    // 期限: recordedAt <= now + CLOCK_SKEW（未来の記録は失敗）、recordedAt < expires、expires - recordedAt <= MAX_VALIDITY_DAYS、now < expires
+    fun snapshotProblems(
+        expectedCreation: ByteArray,
+        expectedProtection: ByteArray,
+        snapshotBytes: ByteArray,
+        repository: String,
+        publisherAppId: Long,
+        checksAppId: Long,
+        now: Instant,
+    ): Pair<List<String>, List<JsonObject>?> {
+        val problems = ArrayList<String>()
+        if (snapshotBytes.size > MAX_BYTES) return listOf("$FILE is too large") to null
+        val snapshot = TagRulesets.parse(snapshotBytes) ?: return listOf("$FILE is not a JSON object") to null
+        if (!CanonicalJson.write(snapshot).contentEquals(snapshotBytes)) problems += "$FILE must be canonical JSON (as written by record-ruleset-snapshot)"
+        if (snapshot.members.keys != TOP_FIELDS) problems += "$FILE must have exactly the fields ${TOP_FIELDS.sorted().joinToString(", ")}"
+        if ((snapshot.members["snapshotVersion"] as? JsonInteger)?.value != SNAPSHOT_VERSION) problems += "$FILE: snapshotVersion must be $SNAPSHOT_VERSION (record it again with this tool)"
+        if (string(snapshot, "repository") != repository) problems += "$FILE was recorded for ${string(snapshot, "repository")}, not $repository"
+        val recordedAt = seconds(string(snapshot, "recordedAt"))
+        val expires = seconds(string(snapshot, "expires"))
+        when {
+            recordedAt == null -> problems += "$FILE: recordedAt is not a UTC timestamp in seconds (YYYY-MM-DDTHH:MM:SSZ)"
+            expires == null -> problems += "$FILE: expires is not a UTC timestamp in seconds (YYYY-MM-DDTHH:MM:SSZ)"
+            else -> {
+                if (recordedAt.isAfter(now.plus(CLOCK_SKEW))) problems += "$FILE: recordedAt $recordedAt is in the future"
+                if (!expires.isAfter(recordedAt)) problems += "$FILE: expires $expires is not after recordedAt $recordedAt"
+                else if (Duration.between(recordedAt, expires) > Duration.ofDays(MAX_VALIDITY_DAYS)) problems += "$FILE: valid for more than $MAX_VALIDITY_DAYS days ($recordedAt to $expires)"
+                if (!now.isBefore(expires)) problems += "$FILE expired at $expires: check the rulesets and record and sign the snapshot again"
+            }
+        }
+        if (string(snapshot, "recordedBy")?.let(LOGIN::matches) != true) problems += "$FILE: recordedBy is not a GitHub login"
+        val recorded = (snapshot.members["rulesets"] as? JsonArray)?.elements?.map { it as? JsonObject }
+        if (recorded == null || recorded.size != 2 || recorded.any { it == null }) return (problems + "$FILE must record exactly the two tag rulesets") to null
+        val rulesets = recorded.filterNotNull()
+        for (ruleset in rulesets) if (ruleset.members.keys != RULESET_FIELDS.toSet()) problems += "$FILE: a recorded ruleset must have exactly the fields ${RULESET_FIELDS.joinToString(", ")}"
+        // 記録そのものが、雛形の A・B と App の ID の方針に合うこと（回避者を含む。記録には bypass_actors がある）
+        problems += TagRulesets.liveProblems(expectedCreation, expectedProtection, rulesets, publisherAppId, checksAppId).map { "snapshot: $it" }
+        return problems to rulesets
+    }
+
     // スナップショット（署名は別に確かめる）と、公開の前に読み取りのトークンで取得した応答との照合
     fun checkProblems(
         expectedCreation: ByteArray,
@@ -194,22 +339,11 @@ object RulesetSnapshots {
         publisherAppId: Long,
         checksAppId: Long,
         actor: Actor,
+        now: Instant,
     ): List<String> {
-        val problems = ArrayList<String>()
-        if (snapshotBytes.size > MAX_BYTES) return listOf("$FILE is too large")
-        val snapshot = TagRulesets.parse(snapshotBytes) ?: return listOf("$FILE is not a JSON object")
-        if (!CanonicalJson.write(snapshot).contentEquals(snapshotBytes)) problems += "$FILE must be canonical JSON (as written by record-ruleset-snapshot)"
-        if (snapshot.members.keys != TOP_FIELDS) problems += "$FILE must have exactly the fields ${TOP_FIELDS.sorted().joinToString(", ")}"
-        if ((snapshot.members["snapshotVersion"] as? JsonInteger)?.value != SNAPSHOT_VERSION) problems += "$FILE: snapshotVersion must be $SNAPSHOT_VERSION"
-        if (string(snapshot, "repository") != repository) problems += "$FILE was recorded for ${string(snapshot, "repository")}, not $repository"
-        if (string(snapshot, "recordedAt")?.let { runCatching { Instant.parse(it) }.getOrNull() } == null) problems += "$FILE: recordedAt is not a timestamp"
-        if (string(snapshot, "recordedBy")?.let(LOGIN::matches) != true) problems += "$FILE: recordedBy is not a GitHub login"
-        val recorded = (snapshot.members["rulesets"] as? JsonArray)?.elements?.map { it as? JsonObject }
-        if (recorded == null || recorded.size != 2 || recorded.any { it == null }) return problems + "$FILE must record exactly the two tag rulesets"
-        val rulesets = recorded.filterNotNull()
-        for (ruleset in rulesets) if (ruleset.members.keys != RULESET_FIELDS.toSet()) problems += "$FILE: a recorded ruleset must have exactly the fields ${RULESET_FIELDS.joinToString(", ")}"
-        // 記録そのものが、雛形の A・B と App の ID の方針に合うこと（回避者を含む。記録には bypass_actors がある）
-        problems += TagRulesets.liveProblems(expectedCreation, expectedProtection, rulesets, publisherAppId, checksAppId).map { "snapshot: $it" }
+        val (staticProblems, recorded) = snapshotProblems(expectedCreation, expectedProtection, snapshotBytes, repository, publisherAppId, checksAppId, now)
+        val problems = ArrayList(staticProblems)
+        val rulesets = recorded ?: return problems
         val creationName = TagRulesets.parse(expectedCreation)?.let { string(it, "name") }
         for (ruleset in rulesets) {
             val name = string(ruleset, "name")

@@ -27,6 +27,8 @@ class RegistryTool(
     private val clock: () -> Instant,
     private val github: () -> RegistryGitHub,
     private val allowTestKeys: Boolean = false,
+    // T3（S8.3 U-1）: 設定の証明用の鍵の、ツールに固定した指紋。本番の main は既定（SettingsKeyPins.OFFICIAL、今は空）のまま
+    private val settingsKeyPins: Map<String, String> = SettingsKeyPins.OFFICIAL,
 ) {
     private val usage = """
         usage: createscript-registry-tool <command> [options]
@@ -40,7 +42,8 @@ class RegistryTool(
           check-release --release FILE --index FILE --sig FILE
           check-settings --ruleset FILE --tag-creation-ruleset FILE --tag-protection-ruleset FILE [--checks-app-id ID --publisher-app-id ID]
           check-live-rulesets --repo DIR --live DIR --checks-app-id ID --publisher-app-id ID
-          record-ruleset-snapshot --repo DIR --live DIR --repository OWNER/NAME --recorded-by LOGIN --checks-app-id ID --publisher-app-id ID --out FILE
+          record-ruleset-snapshot --repo DIR --live DIR --repository OWNER/NAME --recorded-by LOGIN --checks-app-id ID --publisher-app-id ID --out FILE [--valid-days 1..180]
+          sign-ruleset-snapshot --repo DIR --snapshot FILE --key FILE --key-id ID --repository OWNER/NAME --checks-app-id ID --publisher-app-id ID --out FILE [--existing-sig FILE]
           check-ruleset-snapshot --repo DIR --live DIR --repository OWNER/NAME --checks-app-id ID --publisher-app-id ID --actor workflow|publisher
     """.trimIndent()
 
@@ -66,6 +69,7 @@ class RegistryTool(
                 "check-live-rulesets" -> checkLiveRulesets(options)
                 "record-ruleset-snapshot" -> recordRulesetSnapshot(options)
                 "check-ruleset-snapshot" -> checkRulesetSnapshot(options)
+                "sign-ruleset-snapshot" -> signRulesetSnapshot(options)
                 else -> throw Usage("unknown command ${args[0]}")
             }
             report.lines().forEach(out::println)
@@ -273,9 +277,10 @@ class RegistryTool(
         val publisher = appId(options, "publisher-app-id") ?: throw Usage("--publisher-app-id is required")
         val repo = path(options, "repo")
         val recordedBy = required(options, "recorded-by")
+        val days = options["valid-days"]?.let { it.toLongOrNull() ?: throw Usage("--valid-days must be a number") } ?: RulesetSnapshots.MAX_VALIDITY_DAYS
         val result = RulesetSnapshots.record(
             readFile(repo.resolve(TagRulesets.CREATION_FILE)), readFile(repo.resolve(TagRulesets.PROTECTION_FILE)), liveRulesets(options),
-            repositoryName(options), recordedBy, clock(), publisher, checks,
+            repositoryName(options), recordedBy, clock(), publisher, checks, days,
         )
         result.problems.forEach(report::error)
         val bytes = result.value ?: return report
@@ -301,14 +306,52 @@ class RegistryTool(
             report.error("${RulesetSnapshots.FILE} is missing, so the tag rulesets cannot be verified")
             return report
         }
-        RulesetSnapshots.signatureProblems(snapshot, optional(RulesetSnapshots.SIGNATURE_FILE), optional(RulesetSnapshots.KEYS_FILE), allowTestKeys).forEach(report::error)
+        RulesetSnapshots.signatureProblems(snapshot, optional(RulesetSnapshots.SIGNATURE_FILE), optional(RulesetSnapshots.KEYS_FILE), allowTestKeys, settingsKeyPins).forEach(report::error)
         val live = liveRulesets(options)
         if (live.isEmpty()) report.error("no ruleset of the repository could be read, so the tag protection cannot be verified")
         RulesetSnapshots.checkProblems(
             readFile(repo.resolve(TagRulesets.CREATION_FILE)), readFile(repo.resolve(TagRulesets.PROTECTION_FILE)), snapshot, live,
-            repositoryName(options), publisher, checks, actor,
+            repositoryName(options), publisher, checks, actor, clock(),
         ).forEach(report::error)
         if (report.ok) report.notice("the tag rulesets match the signed snapshot ${RulesetSnapshots.FILE} (updated_at unchanged since it was recorded)")
+        return report
+    }
+
+    // U-1: スナップショットへの署名（オフラインの機械で行う）。署名の前に、方針・期限を検査し、要約（対象・時刻・鍵の ID）を表示する。
+    // 秘密鍵の内容は表示しない。本番の鍵は、設定の鍵の作成の儀式が承認されるまで使えない（RulesetSnapshots.PRODUCTION_SIGNING_ENABLED）
+    private fun signRulesetSnapshot(options: Map<String, String>): Report {
+        val report = Report()
+        val checks = appId(options, "checks-app-id") ?: throw Usage("--checks-app-id is required")
+        val publisher = appId(options, "publisher-app-id") ?: throw Usage("--publisher-app-id is required")
+        val keyId = required(options, "key-id")
+        if (!RulesetSnapshots.PRODUCTION_SIGNING_ENABLED && !keyId.startsWith(TrustedKeysFile.TEST_KEY_PREFIX)) {
+            // 本番の鍵のファイルは、読みもしない
+            report.error("signing with the key $keyId is refused: only test keys (${TrustedKeysFile.TEST_KEY_PREFIX}…) may sign until the settings key ceremony is approved (docs/registry-settings-key.md)")
+            return report
+        }
+        val repo = path(options, "repo")
+        val snapshot = file(options, "snapshot")
+        val (problems, _) = RulesetSnapshots.snapshotProblems(
+            readFile(repo.resolve(TagRulesets.CREATION_FILE)), readFile(repo.resolve(TagRulesets.PROTECTION_FILE)), snapshot,
+            repositoryName(options), publisher, checks, clock(),
+        )
+        RulesetSnapshots.summary(snapshot, keyId).forEach(report::notice)
+        problems.forEach(report::error)
+        if (!report.ok) return report
+        val keysFile = repo.resolve(RulesetSnapshots.KEYS_FILE).takeIf { Files.exists(it, LinkOption.NOFOLLOW_LINKS) }?.let(::readFile)
+        val existing = options["existing-sig"]?.let { readFile(Paths.get(it)) }
+        // 鍵のファイルの内容は、秘密鍵の形に読み取ったら、このバイト列からは消す（JVM の中のほかの写しまでは消せない）
+        val keyBytes = file(options, "key")
+        val privateKey = try {
+            IndexPublishing.readPrivateKey(keyBytes)
+        } finally {
+            keyBytes.fill(0)
+        }
+        val result = RulesetSnapshots.sign(snapshot, privateKey, keyId, keysFile, existing, allowTestKeys, settingsKeyPins)
+        result.problems.forEach(report::error)
+        val bytes = result.value ?: return report
+        write(path(options, "out"), bytes)
+        report.notice("wrote ${options["out"]}; add it with the snapshot as ${RulesetSnapshots.SIGNATURE_FILE} through a reviewed pull request")
         return report
     }
 }

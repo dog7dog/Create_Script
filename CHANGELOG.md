@@ -219,6 +219,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   `check` job (`--actor workflow`, replacing `check-live-rulesets`, which a read-only token always fails), and the
   `release` job re-checks with the publishing App's token, before the draft and just before publishing, that the tag
   rulesets are unchanged since the check. There is no settings key yet, so the template still publishes nothing.
+- S8.3 U-1 (local, `docs/registry-settings-key.md`): ruleset snapshots are version 2 with `expires` (version 1 snapshots are
+  not accepted and must be recorded and signed again; the signature file format is unchanged) (at most 180 days;
+  expired, future-dated, too long or out-of-order snapshots fail). `sign-ruleset-snapshot` signs a snapshot after
+  checking it and printing a summary; production keys are refused until the settings key ceremony is approved. The
+  production tool trusts a settings key only if its fingerprint is pinned in the tool (`SettingsKeyPins`, empty for
+  now, so the production path stays closed). The main branch ruleset is not checked yet.
 
 ## [0.1.0-alpha] - 2026-11-04 (pre-release)
 

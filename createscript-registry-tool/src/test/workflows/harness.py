@@ -2,7 +2,7 @@
 `curl` commands and local git repositories. No network, no GitHub. S8.3 Phase 6, kept as a test since Phase 7
 (run by WorkflowHarnessTest).
 
-Usage: python3 -I harness.py --repo <CreateScript root> --tool <createscript-registry-tool launcher> --work <empty dir>
+Usage: python3 -I harness.py --repo <CreateScript root> --tool <createscript-registry-tool launcher> --test-tool <test-only launcher> --work <empty dir>
 
 The RSA key it makes is a throwaway stand-in for the GitHub App key, created in --work and used only here."""
 import argparse, base64, json, os, pathlib, shutil, subprocess, sys, tempfile
@@ -11,10 +11,12 @@ import yaml
 parser = argparse.ArgumentParser()
 parser.add_argument("--repo", required=True)
 parser.add_argument("--tool", required=True)
+parser.add_argument("--test-tool", required=True)
 parser.add_argument("--work", required=True)
 cli = parser.parse_args()
 REPO = pathlib.Path(cli.repo).resolve()
 TOOL = pathlib.Path(cli.tool).resolve()
+TEST_TOOL = pathlib.Path(cli.test_tool).resolve()
 WORK = pathlib.Path(cli.work).resolve()
 RUNS = WORK / "runs"
 RUNS.mkdir(parents=True, exist_ok=True)
@@ -513,7 +515,9 @@ expect("B'/release: a ruleset changed after the draft was created -> left as a d
 
 # B': the check job compares the read-only view with the signed snapshot (check-ruleset-snapshot --actor workflow)
 gate = step(publish, "check", "Check the repository's tag rulesets against the signed snapshot (fails when they cannot be verified)")
-SETTINGS_KEY_ID = "harness-settings-1"
+# a test key (test-only-): only the test-only build (TestRegistryTool) trusts it; the production tool refuses it and, with T3
+# (S8.3 U-1), trusts no settings key at all until one is pinned in its source
+SETTINGS_KEY_ID = "test-only-settings-1"
 settings_key = WORK / "throwaway-settings-key.pem"
 subprocess.run(["openssl", "genpkey", "-algorithm", "ed25519", "-out", str(settings_key)], check=True, capture_output=True)
 SETTINGS_PUBLIC = base64.b64encode(subprocess.run(["openssl", "pkey", "-in", str(settings_key), "-pubout", "-outform", "DER"], check=True, capture_output=True).stdout[-32:]).decode()
@@ -551,7 +555,7 @@ r = subprocess.run([str(TOOL), "record-ruleset-snapshot", "--repo", str(record_d
                     "--recorded-by", "dog7dog", "--checks-app-id", str(CHECKS_ID), "--publisher-app-id", str(PUBLISHER_ID), "--out", str(record_dir / "s2.json")], capture_output=True, text=True)
 expect("B'/record: a read-only view (no bypass_actors) cannot be recorded", r.returncode == 1 and "bypass_actors is not visible" in r.stdout and not (record_dir / "s2.json").exists(), r.stdout + r.stderr)
 
-def gate_run(live=WORKFLOW_VIEW, list_ok=True, snapshot=SNAPSHOT, signature="good", keys=None, checks_id=str(CHECKS_ID), publisher_id=str(PUBLISHER_ID)):
+def gate_run(live=WORKFLOW_VIEW, list_ok=True, snapshot=SNAPSHOT, signature="good", keys=None, checks_id=str(CHECKS_ID), publisher_id=str(PUBLISHER_ID), tool=TEST_TOOL):
     work = pathlib.Path(tempfile.mkdtemp(dir=RUNS))
     settings_repo(work / "registry")
     if keys is not None: (work / "registry/keys/settings-keys.json").write_text(keys)
@@ -559,12 +563,12 @@ def gate_run(live=WORKFLOW_VIEW, list_ok=True, snapshot=SNAPSHOT, signature="goo
         (work / "registry/github-settings/verified-rulesets.json").write_bytes(snapshot)
         sig = {"good": lambda: sign_snapshot(snapshot), "other": lambda: sign_snapshot(snapshot, key=other_key),
                "tampered": lambda: sign_snapshot(snapshot.replace(b'"recordedBy":"dog7dog"', b'"recordedBy":"mallory"')),
-               "test-only": lambda: sign_snapshot(snapshot, key_id="test-only-settings-1"), "none": lambda: None}[signature]()
+               "production-id": lambda: sign_snapshot(snapshot, key_id="createscript-registry-settings-2027-1"), "none": lambda: None}[signature]()
         if sig is not None: (work / "registry/github-settings/verified-rulesets.json.sig").write_text(sig)
     fake = new_fake()
     put_rulesets(fake, live, list_ok)
     out = work / "github_output"; out.touch()
-    code, o, e = bash(gate, env_for(fake, {"GH_TOKEN": "t", "REPOSITORY": REPOSITORY, "CHECKS_APP_ID": checks_id, "PUBLISHER_APP_ID": publisher_id, "GITHUB_OUTPUT": str(out)}), work)
+    code, o, e = bash(gate, env_for(fake, {"GH_TOKEN": "t", "REPOSITORY": REPOSITORY, "CHECKS_APP_ID": checks_id, "PUBLISHER_APP_ID": publisher_id, "GITHUB_OUTPUT": str(out), "TOOL": str(tool)}), work)
     recorded = dict(l.split("=", 1) for l in out.read_text().splitlines() if "=" in l)
     return code, o + e, recorded
 
@@ -580,7 +584,8 @@ gate_fails("signature does not match (another key)", "does not match the snapsho
 gate_fails("snapshot changed after signing", "does not match the snapshot", signature="tampered")
 gate_fails("snapshot not signed", "is not signed", signature="none")
 gate_fails("no snapshot", "verified-rulesets.json is missing", snapshot=None)
-gate_fails("settings key is a test key (production tool)", "has test keys", signature="test-only", keys=keys_file("test-only-settings-1"))
+gate_fails("the production tool and a test settings key", "has test keys", tool=TOOL)
+gate_fails("the production tool and a settings key it does not pin (T3: none pinned yet)", "pins no settings key", signature="production-id", keys=keys_file("createscript-registry-settings-2027-1"), tool=TOOL)
 gate_fails("a ruleset changed after the snapshot (updated_at)", "changed after the snapshot", live={**WORKFLOW_VIEW, ID_A: token_view(ID_A, "never", updated_at="2026-11-13T05:47:19.686Z")})
 gate_fails("updated_at missing in the API response", "updated_at is missing", live={**WORKFLOW_VIEW, ID_B: token_view(ID_B, "never", updated_at=None)})
 gate_fails("ruleset B disabled", "enforcement is disabled", live={**WORKFLOW_VIEW, ID_B: token_view(ID_B, "never", enforcement="disabled")})

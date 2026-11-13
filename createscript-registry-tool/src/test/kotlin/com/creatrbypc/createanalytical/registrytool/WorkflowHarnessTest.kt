@@ -61,8 +61,12 @@ class WorkflowHarnessTest {
         val launcher = temp.resolve("createscript-registry-tool")
         Files.writeString(launcher, "#!/bin/sh\nexec '$java' -cp '${System.getProperty("java.class.path")}' com.creatrbypc.createanalytical.registrytool.MainKt \"\$@\"\n")
         Files.setPosixFilePermissions(launcher, PosixFilePermissions.fromString("rwx------"))
+        // テスト専用のビルド（TestRegistryTool。テスト用の鍵 test-only- を受け入れる）も、同じクラスパスから
+        val testLauncher = temp.resolve("createscript-registry-tool-TEST-ONLY")
+        Files.writeString(testLauncher, "#!/bin/sh\nexec '$java' -cp '${System.getProperty("java.class.path")}' com.creatrbypc.createanalytical.registrytool.TestRegistryToolKt \"\$@\"\n")
+        Files.setPosixFilePermissions(testLauncher, PosixFilePermissions.fromString("rwx------"))
         val work = Files.createDirectories(temp.resolve("work"))
-        val (code, output) = run("python3", "-I", scripts.resolve("harness.py").toString(), "--repo", repository.toString(), "--tool", launcher.toString(), "--work", work.toString())
+        val (code, output) = run("python3", "-I", scripts.resolve("harness.py").toString(), "--repo", repository.toString(), "--tool", launcher.toString(), "--test-tool", testLauncher.toString(), "--work", work.toString())
         println(output.lines().last { it.startsWith("HARNESS") })
         assertEquals(0, code, output)
     }

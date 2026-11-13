@@ -79,12 +79,14 @@ class RulesetSnapshotTest {
         for ((id, bytes) in rulesets) Files.write(live.resolve("ruleset-$id.json"), bytes)
     }
 
-    private fun tool(allowTestKeys: Boolean = true, out: ByteArrayOutputStream = ByteArrayOutputStream()) =
-        RegistryTool(PrintStream(out, true), PrintStream(out, true), { Instant.parse("2026-11-13T07:00:00Z") }, { FakeGitHub() }, allowTestKeys = allowTestKeys)
+    private var now: Instant = Instant.parse("2026-11-13T07:00:00Z")
 
-    private fun run(args: List<String>, allowTestKeys: Boolean = true): Pair<Int, String> {
+    private fun tool(allowTestKeys: Boolean = true, out: ByteArrayOutputStream = ByteArrayOutputStream(), pins: Map<String, String> = SettingsKeyPins.OFFICIAL) =
+        RegistryTool(PrintStream(out, true), PrintStream(out, true), { now }, { FakeGitHub() }, allowTestKeys = allowTestKeys, settingsKeyPins = pins)
+
+    private fun run(args: List<String>, allowTestKeys: Boolean = true, pins: Map<String, String> = SettingsKeyPins.OFFICIAL): Pair<Int, String> {
         val out = ByteArrayOutputStream()
-        val code = tool(allowTestKeys, out).run(args)
+        val code = tool(allowTestKeys, out, pins).run(args)
         return code to out.toString(Charsets.UTF_8)
     }
 
@@ -109,8 +111,8 @@ class RulesetSnapshotTest {
         return snapshot
     }
 
-    private fun check(actor: String = "workflow", allowTestKeys: Boolean = true) =
-        run(listOf("check-ruleset-snapshot", "--repo", "$repo", "--live", "$live", "--repository", repositoryName, "--checks-app-id", "$checks", "--publisher-app-id", "$publisher", "--actor", actor), allowTestKeys)
+    private fun check(actor: String = "workflow", allowTestKeys: Boolean = true, pins: Map<String, String> = SettingsKeyPins.OFFICIAL) =
+        run(listOf("check-ruleset-snapshot", "--repo", "$repo", "--live", "$live", "--repository", repositoryName, "--checks-app-id", "$checks", "--publisher-app-id", "$publisher", "--actor", actor), allowTestKeys, pins)
 
     private fun assertFails(result: Pair<Int, String>, expected: String) {
         assertEquals(1, result.first, result.second)
