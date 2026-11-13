@@ -211,6 +211,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   - Test-only builds, made only by `./gradlew :createscript-cli:testRegistryCli` and
     `:createscript-registry-tool:testRegistryTool`, use a test registry and test keys; they are built from the
     test sources and are not part of any release (W7).
+- S8.3 Phase 10B-2A (local implementation, not yet used by the workflows): `createscript-registry-tool record-ruleset-snapshot` records the
+  `index-*` tag rulesets as seen with the administrator's token, and `check-ruleset-snapshot` checks the rulesets a read-only token
+  sees (`updated_at`, `id`, `enforcement`, conditions, rules, `current_user_can_bypass`) against that snapshot, signed with a
+  settings key in `keys/settings-keys.json`; test keys are refused outside the test-only build. It relies on P-20, confirmed on a
+  test repository only for adding and removing a bypass actor. The registry template's `publish.yml` uses it in the
+  `check` job (`--actor workflow`, replacing `check-live-rulesets`, which a read-only token always fails), and the
+  `release` job re-checks with the publishing App's token, before the draft and just before publishing, that the tag
+  rulesets are unchanged since the check. There is no settings key yet, so the template still publishes nothing.
 
 ## [0.1.0-alpha] - 2026-11-04 (pre-release)
 

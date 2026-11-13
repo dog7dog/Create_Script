@@ -78,6 +78,7 @@ if m and method == "PATCH":
     r["make_latest"] = fields.get("make_latest"); save(); out(r); sys.exit(0)
 key = re.sub(r"[^A-Za-z0-9]", "_", path)
 f = os.path.join(fake, "api", key)
+if releases and os.path.exists(f + ".after"): f = f + ".after"
 if not os.path.exists(f): sys.stderr.write("gh: HTTP 404 " + path + "\n"); sys.exit(1)
 out(json.load(open(f)))
 '''
@@ -350,21 +351,56 @@ code, o, e = bash(record, env, work)
 outputs = dict(l.split("=", 1) for l in out.read_text().splitlines())
 expect("publish/check: records serial and SHA-256 of both files", code == 0 and outputs.get("serial") == "2" and len(outputs.get("index_sha256", "")) == 64, o + e)
 
+# ---- tag rulesets (plan B', S8.3 Phase 10B-2A): the shapes are those GitHub returned on the test repository ----
+CHECKS_ID, PUBLISHER_ID = 111, 222
+A = {"name": "index tags: creation", "target": "tag", "enforcement": "active",
+     "bypass_actors": [{"actor_id": PUBLISHER_ID, "actor_type": "Integration", "bypass_mode": "always"}],
+     "conditions": {"ref_name": {"include": ["refs/tags/index-*"], "exclude": []}}, "rules": [{"type": "creation"}]}
+B = {"name": "index tags: update and deletion", "target": "tag", "enforcement": "active", "bypass_actors": [],
+     "conditions": {"ref_name": {"include": ["refs/tags/index-*"], "exclude": []}}, "rules": [{"type": "deletion"}, {"type": "update"}, {"type": "non_fast_forward"}]}
+ID_A, ID_B = 41, 42
+def owner_view(rule, rid, created, updated):
+    return {"id": rid, "source_type": "Repository", "source": REPOSITORY, **rule, "created_at": created, "updated_at": updated,
+            "current_user_can_bypass": "never", "node_id": "RRS_x", "_links": {"self": {"href": "https://api.github.com/x"}}}
+OWNER = {ID_A: owner_view(A, ID_A, "2026-11-13T13:35:13.841+09:00", "2026-11-13T13:35:14.034+09:00"),
+         ID_B: owner_view(B, ID_B, "2026-11-13T13:38:18.176+09:00", "2026-11-13T13:38:18.206+09:00")}
+UTC = {"2026-11-13T13:35:13.841+09:00": "2026-11-13T04:35:13.841Z", "2026-11-13T13:35:14.034+09:00": "2026-11-13T04:35:14.034Z",
+       "2026-11-13T13:38:18.176+09:00": "2026-11-13T04:38:18.176Z", "2026-11-13T13:38:18.206+09:00": "2026-11-13T04:38:18.206Z"}
+def token_view(rid, can_bypass, **over):
+    """What an App or GITHUB_TOKEN sees (measured for the Apps): no bypass_actors, times in UTC (Z)."""
+    r = {k: v for k, v in OWNER[rid].items() if k != "bypass_actors"}
+    r.update(created_at=UTC[r["created_at"]], updated_at=UTC[r["updated_at"]], current_user_can_bypass=can_bypass)
+    r.update(over)
+    return {k: v for k, v in r.items() if v is not None}
+WORKFLOW_VIEW = {ID_A: token_view(ID_A, "never"), ID_B: token_view(ID_B, "never")}
+PUBLISHER_VIEW = {ID_A: token_view(ID_A, "always"), ID_B: token_view(ID_B, "never")}
+# what the check job records for the release job (its jq), from the workflow view
+SEEN = json.dumps([{"id": r["id"], "name": r["name"], "enforcement": r["enforcement"], "created_at": r["created_at"], "updated_at": r["updated_at"],
+                    "role": "creation" if r["name"] == A["name"] else "protection"} for _, r in sorted(WORKFLOW_VIEW.items())], separators=(",", ":"))
+
+def put_rulesets(fake, rulesets, list_ok=True, suffix=""):
+    if list_ok:
+        api(fake, f"repos/{REPOSITORY}/rulesets?per_page=100", [[{"id": i, "name": r.get("name"), "target": r.get("target", "tag")} for i, r in sorted(rulesets.items())] + [{"id": 3, "name": "main", "target": "branch"}]])
+    for i, r in rulesets.items():
+        name = "".join(c if c.isalnum() else "_" for c in f"repos/{REPOSITORY}/rulesets/{i}")
+        (fake / "api" / (name + suffix)).write_text(json.dumps(r))
+
 PUB_TOKEN = "ghs_mockpublisher0987654321"
 GRANTED = {"token": PUB_TOKEN, "expires_at": "x", "permissions": {"contents": "write", "metadata": "read"},
            "repository_selection": "selected", "repositories": [{"name": "CreateScript-Registry"}]}
 
-def release_run(prepare=None, installed=True, granted=GRANTED, revoke_ok=True, extra_env=None, **flags):
+def release_run(prepare=None, installed=True, granted=GRANTED, revoke_ok=True, extra_env=None, rulesets=PUBLISHER_VIEW, rulesets_list_ok=True, seen=SEEN, **flags):
     """The release job's step with the publishing App (W1). The step's env has no GH_TOKEN; extra_env can add one
-    (to show that there is no fallback to it)."""
+    (to show that there is no fallback to it). rulesets is what the App's token sees; seen is what the check job recorded."""
     fake = new_fake()
+    put_rulesets(fake, rulesets, rulesets_list_ok)
     if prepare: prepare(fake)
     if installed: curl_response(fake, "GET", f"https://api.github.com/repos/{REPOSITORY}/installation", {"id": 77})
     if granted is not None: curl_response(fake, "POST", "https://api.github.com/app/installations/77/access_tokens", granted)
     if revoke_ok: curl_response(fake, "DELETE", "https://api.github.com/installation/token", {})
     env = env_for(fake, {"APP_ID": "222", "APP_KEY": KEY, "FAKE_EXPECT_TOKEN": PUB_TOKEN, "REPOSITORY": REPOSITORY,
                          "SERIAL": outputs["serial"], "INDEX_SHA256": outputs["index_sha256"], "SIG_SHA256": outputs["sig_sha256"],
-                         "GITHUB_SHA": merged, **(extra_env or {}), **flags})
+                         "GITHUB_SHA": merged, "RULESETS": seen, **(extra_env or {}), **flags})
     code, o, e = bash(release, env, work)
     state = json.loads((fake / "releases.json").read_text()) if (fake / "releases.json").exists() else []
     summary = (fake / "summary.md").read_text() if (fake / "summary.md").exists() else ""
@@ -436,54 +472,128 @@ git(work / "registry", "checkout", "-q", "--", "signed/index.json")
 for name, over in (("serial empty", {"SERIAL": ""}), ("serial with ;", {"SERIAL": "2;id"}), ("serial negative", {"SERIAL": "-1"}), ("SHA-256 malformed", {"INDEX_SHA256": "zz"})):
     code, log, state, calls, summary = release_run(**over)
     expect(f"publish/release: {name} refused before any release call", code != 0 and not [c for c in calls if c[0] == "release"], log)
-# W3: the tag rulesets of the repository, checked before publishing
-gate = step(publish, "check", "Check the repository's tag rulesets (fails when they cannot be verified)")
-CHECKS_ID, PUBLISHER_ID = 111, 222
-A = {"name": "index tags: creation", "target": "tag", "enforcement": "active",
-     "bypass_actors": [{"actor_id": PUBLISHER_ID, "actor_type": "Integration", "bypass_mode": "always"}],
-     "conditions": {"ref_name": {"include": ["refs/tags/index-*"], "exclude": []}}, "rules": [{"type": "creation"}]}
-B = {"name": "index tags: update and deletion", "target": "tag", "enforcement": "active", "bypass_actors": [],
-     "conditions": {"ref_name": {"include": ["refs/tags/index-*"], "exclude": []}}, "rules": [{"type": "deletion"}, {"type": "update"}, {"type": "non_fast_forward"}]}
+# B' (S8.3 Phase 10B-2A): the release job re-checks the tag rulesets with the App's token, before the draft and
+# just before publishing, against what the check job saw
+code, log, state, calls, summary = release_run()
+fake, o, e = release_run.last
+rs_gets = [i for i, c in enumerate(calls) if c[:2] == ["api", f"repos/{REPOSITORY}/rulesets/{ID_A}"]]
+create_at = next(i for i, c in enumerate(calls) if c[:2] == ["release", "create"])
+patch_at = next(i for i, c in enumerate(calls) if "PATCH" in c)
+expect("B'/release: unchanged rulesets -> published, re-checked before the draft and again before publishing", code == 0 and len(rs_gets) == 2 and rs_gets[0] < create_at < rs_gets[1] < patch_at, calls)
+expect("B'/release: the re-check uses the Publisher App token only", gh_tokens(fake) and set(gh_tokens(fake)) == {"app"}, gh_tokens(fake))
+plus9 = {ID_A: {**PUBLISHER_VIEW[ID_A], "updated_at": "2026-11-13T13:35:14.034+09:00", "created_at": "2026-11-13T13:35:13.841+09:00"}, ID_B: PUBLISHER_VIEW[ID_B]}
+code, log, state, calls, summary = release_run(rulesets=plus9)
+expect("B'/release: the same instants written with +09:00 instead of Z -> published", code == 0 and state and state[0]["draft"] is False, log)
+def stopped_before_draft(name, **kwargs):
+    code, log, state, calls, summary = release_run(**kwargs)
+    fake, o, e = release_run.last
+    ok = code != 0 and state == [] and not [c for c in calls if c[0] == "release"] and "nothing was published" in log and "Publication of index-2 stopped" in summary
+    expect(f"B'/release: {name} -> stops before the draft, nothing published", ok, log)
+    expect(f"B'/release: ... the token is still revoked and never printed ({name})", len([x for x in curl_log(fake) if x["method"] == "DELETE"]) == 1 and not token_leaked(fake, o, e, PUB_TOKEN))
+stopped_before_draft("a ruleset changed since the check (updated_at)", rulesets={**PUBLISHER_VIEW, ID_A: {**PUBLISHER_VIEW[ID_A], "updated_at": "2026-11-13T05:47:19.686Z"}})
+stopped_before_draft("updated_at missing in the response", rulesets={**PUBLISHER_VIEW, ID_A: {k: v for k, v in PUBLISHER_VIEW[ID_A].items() if k != "updated_at"}})
+stopped_before_draft("updated_at without milliseconds", rulesets={**PUBLISHER_VIEW, ID_B: {**PUBLISHER_VIEW[ID_B], "updated_at": "2026-11-13T04:38:18Z"}})
+stopped_before_draft("ruleset A disabled", rulesets={**PUBLISHER_VIEW, ID_A: {**PUBLISHER_VIEW[ID_A], "enforcement": "disabled"}})
+stopped_before_draft("the App cannot bypass A (permission mismatch)", rulesets={**PUBLISHER_VIEW, ID_A: {**PUBLISHER_VIEW[ID_A], "current_user_can_bypass": "never"}})
+stopped_before_draft("the App can bypass B", rulesets={**PUBLISHER_VIEW, ID_B: {**PUBLISHER_VIEW[ID_B], "current_user_can_bypass": "always"}})
+stopped_before_draft("current_user_can_bypass missing", rulesets={**PUBLISHER_VIEW, ID_A: {k: v for k, v in PUBLISHER_VIEW[ID_A].items() if k != "current_user_can_bypass"}})
+stopped_before_draft("a tag ruleset was added", rulesets={**PUBLISHER_VIEW, 43: {**PUBLISHER_VIEW[ID_B], "id": 43, "name": "extra"}})
+stopped_before_draft("ruleset B was deleted", rulesets={ID_A: PUBLISHER_VIEW[ID_A]})
+stopped_before_draft("ruleset A re-created under a new id", rulesets={ID_B: PUBLISHER_VIEW[ID_B], 44: {**PUBLISHER_VIEW[ID_A], "id": 44}})
+stopped_before_draft("the rulesets cannot be read (API error)", rulesets_list_ok=False)
+stopped_before_draft("the check job recorded nothing", seen="")
+stopped_before_draft("the check job's record is not JSON", seen="{oops")
+stopped_before_draft("the check job's record lacks ruleset B", seen=json.dumps([json.loads(SEEN)[0]]))
+# changed between the draft and publishing: the fake returns another response once the draft exists
+def change_after_draft(fake):
+    put_rulesets(fake, {ID_A: {**PUBLISHER_VIEW[ID_A], "updated_at": "2026-11-13T05:59:14.394Z"}}, list_ok=False, suffix=".after")
+code, log, state, calls, summary = release_run(prepare=change_after_draft)
+expect("B'/release: a ruleset changed after the draft was created -> left as a draft, never published or latest",
+       code != 0 and len(state) == 1 and state[0]["draft"] is True and not [c for c in calls if "PATCH" in c] and "left as a draft" in log and "stopped" in summary, log)
 
-def gate_run(live_a=A, live_b=B, list_ok=True, checks_id=str(CHECKS_ID), publisher_id=str(PUBLISHER_ID)):
+# B': the check job compares the read-only view with the signed snapshot (check-ruleset-snapshot --actor workflow)
+gate = step(publish, "check", "Check the repository's tag rulesets against the signed snapshot (fails when they cannot be verified)")
+SETTINGS_KEY_ID = "harness-settings-1"
+settings_key = WORK / "throwaway-settings-key.pem"
+subprocess.run(["openssl", "genpkey", "-algorithm", "ed25519", "-out", str(settings_key)], check=True, capture_output=True)
+SETTINGS_PUBLIC = base64.b64encode(subprocess.run(["openssl", "pkey", "-in", str(settings_key), "-pubout", "-outform", "DER"], check=True, capture_output=True).stdout[-32:]).decode()
+other_key = WORK / "throwaway-other-key.pem"
+subprocess.run(["openssl", "genpkey", "-algorithm", "ed25519", "-out", str(other_key)], check=True, capture_output=True)
+
+def keys_file(key_id=SETTINGS_KEY_ID, public=SETTINGS_PUBLIC):
+    return json.dumps({"registryVersion": 1, "keys": [{"keyId": key_id, "publicKey": public}]}, indent=2) + "\n"
+
+def sign_snapshot(snapshot, key_id=SETTINGS_KEY_ID, key=settings_key):
+    msg = WORK / "snapshot-message.bin"
+    msg.write_bytes(b"CreateScript-Registry ruleset snapshot signature v1\0" + key_id.encode() + b"\0" + snapshot)
+    sig = subprocess.run(["openssl", "pkeyutl", "-sign", "-inkey", str(key), "-rawin", "-in", str(msg)], check=True, capture_output=True).stdout
+    msg.unlink()
+    return json.dumps({"signatureVersion": 1, "signatures": [{"keyId": key_id, "signature": base64.b64encode(sig).decode()}]}, sort_keys=True, separators=(",", ":"))
+
+def settings_repo(target):
+    fixture(target)
+    (target / "github-settings").mkdir()
+    (target / "github-settings/index-tags-creation-ruleset.json").write_text(json.dumps(A, indent=2))
+    (target / "github-settings/index-tags-protection-ruleset.json").write_text(json.dumps(B, indent=2))
+    (target / "keys/settings-keys.json").write_text(keys_file())
+
+# the lead records the snapshot from the administrator's view (bypass_actors visible) with the real tool
+record_dir = pathlib.Path(tempfile.mkdtemp(dir=RUNS))
+settings_repo(record_dir / "registry")
+(record_dir / "admin").mkdir()
+for i, r in OWNER.items(): (record_dir / "admin" / f"ruleset-{i}.json").write_text(json.dumps(r))
+r = subprocess.run([str(TOOL), "record-ruleset-snapshot", "--repo", str(record_dir / "registry"), "--live", str(record_dir / "admin"), "--repository", REPOSITORY,
+                    "--recorded-by", "dog7dog", "--checks-app-id", str(CHECKS_ID), "--publisher-app-id", str(PUBLISHER_ID), "--out", str(record_dir / "snapshot.json")], capture_output=True, text=True)
+expect("B'/record: the snapshot is recorded from the administrator's view", r.returncode == 0, r.stdout + r.stderr)
+SNAPSHOT = (record_dir / "snapshot.json").read_bytes()
+for i, rr in WORKFLOW_VIEW.items(): (record_dir / "admin" / f"ruleset-{i}.json").write_text(json.dumps(rr))
+r = subprocess.run([str(TOOL), "record-ruleset-snapshot", "--repo", str(record_dir / "registry"), "--live", str(record_dir / "admin"), "--repository", REPOSITORY,
+                    "--recorded-by", "dog7dog", "--checks-app-id", str(CHECKS_ID), "--publisher-app-id", str(PUBLISHER_ID), "--out", str(record_dir / "s2.json")], capture_output=True, text=True)
+expect("B'/record: a read-only view (no bypass_actors) cannot be recorded", r.returncode == 1 and "bypass_actors is not visible" in r.stdout and not (record_dir / "s2.json").exists(), r.stdout + r.stderr)
+
+def gate_run(live=WORKFLOW_VIEW, list_ok=True, snapshot=SNAPSHOT, signature="good", keys=None, checks_id=str(CHECKS_ID), publisher_id=str(PUBLISHER_ID)):
     work = pathlib.Path(tempfile.mkdtemp(dir=RUNS))
-    fixture(work / "registry")
-    (work / "registry/github-settings").mkdir()
-    (work / "registry/github-settings/index-tags-creation-ruleset.json").write_text(json.dumps(A, indent=2))
-    (work / "registry/github-settings/index-tags-protection-ruleset.json").write_text(json.dumps(B, indent=2))
+    settings_repo(work / "registry")
+    if keys is not None: (work / "registry/keys/settings-keys.json").write_text(keys)
+    if snapshot is not None:
+        (work / "registry/github-settings/verified-rulesets.json").write_bytes(snapshot)
+        sig = {"good": lambda: sign_snapshot(snapshot), "other": lambda: sign_snapshot(snapshot, key=other_key),
+               "tampered": lambda: sign_snapshot(snapshot.replace(b'"recordedBy":"dog7dog"', b'"recordedBy":"mallory"')),
+               "test-only": lambda: sign_snapshot(snapshot, key_id="test-only-settings-1"), "none": lambda: None}[signature]()
+        if sig is not None: (work / "registry/github-settings/verified-rulesets.json.sig").write_text(sig)
     fake = new_fake()
-    live = [x for x in ((1, live_a), (2, live_b)) if x[1] is not None]
-    if list_ok:
-        api(fake, f"repos/{REPOSITORY}/rulesets?per_page=100", [[{"id": i, "name": r["name"], "target": "tag"} for i, r in live] + [{"id": 3, "name": "main", "target": "branch"}]])
-    for i, r in live:
-        api(fake, f"repos/{REPOSITORY}/rulesets/{i}", {"id": i, "source_type": "Repository", **r})
-    code, o, e = bash(gate, env_for(fake, {"GH_TOKEN": "t", "REPOSITORY": REPOSITORY, "CHECKS_APP_ID": checks_id, "PUBLISHER_APP_ID": publisher_id}), work)
-    return code, o + e
+    put_rulesets(fake, live, list_ok)
+    out = work / "github_output"; out.touch()
+    code, o, e = bash(gate, env_for(fake, {"GH_TOKEN": "t", "REPOSITORY": REPOSITORY, "CHECKS_APP_ID": checks_id, "PUBLISHER_APP_ID": publisher_id, "GITHUB_OUTPUT": str(out)}), work)
+    recorded = dict(l.split("=", 1) for l in out.read_text().splitlines() if "=" in l)
+    return code, o + e, recorded
 
-code, log = gate_run()
-expect("W3: live tag rulesets equal to github-settings with visible bypass actors -> passes", code == 0 and "the tag rulesets match" in log, log)
-code, log = gate_run(live_a={k: v for k, v in A.items() if k != "bypass_actors"})
-expect("W3: bypass_actors not returned (token cannot read them) -> fails closed", code != 0 and "bypass_actors is not visible" in log, log)
-code, log = gate_run(live_b={k: v for k, v in B.items() if k != "bypass_actors"})
-expect("W3: B's bypass_actors not returned -> fails closed", code != 0 and "cannot be verified that nobody bypasses it" in log, log)
-code, log = gate_run(live_b={**B, "bypass_actors": [{"actor_id": PUBLISHER_ID, "actor_type": "Integration", "bypass_mode": "always"}]})
-expect("W3: B with a bypass actor -> fails", code != 0 and "bypass_actors must be empty" in log, log)
-code, log = gate_run(live_a={**A, "bypass_actors": [{"actor_id": CHECKS_ID, "actor_type": "Integration", "bypass_mode": "always"}]})
-expect("W3: A bypassed by the Checks App -> fails", code != 0 and "not the Registry Publisher App" in log, log)
-code, log = gate_run(live_a={**A, "bypass_actors": A["bypass_actors"] + [{"actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "always"}]})
-expect("W3: A with an extra bypass actor (e.g. a repository role) -> fails", code != 0 and "exactly one actor" in log, log)
-code, log = gate_run(live_a={**A, "enforcement": "disabled"})
-expect("W3: A not active -> fails", code != 0 and "enforcement must be active" in log, log)
-code, log = gate_run(live_b={**B, "rules": [{"type": "deletion"}]})
-expect("W3: B without update -> fails", code != 0 and "are missing" in log, log)
-code, log = gate_run(live_b=None)
-expect("W3: B missing on the repository -> fails", code != 0 and "exactly one ruleset named" in log, log)
-code, log = gate_run(publisher_id="333")
-expect("W3: the App ID variable differs from github-settings -> fails", code != 0 and "not the Registry Publisher App (333)" in log, log)
-code, log = gate_run(publisher_id="")
-expect("W3: the App ID variable is not set -> fails", code != 0, log)
-code, log = gate_run(list_ok=False)
-expect("W3: the rulesets cannot be read (API error) -> fails", code != 0, log)
+code, log, recorded = gate_run()
+expect("B'/check: the read-only view matches the signed snapshot -> passes", code == 0 and "match the signed snapshot" in log, log)
+expect("B'/check: ... and records exactly what the release job re-checks", recorded.get("rulesets") and json.loads(recorded["rulesets"]) == json.loads(SEEN), recorded)
+code, log, recorded = gate_run(live={i: {**OWNER[i]} for i in OWNER})
+expect("B'/check: a view with visible bypass_actors equal to the snapshot -> passes", code == 0, log)
+def gate_fails(name, text, **kwargs):
+    code, log, recorded = gate_run(**kwargs)
+    expect(f"B'/check: {name} -> fails, records nothing for the release job", code != 0 and text in log and "rulesets" not in recorded, log)
+gate_fails("signature does not match (another key)", "does not match the snapshot", signature="other")
+gate_fails("snapshot changed after signing", "does not match the snapshot", signature="tampered")
+gate_fails("snapshot not signed", "is not signed", signature="none")
+gate_fails("no snapshot", "verified-rulesets.json is missing", snapshot=None)
+gate_fails("settings key is a test key (production tool)", "has test keys", signature="test-only", keys=keys_file("test-only-settings-1"))
+gate_fails("a ruleset changed after the snapshot (updated_at)", "changed after the snapshot", live={**WORKFLOW_VIEW, ID_A: token_view(ID_A, "never", updated_at="2026-11-13T05:47:19.686Z")})
+gate_fails("updated_at missing in the API response", "updated_at is missing", live={**WORKFLOW_VIEW, ID_B: token_view(ID_B, "never", updated_at=None)})
+gate_fails("ruleset B disabled", "enforcement is disabled", live={**WORKFLOW_VIEW, ID_B: token_view(ID_B, "never", enforcement="disabled")})
+gate_fails("ruleset A re-created (new id)", "no ruleset with the recorded id", live={ID_B: WORKFLOW_VIEW[ID_B], 44: token_view(ID_A, "never", id=44)})
+gate_fails("a visible bypass actor differs from the snapshot", "bypass_actors differ", live={**OWNER, ID_B: {**OWNER[ID_B], "bypass_actors": [{"actor_id": CHECKS_ID, "actor_type": "Integration", "bypass_mode": "always"}]}})
+gate_fails("the workflow token could bypass A (permission mismatch)", "current_user_can_bypass is always for this token", live={**WORKFLOW_VIEW, ID_A: token_view(ID_A, "always")})
+gate_fails("current_user_can_bypass missing", "current_user_can_bypass is missing", live={**WORKFLOW_VIEW, ID_A: token_view(ID_A, None)})
+gate_fails("an extra tag ruleset that may apply to index-*", "may apply to index-* tags", live={**WORKFLOW_VIEW, 45: {**token_view(ID_B, "never", id=45, name="extra"), "conditions": {"ref_name": {"include": ["refs/tags/*"], "exclude": []}}}})
+gate_fails("the App ID variable differs", "not the Registry Publisher App (333)", publisher_id="333")
+code, log, recorded = gate_run(publisher_id="")
+expect("B'/check: the App ID variable is not set -> fails", code != 0 and "rulesets" not in recorded, log)
+code, log, recorded = gate_run(list_ok=False)
+expect("B'/check: the rulesets cannot be read (API error) -> fails", code != 0 and "rulesets" not in recorded, log)
 
 verify_failed = step(publish, "verify", "Record a failed verification")
 fake = new_fake(); code, o, e = bash(verify_failed, env_for(fake, {"SERIAL": "2"}), fake)
@@ -492,5 +602,5 @@ expect("publish/verify: the failure record runs only on failure", wf("publish.ym
 
 passed = sum(1 for _, ok in results if ok)
 print(f"\nHARNESS: {len(results)} checks, {passed} passed, {len(results) - passed} failed")
-key.unlink(); pathlib.Path(str(key) + ".pub").unlink()
+key.unlink(); pathlib.Path(str(key) + ".pub").unlink(); settings_key.unlink(); other_key.unlink()
 sys.exit(0 if passed == len(results) else 1)

@@ -1,6 +1,8 @@
 # CreateScript-Registry の GitHub の構成（設計）
 
-> **状態（2026-11-12、S8.3 Phase 10A）：Phase 9 で設計として採用し、Phase 10A で雛形とツールに実装しました。GitHub 上での検証は、まだです。**
+> **状態（2026-11-13、S8.3 Phase 10B-2A）：Phase 9 で設計として採用し、Phase 10A で雛形とツールに実装しました。テスト用のリポジトリ（dog7dog/CreateScript-Registry-Test）で、App・ruleset A・B の動作（PT-1〜PT-4、U1〜U7）と、P-19〜P-21 を確かめました。**
+>
+> - 案 B'（管理者が記録し、設定の証明用の鍵で署名したスナップショットと、`updated_at` などの見える項目を照合する）を、`createscript-registry-tool` の `record-ruleset-snapshot`・`check-ruleset-snapshot`（`RulesetSnapshots.kt`）として実装し、雛形の `publish.yml` の `check` と `release`（下書きの前と公開の直前の再確認）に接続しました（ローカル。GitHub では未実行）。設定の証明用の鍵（`keys/settings-keys.json`）の運用は未決定で、本番の鍵は無いので、雛形のままでは公開は止まります。
 >
 > - 公開専用の GitHub App（Registry Publisher App）を使う方式を、設計の方針として採用しました。
 > - 雛形の `publish.yml` の `release` ジョブは、Publisher App のトークンだけで公開します（W1）。ruleset は A・B の 2 つのファイルです（W2）。`check-settings`・`check-live-rulesets` がそれらを検査します（W3）。テスト専用のビルドもあります（W7）。詳細は `docs/audits/S8.3-Phase10A-Local-Implementation.md`。
@@ -115,7 +117,7 @@ index の公開は、2 つの PR と 1 つの公開のワークフローで行�
 | 13 | アセットの digest の検証 | `release`：アセットがちょうど 2 つ、`uploaded`、GitHub の digest = 記録した SHA-256 | 実装済み |
 | 14 | Release の公開 | `release`：`PATCH draft=false, make_latest=true` | 実装済み |
 | 15 | 公開の後の immutable の確認 | `release`（応答の `immutable`）と `verify`（`check-release`） | 実装済み |
-| 9' | リポジトリのタグの ruleset の確認 | `publish.yml` / `check`：実際の ruleset（API）と `github-settings/` の A・B、App の ID を照合する（`check-live-rulesets`）。確かめられない項目があれば失敗する | 実装済み（Phase 10A）。**`bypass_actors` は、ruleset に書き込める利用者にだけ返される（GitHub の文書）。読み取りのトークンでは、ここで止まる見込み（P-19）** |
+| 9' | リポジトリのタグの ruleset の確認 | `publish.yml` / `check`：読み取りのトークンで見える ruleset（id・enforcement・conditions・rules・created_at・updated_at・current_user_can_bypass）を、管理者が記録し設定の証明用の鍵で署名したスナップショットと照合する（`check-ruleset-snapshot --actor workflow`）。`release`：Publisher App のトークンで、下書きの前と公開の直前に、`check` が見た ruleset から変わっていないこと（同じ id・enforcement・時刻、増減なし）と、App が A だけを回避できること（A=`always`、B=`never`）を確かめる | ローカルに実装（Phase 10B-2A、案 B'。workflow harness で確認）。**GitHub では未実行。`GITHUB_TOKEN` の応答（P-18・P-21）は未検証で、想定と違えば止まる。設定の証明用の鍵が無いので、今は公開されない** |
 | 16 | 公開の結果の記録 | ジョブの要約（失敗のとき）。成功の記録（公開の issue への記載）は手順 | 一部実装。手順を GOVERNANCE.md に追加する |
 
 守ること（どれも、今の実装か計画に含まれる）：
@@ -176,9 +178,9 @@ index の公開は、2 つの PR と 1 つの公開のワークフローで行�
 | P-16 | 外部の協力者の fork の PR のワークフローは、承認まで実行されない | IT-02 |
 | P-17 | Release の削除の可否（immutable な Release を含む） | IT-11 |
 | P-18 | ジョブの `GITHUB_TOKEN`（`contents: read`）で、`GET /repos/{owner}/{repo}/rulesets` と `…/rulesets/{id}` を読める | IT-21 |
-| P-19 | `bypass_actors` が、読み取りのトークンに返されるか。**GitHub の文書では「ruleset に書き込める利用者にだけ返す」**とあり、返されない見込み。返されなければ、公開の前の確認（`check-live-rulesets`）は失敗し、公開は止まる。その場合の確かめ方（例：運営責任者が管理者の権限で確認して記録する手順）は Phase 10B で決める | IT-21 |
-| P-20 | ruleset の `bypass_actors`（など、どの項目）を変えても、`updated_at` が変わる（W3 の推奨案 B' の前提。Phase 10B-1 の監査報告書 4 章） | PT-5 |
-| P-21 | `current_user_can_bypass` が、要求したトークンの主体について、A では Publisher App だけ `always`、それ以外と B では `never` を返す（文書には値の一覧だけがあり、意味の説明は無い） | PT-5 |
+| P-19 | `bypass_actors` が、読み取りのトークンに返されるか | **確認済み（テスト用のリポジトリ、2026-11-13）：返されない。** Publisher App・Checks App の installation token では、`bypass_actors` の項目そのものが無い。所有者（admin）のトークンには返る。`GITHUB_TOKEN` は未検証。そのため `check-live-rulesets` は読み取りのトークンでは必ず失敗する（案 B' の `check-ruleset-snapshot` を追加。ワークフローには未接続） |
+| P-20 | ruleset の回避者だけを変えても `updated_at` が新しい値になり、元に戻しても元の値には戻らない | **確認済み（範囲限定）：** テスト用のリポジトリの試験用 ruleset C（`27179117`）で、回避者の追加（C-2：`05:41:11.194Z` → `05:47:19.686Z`）と、元に戻す変更（C-3：設定は C-1 と同じだが `05:59:14.394Z`）を実測。変更ごとに履歴の版も増えた。**無効化と再有効化（P-20c）・削除と作り直し（P-20b）・ほかの種類の変更・GitHub の将来の挙動は未確認** |
+| P-21 | `current_user_can_bypass` が、要求したトークンの主体について、A では Publisher App だけ `always`、それ以外と B では `never` を返す | **確認済み（App と所有者）：** Publisher App は A=`always`・B=`never`、Checks App と所有者は両方 `never`（U1・U5・作成時の GET）。**`GITHUB_TOKEN` は未検証**（Actions が必要） |
 
 ## 8. 失敗のときの停止と復旧
 

@@ -13,10 +13,18 @@
 #      this commit. It then checks the approvals again (P4-M4): the pushed commit must come from exactly one merged
 #      pull request, whose head commit has the same tree, and whose reviews (read with the token) pass
 #      check-approvals against the commit before the push. It passes on the SHA-256 of the two files.
-#      It also checks the repository's index-* tag rulesets against github-settings/ (P6-L4, W3): this fails when
-#      they differ or cannot be verified (GitHub returns a ruleset's bypass actors only to users who can write it).
+#      It also checks the repository's index-* tag rulesets against the administrator's signed snapshot
+#      (github-settings/verified-rulesets.json and .sig, keys/settings-keys.json; S8.3 Phase 10B-2A, plan B'):
+#      GitHub returns a ruleset's bypass actors only to users who can write it, so this job's read-only token
+#      compares what it can see (id, enforcement, conditions, rules, created_at, updated_at, and
+#      current_user_can_bypass) with the snapshot. Any difference, anything missing, or an unsigned snapshot stops it.
+#      It relies on P-20 (a change of the bypass actors gives the ruleset a new updated_at), confirmed on a test
+#      repository only for adding and removing a bypass actor.
 #   2. release (environment "publish" with required reviewers; the only job that writes, through the registry's
-#      publishing GitHub App, with its own GITHUB_TOKEN read-only): runs no Gradle and no tool (P4-M3, W1). It checks that the files still have the SHA-256 from step 1, stops if any release
+#      publishing GitHub App, with its own GITHUB_TOKEN read-only): runs no Gradle and no tool (P4-M3, W1). It checks that the files still have the SHA-256 from step 1,
+#      checks with the App's token, before creating the draft and again just before publishing it, that the tag
+#      rulesets are still exactly the ones the check job saw (same ids, enforcement, created_at and updated_at) and
+#      that the App can bypass only the creation ruleset, stops if any release
 #      for this serial already exists (draft or published), creates the release index-<serial> as a draft, checks
 #      the draft's two assets and GitHub's digests against the recorded SHA-256, and only then publishes it and
 #      makes it the latest; it then checks that GitHub reports it published and immutable (P6-L3). A failure
@@ -58,6 +66,7 @@ jobs:
       serial: ${{ steps.files.outputs.serial }}
       index_sha256: ${{ steps.files.outputs.index_sha256 }}
       sig_sha256: ${{ steps.files.outputs.sig_sha256 }}
+      rulesets: ${{ steps.rulesets.outputs.rulesets }}
     steps:
       - name: Refuse to run before the bootstrap
         run: |
@@ -113,7 +122,8 @@ jobs:
           if [ -f published/index.json ]; then set -- --previous-index published/index.json --previous-sig published/index.json.sig; fi
           "$TOOL" publish-check --repo registry "$@"
 
-      - name: Check the repository's tag rulesets (fails when they cannot be verified)
+      - name: Check the repository's tag rulesets against the signed snapshot (fails when they cannot be verified)
+        id: rulesets
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
@@ -128,7 +138,16 @@ jobs:
             gh api "repos/$REPOSITORY/rulesets/$id" > "live-rulesets/ruleset-$id.json"
           done
           echo "::stop-commands::$(uuidgen)"
-          "$TOOL" check-live-rulesets --repo registry --live live-rulesets --checks-app-id "$CHECKS_APP_ID" --publisher-app-id "$PUBLISHER_APP_ID"
+          "$TOOL" check-ruleset-snapshot --repo registry --live live-rulesets --repository "$REPOSITORY" --actor workflow \
+            --checks-app-id "$CHECKS_APP_ID" --publisher-app-id "$PUBLISHER_APP_ID"
+          # What this job saw, for the release job's re-check just before publishing (no secret in it).
+          creation="$(jq -r .name registry/github-settings/index-tags-creation-ruleset.json)"
+          protection="$(jq -r .name registry/github-settings/index-tags-protection-ruleset.json)"
+          seen="$(jq -c -s --arg creation "$creation" --arg protection "$protection" \
+            'map({id, name, enforcement, created_at, updated_at,
+                  role: (if .name == $creation then "creation" elif .name == $protection then "protection" else "other" end)}) | sort_by(.id)' \
+            live-rulesets/ruleset-*.json)"
+          echo "rulesets=$seen" >> "$GITHUB_OUTPUT"
 
       - name: Find the merged pull request and read its reviews
         id: pr
@@ -214,7 +233,8 @@ jobs:
 
   # The only job with a write token. It builds and runs nothing but sha256sum and gh.
   # The only job that writes to the repository, through the registry's publishing GitHub App (S8.3 Phase 10A, W1).
-  # It builds and runs nothing but sha256sum, jq, openssl, curl and gh. Its own GITHUB_TOKEN is read-only; there is
+  # It builds and runs nothing but sha256sum, jq, openssl, curl, gh and an inline python3 comparison (no tool, no Gradle).
+  # Its own GITHUB_TOKEN is read-only; there is
   # no fallback to it. The App's private key is a secret of the environment "publish", so it is available only
   # after the environment's approval.
   release:
@@ -241,6 +261,7 @@ jobs:
           SERIAL: ${{ needs.check.outputs.serial }}
           INDEX_SHA256: ${{ needs.check.outputs.index_sha256 }}
           SIG_SHA256: ${{ needs.check.outputs.sig_sha256 }}
+          RULESETS: ${{ needs.check.outputs.rulesets }}
         run: |
           set -euo pipefail
           # One cleanup for every way out: remove the key file and revoke the App token. The token is never written
@@ -305,6 +326,55 @@ jobs:
           response=""
           export GH_TOKEN="$token"
           tag="index-$SERIAL"
+          # The tag rulesets must still be exactly the ones the check job verified against the signed snapshot
+          # (same ids, enforcement, created_at and updated_at, compared as instants), with nothing added or removed,
+          # and this App may bypass only the creation ruleset (current_user_can_bypass). Anything missing or
+          # different stops it. Run before the draft and again just before publishing.
+          recheck() {
+            rm -rf rulesets-now
+            mkdir rulesets-now
+            gh api --paginate --slurp "repos/$REPOSITORY/rulesets?per_page=100" > rulesets-now/list.json ||
+              stop "the repository's rulesets could not be read $1; $2"
+            for rid in $(jq -r '.[][] | select(.target == "tag") | .id' rulesets-now/list.json); do
+              case "$rid" in ''|*[!0-9]*) stop "unexpected ruleset id $1; $2" ;; esac
+              gh api "repos/$REPOSITORY/rulesets/$rid" > "rulesets-now/ruleset-$rid.json" || stop "the ruleset $rid could not be read $1; $2"
+            done
+            python3 -I - rulesets-now <<'PY' || stop "the tag rulesets differ from what the check job verified, or cannot be verified, $1; $2"
+          import json, os, pathlib, re, sys
+          from datetime import datetime
+          STAMP = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}(Z|[+-]\d{2}:\d{2})")
+          def instant(text):
+              if not isinstance(text, str) or not STAMP.fullmatch(text): raise ValueError("not a GitHub timestamp: %r" % (text,))
+              return datetime.fromisoformat(text.replace("Z", "+00:00"))
+          problems = []
+          try:
+              expected = json.loads(os.environ.get("RULESETS") or "null")
+              assert isinstance(expected, list) and expected, "the check job recorded no rulesets"
+              roles = sorted(r.get("role") for r in expected)
+              assert roles.count("creation") == 1 and roles.count("protection") == 1, "the check job did not record both tag rulesets"
+              now = {}
+              for f in sorted(pathlib.Path(sys.argv[1]).glob("ruleset-*.json")):
+                  r = json.loads(f.read_text()); now[r.get("id")] = r
+              if sorted(now) != sorted(r["id"] for r in expected): problems.append("tag rulesets were added or removed: %s, expected %s" % (sorted(now), sorted(r["id"] for r in expected)))
+              for e in expected:
+                  r = now.get(e["id"])
+                  if r is None: continue
+                  for field in ("name", "enforcement"):
+                      if r.get(field) != e.get(field): problems.append("ruleset %s: %s is %r, expected %r" % (e["id"], field, r.get(field), e.get(field)))
+                  for field in ("created_at", "updated_at"):
+                      try:
+                          if instant(r.get(field)) != instant(e.get(field)): problems.append("ruleset %s: %s changed since the check job" % (e["id"], field))
+                      except ValueError as error: problems.append("ruleset %s: %s: %s" % (e["id"], field, error))
+                  want = {"creation": "always", "protection": "never"}.get(e["role"])
+                  if want is not None and r.get("current_user_can_bypass") != want:
+                      problems.append("ruleset %s: current_user_can_bypass is %r for the Publisher App, expected %r" % (e["id"], r.get("current_user_can_bypass"), want))
+          except (AssertionError, ValueError, KeyError, TypeError, AttributeError) as error:
+              problems.append(str(error))
+          for p in problems: print("error: " + p, file=sys.stderr)
+          sys.exit(1 if problems else 0)
+          PY
+          }
+          recheck "before creating the draft" "nothing was published."
           # A re-run never publishes the same serial again: any release for this tag, draft or published, stops it.
           gh api --paginate --slurp "repos/$REPOSITORY/releases?per_page=100" > releases.json
           if [ "$(jq --arg tag "$tag" '[.[][] | select(.tag_name == $tag)] | length' releases.json)" != 0 ]; then
@@ -323,6 +393,7 @@ jobs:
           assets="$(jq -r '.[0].assets | map(.name + " " + .state + " " + (.digest // "none")) | sort | join(",")' draft.json)"
           expected="index.json uploaded sha256:$INDEX_SHA256,index.json.sig uploaded sha256:$SIG_SHA256"
           [ "$assets" = "$expected" ] || stop "the draft release $tag does not have exactly the two signed files with the expected digests; it was left as a draft (not published, not the latest)."
+          recheck "just before publishing" "$tag was left as a draft (not published, not the latest)."
           # Publish it and make it the latest, then check what GitHub reports.
           gh api -X PATCH "repos/$REPOSITORY/releases/$id" -F draft=false -f make_latest=true > published.json
           [ "$(jq -r .draft published.json)" = false ] && [ "$(jq -r .tag_name published.json)" = "$tag" ] ||

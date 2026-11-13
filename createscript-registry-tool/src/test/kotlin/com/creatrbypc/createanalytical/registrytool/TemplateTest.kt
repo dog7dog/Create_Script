@@ -210,8 +210,16 @@ class TemplateTest {
         assertTrue(release.indexOf("sha256sum -c -") < release.indexOf("access_tokens"), "the token is obtained after the files are checked, just before its first use")
         assertTrue(release.indexOf("does not have exactly contents: write") < release.indexOf("gh api --paginate"), "the granted permissions are checked before any gh call")
         val check = jobs(publish).getValue("check")
-        assertTrue(check.contains("check-live-rulesets --repo registry --live live-rulesets"), "the tag rulesets are checked before publishing")
-        assertTrue(check.indexOf("check-live-rulesets") < check.indexOf("Record the files to publish"))
+        // S8.3 Phase 10B-2A（案 B'）: check ジョブは署名されたスナップショットと照合し（GITHUB_TOKEN、--actor workflow）、
+        // release ジョブは Publisher App のトークンで、下書きの前と公開の直前に、check ジョブが見た ruleset から変わっていないことを確かめる
+        assertTrue(check.contains("check-ruleset-snapshot --repo registry --live live-rulesets --repository \"\$REPOSITORY\" --actor workflow"), "the tag rulesets are checked against the signed snapshot")
+        assertTrue(check.indexOf("check-ruleset-snapshot") < check.indexOf("Record the files to publish"))
+        assertTrue(check.indexOf("check-ruleset-snapshot") < check.indexOf("echo \"rulesets=\$seen\""), "what was seen is recorded only after the check passed")
+        assertTrue(publish.contains("rulesets: \${{ steps.rulesets.outputs.rulesets }}") && release.contains("RULESETS: \${{ needs.check.outputs.rulesets }}"))
+        val draft = release.indexOf("recheck \"before creating the draft\"")
+        val publishing = release.indexOf("recheck \"just before publishing\"")
+        assertTrue(release.indexOf("export GH_TOKEN=\"\$token\"") < draft && draft < release.indexOf("gh release create") && release.indexOf("gh release create") < publishing && publishing < release.indexOf("-X PATCH"), "re-checked with the App token before the draft and just before publishing")
+        assertFalse(release.contains("\$TOOL") || release.contains("gradlew"), "the release job still runs no tool")
     }
 
     // テンプレートには、鍵（秘密鍵・テスト専用の鍵）も、署名済みの index も無い

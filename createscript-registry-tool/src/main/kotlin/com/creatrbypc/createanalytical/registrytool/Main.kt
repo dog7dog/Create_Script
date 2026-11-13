@@ -1,6 +1,7 @@
 package com.creatrbypc.createanalytical.registrytool
 
 import com.creatrbypc.createanalytical.install.GitHubReleases
+import com.creatrbypc.createanalytical.project.JsonObject
 import com.creatrbypc.createanalytical.project.registry.IndexVerifier
 import com.creatrbypc.createanalytical.project.registry.RegistryIndexes
 import java.io.PrintStream
@@ -39,6 +40,8 @@ class RegistryTool(
           check-release --release FILE --index FILE --sig FILE
           check-settings --ruleset FILE --tag-creation-ruleset FILE --tag-protection-ruleset FILE [--checks-app-id ID --publisher-app-id ID]
           check-live-rulesets --repo DIR --live DIR --checks-app-id ID --publisher-app-id ID
+          record-ruleset-snapshot --repo DIR --live DIR --repository OWNER/NAME --recorded-by LOGIN --checks-app-id ID --publisher-app-id ID --out FILE
+          check-ruleset-snapshot --repo DIR --live DIR --repository OWNER/NAME --checks-app-id ID --publisher-app-id ID --actor workflow|publisher
     """.trimIndent()
 
     private class Usage(message: String) : Exception(message)
@@ -61,6 +64,8 @@ class RegistryTool(
                 "check-release" -> IndexPublishing.checkRelease(file(options, "release"), file(options, "index"), file(options, "sig"))
                 "check-settings" -> checkSettings(options)
                 "check-live-rulesets" -> checkLiveRulesets(options)
+                "record-ruleset-snapshot" -> recordRulesetSnapshot(options)
+                "check-ruleset-snapshot" -> checkRulesetSnapshot(options)
                 else -> throw Usage("unknown command ${args[0]}")
             }
             report.lines().forEach(out::println)
@@ -241,14 +246,69 @@ class RegistryTool(
         val checks = appId(options, "checks-app-id") ?: throw Usage("--checks-app-id is required")
         val publisher = appId(options, "publisher-app-id") ?: throw Usage("--publisher-app-id is required")
         val repo = path(options, "repo")
+        val objects = liveRulesets(options)
+        if (objects.isEmpty()) report.error("no ruleset of the repository could be read, so the tag protection cannot be verified")
+        TagRulesets.liveProblems(readFile(repo.resolve(TagRulesets.CREATION_FILE)), readFile(repo.resolve(TagRulesets.PROTECTION_FILE)), objects, publisher, checks).forEach(report::error)
+        if (report.ok) report.notice("the tag rulesets match ${TagRulesets.CREATION_FILE} and ${TagRulesets.PROTECTION_FILE}")
+        return report
+    }
+
+    // --live: GitHub の API の応答（GET /repos/{owner}/{repo}/rulesets/{id}）を ruleset-<id>.json として保存したディレクトリ
+    private fun liveRulesets(options: Map<String, String>): List<JsonObject> {
         val live = path(options, "live")
         if (!Files.isDirectory(live, LinkOption.NOFOLLOW_LINKS)) throw ToolFailure("$live is not a directory")
         val files = Files.list(live).use { s -> s.filter { Regex("ruleset-[0-9]+\\.json").matches(it.fileName.toString()) }.sorted().toList() }
         if (files.size > 100) throw ToolFailure("more than 100 rulesets")
-        val objects = files.map { f -> TagRulesets.parse(readFile(f)) ?: throw ToolFailure("${f.fileName} is not a JSON object") }
-        if (objects.isEmpty()) report.error("no ruleset of the repository could be read, so the tag protection cannot be verified")
-        TagRulesets.liveProblems(readFile(repo.resolve(TagRulesets.CREATION_FILE)), readFile(repo.resolve(TagRulesets.PROTECTION_FILE)), objects, publisher, checks).forEach(report::error)
-        if (report.ok) report.notice("the tag rulesets match ${TagRulesets.CREATION_FILE} and ${TagRulesets.PROTECTION_FILE}")
+        return files.map { f -> TagRulesets.parse(readFile(f)) ?: throw ToolFailure("${f.fileName} is not a JSON object") }
+    }
+
+    private fun repositoryName(options: Map<String, String>): String =
+        required(options, "repository").takeIf { Regex("[A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100}").matches(it) } ?: throw Usage("--repository must be owner/name")
+
+    // 案 B'（S8.3 Phase 10B-2A）: 管理者が自分のトークンで取得した ruleset（bypass_actors を含む）から、スナップショットを作る。
+    // 署名はこのコマンドでは行わない（設定の証明用の鍵の運用は未決定。テストでは src/test の一時的な鍵で署名する）
+    private fun recordRulesetSnapshot(options: Map<String, String>): Report {
+        val report = Report()
+        val checks = appId(options, "checks-app-id") ?: throw Usage("--checks-app-id is required")
+        val publisher = appId(options, "publisher-app-id") ?: throw Usage("--publisher-app-id is required")
+        val repo = path(options, "repo")
+        val recordedBy = required(options, "recorded-by")
+        val result = RulesetSnapshots.record(
+            readFile(repo.resolve(TagRulesets.CREATION_FILE)), readFile(repo.resolve(TagRulesets.PROTECTION_FILE)), liveRulesets(options),
+            repositoryName(options), recordedBy, clock(), publisher, checks,
+        )
+        result.problems.forEach(report::error)
+        val bytes = result.value ?: return report
+        write(path(options, "out"), bytes)
+        report.notice("wrote ${options["out"]}; sign it with the settings key and record it in ${RulesetSnapshots.FILE} through a reviewed pull request")
+        return report
+    }
+
+    // 案 B': 公開の前に、読み取りのトークンで取得した ruleset を、署名されたスナップショットと照合する。
+    // --actor は確認を行うトークンの主体（workflow: ジョブの GITHUB_TOKEN、publisher: Registry Publisher App）
+    private fun checkRulesetSnapshot(options: Map<String, String>): Report {
+        val report = Report()
+        val checks = appId(options, "checks-app-id") ?: throw Usage("--checks-app-id is required")
+        val publisher = appId(options, "publisher-app-id") ?: throw Usage("--publisher-app-id is required")
+        val actor = when (required(options, "actor")) {
+            "workflow" -> RulesetSnapshots.Actor.WORKFLOW
+            "publisher" -> RulesetSnapshots.Actor.PUBLISHER
+            else -> throw Usage("--actor must be workflow or publisher")
+        }
+        val repo = path(options, "repo")
+        fun optional(relative: String): ByteArray? = repo.resolve(relative).takeIf { Files.exists(it, LinkOption.NOFOLLOW_LINKS) }?.let(::readFile)
+        val snapshot = optional(RulesetSnapshots.FILE) ?: run {
+            report.error("${RulesetSnapshots.FILE} is missing, so the tag rulesets cannot be verified")
+            return report
+        }
+        RulesetSnapshots.signatureProblems(snapshot, optional(RulesetSnapshots.SIGNATURE_FILE), optional(RulesetSnapshots.KEYS_FILE), allowTestKeys).forEach(report::error)
+        val live = liveRulesets(options)
+        if (live.isEmpty()) report.error("no ruleset of the repository could be read, so the tag protection cannot be verified")
+        RulesetSnapshots.checkProblems(
+            readFile(repo.resolve(TagRulesets.CREATION_FILE)), readFile(repo.resolve(TagRulesets.PROTECTION_FILE)), snapshot, live,
+            repositoryName(options), publisher, checks, actor,
+        ).forEach(report::error)
+        if (report.ok) report.notice("the tag rulesets match the signed snapshot ${RulesetSnapshots.FILE} (updated_at unchanged since it was recorded)")
         return report
     }
 }

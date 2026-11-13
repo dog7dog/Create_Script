@@ -132,11 +132,17 @@ What protects the index releases, and what GitHub settings cannot do:
 - Ruleset A (`github-settings/index-tags-creation-ruleset.json`) forbids **creating** `index-*` tags, with the
   publishing GitHub App as the only bypass actor (see below). Whether GitHub applies the bypass to the tag that is
   created when a draft release is published is **not verified** (test IT-21 and IT-09).
-- Before publishing, the `check` job compares the repository's live tag rulesets with these two files and the App
-  IDs (`check-live-rulesets`), and stops on any difference. According to GitHub's REST documentation, a ruleset's
-  `bypass_actors` are returned only to users who can write the ruleset; the job's read-only token therefore may not
-  see them, and then the check **fails** (it never assumes them). How the bypass actors are verified before each
-  publication is decided after the tests on GitHub (Phase 10B); until then, publication stops at this check.
+- GitHub returns a ruleset's `bypass_actors` only to users who can write the ruleset (documented, and confirmed on a
+  test repository: the Apps' tokens do not see them). So the lead records the two rulesets with their own token
+  (`createscript-registry-tool record-ruleset-snapshot`), checks them, signs the record with the settings key
+  (`keys/settings-keys.json`, separate from the index signing keys) and adds `github-settings/verified-rulesets.json`
+  and its `.sig` through a reviewed pull request. Before publishing, the `check` job compares what its read-only
+  token can see (id, enforcement, conditions, rules, `created_at`, `updated_at`, `current_user_can_bypass`) with the
+  signed record (`check-ruleset-snapshot`), and the `release` job checks with the publishing App's token, before the
+  draft and just before publishing, that nothing changed since. Any change of a ruleset, even one that is undone,
+  gives it a new `updated_at` (confirmed on a test repository for adding and removing a bypass actor), so publication
+  stops until the rulesets are checked and recorded again. There is no settings key yet, so publication stops here
+  until the key and its handling are decided.
 - Even with tag creation restricted, anyone with write access can create a release under another tag name, or
   mark another release as the latest. Clients fetch `releases/latest`, and an old signed index there is still
   valid until it expires: clients with saved state refuse it as a rollback (and keep their newer index), and a
