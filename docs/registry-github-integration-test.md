@@ -8,6 +8,7 @@
 > - Publisher App・ruleset A・B・テスト専用のビルドは、Phase 10A で雛形とツールに **ローカルで** 実装しました（`docs/audits/S8.3-Phase10A-Local-Implementation.md`）。GitHub 上では未検証です。
 > - 前提の ID（P-1〜P-19）は、architecture の 7 章のものです。
 > - 構築の手順と、IT の前に行う優先試験 PT-1〜PT-8 は `docs/registry-github-test-environment-setup.md` にあります（Phase 10B-1）。
+> - **Phase 10B-2A（2026-11-13）：** 1 人体制で、テスト用のリポジトリ `dog7dog/CreateScript-Registry-Test` で、PT-1〜PT-6 の一部と P-18〜P-21 を実測しました（`docs/audits/S8.3-Phase10B2A-Solo-Integration.md`）。IT-01〜IT-28 そのものは実施していないので、下の判定欄は NOT VERIFIED のままです。
 > - 試験の ID は IT-01〜IT-28 です。Phase 8 までの番号との対応は、付録 G にあります。
 > - **秘密情報（App の鍵・トークン・署名の鍵）は、その一部であっても、ログ・issue・画面の写し・報告書に残しません。**
 
@@ -122,7 +123,8 @@
   2. 公開の PR を出し、2 人が承認し、マージする。
   3. `publish` environment を承認する。
 - **期待結果：**
-  - `check` の、タグの ruleset の確認（`check-live-rulesets`）が結果を出す（P-18・P-19）。**`bypass_actors` が読み取りのトークンに返されなければ、ここで失敗して止まる**（期待される安全側の動作）。その場合は、それを記録して IT-09 を中断し、確かめ方を決めてから再開する。
+  - `check` の、タグの ruleset の確認（`check-ruleset-snapshot --actor workflow`。Phase 10B-2A で `check-live-rulesets` から変更）が、署名されたスナップショットとの照合に通る。`GITHUB_TOKEN` に `bypass_actors` が返らず、A・B の `current_user_can_bypass` が `never` であることは、確認用ワークフロー（実行 43382792677）で実測済み（P-18・P-19・P-21）。前提として、設定の証明用の鍵とスナップショットを用意しておく（鍵の運用は未決定）。
+  - `release` の、下書きの前と公開の直前の ruleset の再照合が通る（Publisher App で A=`always`・B=`never`）。
   - `check` が成功する（P-15）。
   - `release` が Publisher App のトークンで、下書き → 確認 → 公開を行う（P-5・P-12）。
   - `index-1` が latest になる。
