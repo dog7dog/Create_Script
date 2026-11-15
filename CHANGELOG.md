@@ -265,6 +265,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Signed library integration test (local, `SignedLibraryIntegrationTest`): pack, signed index, install through the
   test-only client, import and run, and refusal of tampered signatures, indexes and packages.
 
+
+### Changed
+
+- API (stage A2, `docs/api/api-surface.md`): `createscript-core` and `createscript-project` use Kotlin's explicit API
+  mode. Declarations that are public only because other modules of this repository use them, or because they were
+  public in v0.1.0-alpha, are marked `@InternalCreateScriptApi` (core) or `@InternalCreateScriptProjectApi`
+  (project). Using them from other code gives a warning (not an error) until it opts in with `@OptIn(...)` or
+  `-opt-in=...`; they can change in any release. This covers the AST, lexer, parser, semantic analysis, scheduler,
+  `Compiler`, `CsVm`, the bytecode types and limit objects of the Core, the members of `SnapshotVerifier` other
+  than `SlotType`, and the constructor and properties of `CompiledProgram` (the type itself stays supported), and
+  in the project module the JSON reader and writer, `PackageArchives` and the registry formats.
+- API: 57 members of those internal types that no other module used and that were not in v0.1.0-alpha are now
+  `internal` (their JVM names changed). Every public member of the v0.1.0-alpha Core keeps its JVM signature.
+- `createscript-project`: `ManifestResult.entryPosition`, `dependencyPositions`, `modulePositions` and
+  `LockfileResult.rootPosition`, `packagePositions` are `FilePosition(line, column)` instead of `Pair<Int, Int>`
+  (use `.line` and `.column` instead of `.first` and `.second`). This module was not in v0.1.0-alpha.
+- Tests: a host compiled against the v0.1.0-alpha Core saves runs, rebuilds the saved state field by field and
+  resumes them with the current Core (`BinaryCompatibilityTest`, `compat/v010alpha/OldSnapshotHost`).
+
 ### Fixed
 
 - Build: `gradle/verification-metadata.xml` lists `junit-bom-5.10.2.pom` (SHA-256 checked against Maven Central and

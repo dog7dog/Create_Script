@@ -1,5 +1,6 @@
 package com.creatrbypc.createanalytical.script.parser
 
+import com.creatrbypc.createanalytical.script.InternalCreateScriptApi
 import com.creatrbypc.createanalytical.script.ast.Assignment
 import com.creatrbypc.createanalytical.script.ast.BinaryExpression
 import com.creatrbypc.createanalytical.script.ast.BinaryOperator
@@ -57,13 +58,15 @@ import com.creatrbypc.createanalytical.script.lexer.TokenType
 // 入れ子の深さと AST ノード数の上限（暫定値。第3.3段階の検証で確定する）。入れ子の深さはブロックの深さと式の深さの合計（11.9-9）
 // MAX_NODES は既定（埋め込み先）の値で、独立版（CompileOptions.STANDALONE: 第8.0.1段階）は parse の引数で広げる。
 // MAX_NESTING_DEPTH は再帰の深さ（Parser・意味解析・Compiler のスタック）を抑える言語の仕様で、どの設定でも同じ
-object ParserLimits {
-    const val MAX_NESTING_DEPTH = 32
-    const val MAX_NODES = 2048
+@InternalCreateScriptApi
+public object ParserLimits {
+    public const val MAX_NESTING_DEPTH: Int = 32
+    public const val MAX_NODES: Int = 2048
 }
 
 // program は構文エラー・字句エラーが無いときだけ返す。診断は Lexer の分を含めて最大16件
-data class ParseResult(
+@InternalCreateScriptApi
+public data class ParseResult(
     val program: Program?,
     val diagnostics: List<Diagnostic>,
     val diagnosticsTruncated: Boolean,
@@ -71,7 +74,8 @@ data class ParseResult(
 )
 
 // CreateScript の構文解析器（再帰下降）。Minecraft に依存しない純粋な Kotlin で、1回の parse ごとに新しいインスタンスを使う
-class Parser private constructor(private val tokens: List<Token>, private val diagnostics: DiagnosticCollector, private val maxNodes: Int) {
+@InternalCreateScriptApi
+public class Parser private constructor(private val tokens: List<Token>, private val diagnostics: DiagnosticCollector, private val maxNodes: Int) {
     private var index = 0
 
     // 括弧の中にいる間は改行トークンを読み飛ばす（D18）
@@ -102,7 +106,7 @@ class Parser private constructor(private val tokens: List<Token>, private val di
     // 式と、その式を根とする部分木の深さ
     private class Parsed(val expression: Expression, val depth: Int)
 
-    companion object {
+    public companion object {
         // 使える構文の記号（Stage 3.5 と、第3.7b段階の比較・論理演算子）。これ以外の演算子が現れたら未対応の演算子として報告する。
         // 前置の "!!"（!(!x)）は使えるが、後置の "x!!" は未対応のため、"!!" はここに含めない
         private val SUPPORTED_SYMBOLS = setOf(
@@ -119,10 +123,10 @@ class Parser private constructor(private val tokens: List<Token>, private val di
 
         private val STATEMENT_BOUNDARIES = setOf(TokenType.NEWLINE, TokenType.SEMICOLON, TokenType.EOF)
 
-        fun parse(lexResult: LexResult): ParseResult = parse(lexResult, ParserLimits.MAX_NODES)
+        public fun parse(lexResult: LexResult): ParseResult = parse(lexResult, ParserLimits.MAX_NODES)
 
         // AST のノード数の上限を指定する（第8.0.1段階。CompileOptions から使う）
-        fun parse(lexResult: LexResult, maxNodes: Int): ParseResult {
+        public fun parse(lexResult: LexResult, maxNodes: Int): ParseResult {
             require(maxNodes > 0) { "maxNodes must be positive: $maxNodes" }
             val diagnostics = DiagnosticCollector()
             diagnostics.merge(lexResult.diagnostics, lexResult.diagnosticsTruncated, lexResult.hasErrors)

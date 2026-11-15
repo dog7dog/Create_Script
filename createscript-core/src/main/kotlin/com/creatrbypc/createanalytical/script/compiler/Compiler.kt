@@ -1,5 +1,6 @@
 package com.creatrbypc.createanalytical.script.compiler
 
+import com.creatrbypc.createanalytical.script.InternalCreateScriptApi
 import com.creatrbypc.createanalytical.script.ast.Assignment
 import com.creatrbypc.createanalytical.script.ast.BinaryExpression
 import com.creatrbypc.createanalytical.script.ast.BinaryOperator
@@ -80,7 +81,7 @@ import com.creatrbypc.createanalytical.script.vm.VmLimits
 import java.util.IdentityHashMap
 
 // program はエラーが無いときだけ返す。診断は前の段階の分を含めて最大16件
-data class CompileResult(
+public data class CompileResult(
     val program: CompiledProgram?,
     val diagnostics: List<Diagnostic>,
     val diagnosticsTruncated: Boolean,
@@ -100,7 +101,7 @@ data class CompileResult(
 // 入力の上限（第8.0.1段階）: maxSourceLength・maxTokens・maxNodes は 1 つのファイルごと、maxModules はエントリーを除くモジュールの数、
 // maxTotalSourceLength はエントリーとすべてのモジュールの長さの合計。既定（DEFAULT・EMBEDDED）はこれまでの値（合計はファイルごとの上限 × ファイルの数で、
 // これまでと同じく実質的な制限にならない）
-data class CompileOptions(
+public data class CompileOptions(
     val maxInstructions: Int? = VmLimits.MAX_INSTRUCTIONS,
     val maxSourceLength: Int = LexerLimits.MAX_SOURCE_LENGTH,
     val maxTokens: Int = LexerLimits.MAX_TOKENS,
@@ -125,15 +126,15 @@ data class CompileOptions(
         require(maxTotalSourceLength.toLong() + maxModules + 1 <= Int.MAX_VALUE) { "maxTotalSourceLength is too large: $maxTotalSourceLength" }
     }
 
-    companion object {
+    public companion object {
         // CreateScript.compile(source)・Compiler.compileSource(source) の既定（これまでと同じ 4096 命令）
-        val DEFAULT = CompileOptions()
+        public val DEFAULT: CompileOptions = CompileOptions()
 
         // 埋め込み先（Create: Analytical などのホスト）向け。4096 命令を明示して指定する
-        val EMBEDDED = CompileOptions(VmLimits.MAX_INSTRUCTIONS)
+        public val EMBEDDED: CompileOptions = CompileOptions(VmLimits.MAX_INSTRUCTIONS)
 
         // 独立版の createscript コマンド向け。命令数の上限なし（入力の上限・実行時の上限はそのまま）
-        val STANDALONE = CompileOptions(
+        public val STANDALONE: CompileOptions = CompileOptions(
             maxInstructions = null,
             maxSourceLength = 1_000_000,
             maxTokens = 250_000,
@@ -148,7 +149,8 @@ data class CompileOptions(
 }
 
 // 意味解析済みの AST をスタック型 VM のバイトコードへ変換する。Minecraft に依存しない純粋な Kotlin
-class Compiler private constructor(
+@InternalCreateScriptApi
+public class Compiler private constructor(
     private val analyzed: AnalyzedProgram,
     private val diagnostics: DiagnosticCollector,
     private val options: CompileOptions,
@@ -211,11 +213,11 @@ class Compiler private constructor(
     // 上限超過。報告済みのため、これ以上変換しない
     private class CompileAbort : RuntimeException(null, null, false, false)
 
-    companion object {
+    public companion object {
         // 引数 1 つのものは CompileOptions.DEFAULT（4096 命令）。これまでの呼び出し（コンパイル済みのものを含む）のため、既定値付きの引数ではなく別の関数にする
-        fun compile(semanticResult: SemanticResult): CompileResult = compile(semanticResult, CompileOptions.DEFAULT)
+        public fun compile(semanticResult: SemanticResult): CompileResult = compile(semanticResult, CompileOptions.DEFAULT)
 
-        fun compile(semanticResult: SemanticResult, options: CompileOptions): CompileResult {
+        public fun compile(semanticResult: SemanticResult, options: CompileOptions): CompileResult {
             val diagnostics = DiagnosticCollector()
             diagnostics.merge(semanticResult.diagnostics, semanticResult.diagnosticsTruncated, semanticResult.hasErrors)
             // 前の段階でエラーがあれば変換しない（A8）
@@ -224,9 +226,9 @@ class Compiler private constructor(
         }
 
         // ソースから Lexer → Parser → Semantic → Compiler を順に実行する
-        fun compileSource(source: String): CompileResult = compileSource(source, CompileOptions.DEFAULT)
+        public fun compileSource(source: String): CompileResult = compileSource(source, CompileOptions.DEFAULT)
 
-        fun compileSource(source: String, options: CompileOptions): CompileResult =
+        public fun compileSource(source: String, options: CompileOptions): CompileResult =
             compile(SemanticAnalyzer.analyze(Parser.parse(Lexer.tokenize(source, options.maxSourceLength, options.maxTokens), options.maxNodes), options.maxPropertyTypeChain), options)
 
         // 出力したバイトコードを SnapshotVerifier で検証する（第3.7b段階）。分岐先・合流点のスタックの深さと型・変数の初期化を確かめ、
@@ -259,12 +261,12 @@ class Compiler private constructor(
         private val END = SourcePosition(0, 1, 1)
 
         // ラムダの展開の上限（第9.3段階）。関数の値を入れ子に呼ぶと展開が指数的に増えうるため、回数と入れ子の深さを抑える
-        const val MAX_INLINE_EXPANSIONS = 4096
-        const val MAX_INLINE_DEPTH = 32
+        internal const val MAX_INLINE_EXPANSIONS = 4096
+        internal const val MAX_INLINE_DEPTH = 32
 
         // ラムダの展開の中で出す命令の合計の上限（第9.3段階）。命令数の上限の無い独立版でも、大きな本体の関数の値を何度も呼んで
         // コンパイルのメモリーと検証の時間が入力の大きさに比べて際限なく増えないようにする
-        const val MAX_INLINED_INSTRUCTIONS = 1_000_000
+        internal const val MAX_INLINED_INSTRUCTIONS = 1_000_000
     }
 
     // トップレベルの文（HALT で終わる）の後に、手続きを AnalyzedProgram.routines の順に並べる。関数の無いプログラムの命令は第3.8b段階と、

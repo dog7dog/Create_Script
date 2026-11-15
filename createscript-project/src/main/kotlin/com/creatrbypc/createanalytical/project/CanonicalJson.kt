@@ -6,10 +6,11 @@ package com.creatrbypc.createanalytical.project
 // - 文字列は " と \ と U+0000〜U+001F だけをエスケープする（\b \t \n \f \r と、それ以外は \u00xx の小文字の 16 進数）。ほかの文字は UTF-8 のまま
 // - 整数は 10 進数で、-(2^53-1)〜2^53-1 だけ（JCS の数値の書き方と同じになる範囲）。それを超える整数・対にならないサロゲートは書けない（IllegalArgumentException）
 // 同じ値からは、必ず同じバイト列になる。入れ子が深くても再帰しない
-object CanonicalJson {
-    const val MAX_SAFE_INTEGER = 9_007_199_254_740_991L
+@InternalCreateScriptProjectApi
+public object CanonicalJson {
+    internal const val MAX_SAFE_INTEGER = 9_007_199_254_740_991L
 
-    fun write(value: JsonValue): ByteArray {
+    public fun write(value: JsonValue): ByteArray {
         val out = StringBuilder()
         // 書く値か、そのまま書く文字列（区切り・キー・閉じ括弧）
         val pending = ArrayList<Any>()

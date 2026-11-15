@@ -1,11 +1,11 @@
 package com.creatrbypc.createanalytical.project
 
 // プロジェクトのファイルの値の規則（S8.1。docs/packages.md に記載）。どれも ASCII だけを受け付ける（見た目の似た文字による取り違えを防ぐ）
-object ProjectRules {
-    const val MAX_NAME_LENGTH = 64
-    const val MAX_VERSION_LENGTH = 128
-    const val MAX_PATH_LENGTH = 256
-    const val MAX_LICENSE_LENGTH = 64
+public object ProjectRules {
+    public const val MAX_NAME_LENGTH: Int = 64
+    public const val MAX_VERSION_LENGTH: Int = 128
+    public const val MAX_PATH_LENGTH: Int = 256
+    public const val MAX_LICENSE_LENGTH: Int = 64
 
     // パッケージ名: 英小文字で始まり、英小文字・数字と、間に 1 つずつのハイフン（例: vector-math）。import のモジュール名とは別の概念で、自動では変換しない
     private val NAME = Regex("[a-z][a-z0-9]*(-[a-z0-9]+)*")
@@ -35,31 +35,31 @@ object ProjectRules {
     // Windows の予約名か（S8.2 L-7）。大文字・小文字を区別せず、拡張子が付いても（con.txt・NUL.tar.gz）予約名。Windows はパスの要素の末尾の
     // . と空白を取り除いて扱うので、取り除いてから比べる（"con."・"con " も予約名。. と空白は、ほかの規則も拒否する）。
     // パッケージ名・モジュール名・エントリーのパス・アーカイブの中のパス・プロジェクトのローカルの import に使う（どの OS でも拒否する: 同じプロジェクトを Windows でも使えるように）
-    fun isWindowsReserved(name: String): Boolean =
+    public fun isWindowsReserved(name: String): Boolean =
         name.trimEnd('.', ' ').substringBefore('.').trimEnd(' ').lowercase() in WINDOWS_RESERVED
 
     // 利用者に示す説明
-    fun reservedNameReason(name: String) = "'$name' is a reserved name on Windows (CON, PRN, AUX, NUL, COM0-COM9 and LPT0-LPT9, in any case and with any extension)"
+    public fun reservedNameReason(name: String): String = "'$name' is a reserved name on Windows (CON, PRN, AUX, NUL, COM0-COM9 and LPT0-LPT9, in any case and with any extension)"
 
-    fun isValidName(name: String) = name.length <= MAX_NAME_LENGTH && NAME.matches(name) && !isWindowsReserved(name)
+    public fun isValidName(name: String): Boolean = name.length <= MAX_NAME_LENGTH && NAME.matches(name) && !isWindowsReserved(name)
 
     // ---- モジュール名（S8.2 Phase 1） ----
 
     // import のモジュール名の長さ（Core の LexerLimits.MAX_IDENTIFIER_LENGTH と同じ。一致は CLI のテストで確かめる）
-    const val MAX_MODULE_NAME_LENGTH = 32
+    public const val MAX_MODULE_NAME_LENGTH: Int = 32
 
     // Core の識別子（英字・_ で始まり、英数字・_。_ だけのものは不可）で、Kotlin のハードキーワードでも、import できない組み込み関数の名前でもないもの。
     // createscript-project は Core に依存しないため、キーワード・組み込み関数の一覧をここにも持つ（Core の HARD_KEYWORDS・BuiltinFunctions.NAMES との一致は CLI のテストで確かめる）。
     // パッケージ名（ハイフンを使える）とは別の概念で、自動では変換しない
     private val MODULE_NAME = Regex("[A-Za-z_][A-Za-z0-9_]*")
-    val HARD_KEYWORDS: Set<String> = setOf(
+    public val HARD_KEYWORDS: Set<String> = setOf(
         "as", "break", "class", "continue", "do", "else", "false", "for", "fun", "if", "in",
         "interface", "is", "null", "object", "package", "return", "super", "this", "throw",
         "true", "try", "typealias", "typeof", "val", "var", "when", "while",
     )
-    val BUILTIN_FUNCTIONS: Set<String> = setOf("println", "waitTicks", "listOf", "mutableListOf")
+    public val BUILTIN_FUNCTIONS: Set<String> = setOf("println", "waitTicks", "listOf", "mutableListOf")
 
-    fun isValidModuleName(name: String) = name.length <= MAX_MODULE_NAME_LENGTH && MODULE_NAME.matches(name) && !name.all { it == '_' } &&
+    public fun isValidModuleName(name: String): Boolean = name.length <= MAX_MODULE_NAME_LENGTH && MODULE_NAME.matches(name) && !name.all { it == '_' } &&
         name !in HARD_KEYWORDS && name !in BUILTIN_FUNCTIONS && !isWindowsReserved(name)
 
     // 名前の診断（予約名なら RESERVED_NAME、ほかの規則に合わなければ invalid、正しければ null）
@@ -73,25 +73,25 @@ object ProjectRules {
 
     // .cscr 1 ファイルの上限（UTF-16 単位）と、それを UTF-8 にしたときの最大のバイト数（1 単位あたり最大 3 バイト。BMP の外の文字は 4 バイトで 2 単位）。
     // Core の CompileOptions.STANDALONE.maxSourceLength・CLI の CliLimits.MAX_SOURCE_BYTES と同じ値（一致は CLI のテストで確かめる）
-    const val MAX_SOURCE_LENGTH = 1_000_000
-    const val MAX_SOURCE_BYTES = MAX_SOURCE_LENGTH * 3
+    public const val MAX_SOURCE_LENGTH: Int = 1_000_000
+    public const val MAX_SOURCE_BYTES: Int = MAX_SOURCE_LENGTH * 3
 
-    fun isValidVersion(version: String) = version.length <= MAX_VERSION_LENGTH && VERSION.matches(version)
+    public fun isValidVersion(version: String): Boolean = version.length <= MAX_VERSION_LENGTH && VERSION.matches(version)
 
-    fun isValidLicense(license: String) = license.length <= MAX_LICENSE_LENGTH && LICENSE.matches(license)
+    public fun isValidLicense(license: String): Boolean = license.length <= MAX_LICENSE_LENGTH && LICENSE.matches(license)
 
-    fun isValidSource(source: String): Boolean {
+    public fun isValidSource(source: String): Boolean {
         val match = GITHUB.matchEntire(source) ?: return false
         val repository = match.groupValues[2]
         return repository != "." && repository != ".."
     }
 
-    fun isValidSha256(sha256: String) = SHA256.matches(sha256)
+    public fun isValidSha256(sha256: String): Boolean = SHA256.matches(sha256)
 
     // プロジェクトのルートからの相対パス（区切りは /）として正しくなければ、その理由。正しければ null。
     // 絶対パス・\・:（Windows のドライブ）・空の区切り・. と ..・使えない文字・Windows の予約名・末尾の . を拒否し、.cscr で終わることを求める。
     // これは字面だけの検査で、シンボリックリンクがルートの外を指さないことは、ファイルを読む側（CLI）が確かめる
-    fun pathProblem(path: String): String? = when {
+    public fun pathProblem(path: String): String? = when {
         path.isEmpty() -> "the path is empty"
         path.length > MAX_PATH_LENGTH -> "the path is longer than $MAX_PATH_LENGTH characters"
         path.startsWith("/") -> "absolute paths are not allowed"
@@ -111,27 +111,31 @@ object ProjectRules {
 }
 
 // 診断を集める（最大 MAX 件。それを超えた分は捨て、truncated で示す）
-class ProjectDiagnostics {
+@InternalCreateScriptProjectApi
+public class ProjectDiagnostics {
     private val entries = ArrayList<ProjectDiagnostic>()
 
-    var truncated = false
+    internal var truncated = false
         private set
 
-    val list: List<ProjectDiagnostic> get() = entries.toList()
+    internal val list: List<ProjectDiagnostic> get() = entries.toList()
 
-    val isEmpty: Boolean get() = entries.isEmpty() && !truncated
+    internal val isEmpty: Boolean get() = entries.isEmpty() && !truncated
 
-    fun add(diagnostic: ProjectDiagnostic) {
+    internal fun add(diagnostic: ProjectDiagnostic) {
         if (entries.size < MAX) entries.add(diagnostic) else truncated = true
     }
 
-    fun add(code: ProjectDiagnosticCode, at: JsonValue?, vararg arguments: String) = add(ProjectDiagnostic(code, at?.line ?: 1, at?.column ?: 1, arguments.toList()))
+    internal fun add(code: ProjectDiagnosticCode, at: JsonValue?, vararg arguments: String) = add(ProjectDiagnostic(code, at?.line ?: 1, at?.column ?: 1, arguments.toList()))
 
-    fun add(code: ProjectDiagnosticCode, position: Pair<Int, Int>?, vararg arguments: String) =
+    internal fun add(code: ProjectDiagnosticCode, position: Pair<Int, Int>?, vararg arguments: String) =
         add(ProjectDiagnostic(code, position?.first ?: 1, position?.second ?: 1, arguments.toList()))
 
-    companion object {
-        const val MAX = 64
+    internal fun add(code: ProjectDiagnosticCode, position: FilePosition?, vararg arguments: String) =
+        add(ProjectDiagnostic(code, position?.line ?: 1, position?.column ?: 1, arguments.toList()))
+
+    internal companion object {
+        public const val MAX = 64
     }
 }
 

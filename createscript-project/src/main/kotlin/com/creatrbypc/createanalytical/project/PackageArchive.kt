@@ -11,19 +11,20 @@ import java.util.zip.Inflater
 // パッケージアーカイブ createscript-package.zip（S8.2 Phase 1。docs/packages.md の「Package archives」）。バイト列だけを扱い、ファイル・ネットワークには触れない。
 // 中身は createscript.json（schemaVersion 2 の library）・modules/名前.cscr・LICENSE などの説明のファイルだけで、どれもソースコード・文書として扱う
 // （中身・マニフェストによって、OS・ネットワーク・JVM を使う権限が増えることは無い。インストールでも、コードを実行しない）
-object PackageArchives {
-    const val FILE_NAME = "createscript-package.zip"
-    const val MAX_ARCHIVE_BYTES = 32 * 1024 * 1024
-    const val MAX_TOTAL_BYTES = 16 * 1024 * 1024
-    const val MAX_ENTRIES = 1024
-    const val MAX_OTHER_FILE_BYTES = 1024 * 1024
-    const val MAX_COMPRESSION_RATIO = 100
+@InternalCreateScriptProjectApi
+public object PackageArchives {
+    public const val FILE_NAME: String = "createscript-package.zip"
+    internal const val MAX_ARCHIVE_BYTES = 32 * 1024 * 1024
+    public const val MAX_TOTAL_BYTES: Int = 16 * 1024 * 1024
+    public const val MAX_ENTRIES: Int = 1024
+    public const val MAX_OTHER_FILE_BYTES: Int = 1024 * 1024
+    internal const val MAX_COMPRESSION_RATIO = 100
 
     // 説明のファイル（アーカイブの直下だけ）
     private val DOCUMENTS = listOf("LICENSE", "LICENCE", "NOTICE", "README", "CHANGELOG", "COPYING").flatMap { listOf(it, "$it.md", "$it.txt") }.toSet()
 
     // アーカイブに入れられるパスか（入れられなければ理由）。createscript.json・modules/名前.cscr・説明のファイルだけ
-    fun pathProblem(path: String): String? {
+    public fun pathProblem(path: String): String? {
         if (path == Manifests.FILE_NAME || path in DOCUMENTS) return null
         if (path.startsWith("modules/") && path.endsWith(".cscr")) {
             val module = path.removePrefix("modules/").removeSuffix(".cscr")
@@ -36,14 +37,14 @@ object PackageArchives {
         return "only createscript.json, modules/<module>.cscr and LICENSE, NOTICE, README, CHANGELOG or COPYING (.md, .txt) are allowed"
     }
 
-    fun isDocument(path: String) = path in DOCUMENTS
+    internal fun isDocument(path: String) = path in DOCUMENTS
 
     // ---- 書き出し（createscript pack） ----
 
     // 決まった形の ZIP を作る。項目はパスの順（UTF-16 の順。パスは ASCII だけ）、圧縮しない（STORED: 圧縮の実装・版で中身が変わらない）、
     // 時刻は 1980-01-01 00:00、権限は 0644 の通常のファイル、ディレクトリの項目・コメント・拡張フィールド・データディスクリプターは無し。
     // 同じパスと中身からは、必ず同じバイト列になる。パスと中身の検査は read で行う（ここでは形だけを確かめる）
-    fun write(files: Map<String, ByteArray>): ByteArray {
+    public fun write(files: Map<String, ByteArray>): ByteArray {
         val entries = files.entries.sortedBy { it.key }
         require(entries.isNotEmpty()) { "an archive needs files" }
         val out = java.io.ByteArrayOutputStream()
@@ -75,10 +76,10 @@ object PackageArchives {
     // 中身から正規形のアーカイブが 1 つに決まるので、インストールしたファイルから作り直したアーカイブの SHA-256 を、ロックファイルの値と比べられる
 
     // read に通ったアーカイブ archive（bytes を読んだもの）が正規形か
-    fun isCanonical(bytes: ByteArray, archive: Archive): Boolean = write(archive.files).contentEquals(bytes)
+    public fun isCanonical(bytes: ByteArray, archive: Archive): Boolean = write(archive.files).contentEquals(bytes)
 
     // ファイル（パス → 中身）から正規形のアーカイブを作り直す。アーカイブに入れられないパスがある・ファイルが無いなら null
-    fun rebuild(files: Map<String, ByteArray>): ByteArray? {
+    public fun rebuild(files: Map<String, ByteArray>): ByteArray? {
         if (files.isEmpty() || files.keys.any { pathProblem(it) != null }) return null
         return write(files)
     }
@@ -94,12 +95,12 @@ object PackageArchives {
     // ---- 読み取りと検査 ----
 
     // 検査に通ったアーカイブ。files はパス → 中身（パスの順。ディレクトリの項目は含まない）、manifest はアーカイブの createscript.json
-    class Archive(val manifest: Manifest, val files: Map<String, ByteArray>)
+    public class Archive(public val manifest: Manifest, public val files: Map<String, ByteArray>)
 
     // diagnostics の path はアーカイブの中のファイル（アーカイブ全体の問題は null）
-    class ArchiveDiagnostic(val path: String?, val diagnostic: ProjectDiagnostic)
+    public class ArchiveDiagnostic(public val path: String?, public val diagnostic: ProjectDiagnostic)
 
-    class ArchiveResult(val archive: Archive?, val diagnostics: List<ArchiveDiagnostic>)
+    public class ArchiveResult(public val archive: Archive?, public val diagnostics: List<ArchiveDiagnostic>)
 
     private class Invalid(val path: String?, val code: ProjectDiagnosticCode, val arguments: List<String>) : RuntimeException(null, null, false, false)
 
@@ -111,7 +112,7 @@ object PackageArchives {
     // - ZIP64・複数のディスク・暗号化・データディスクリプター・STORED と DEFLATED 以外の圧縮は不可。中央ディレクトリとローカルヘッダーの名前・大きさ・CRC・方式は同じ
     // - 名前は ASCII の印字できる文字。通常のファイルとディレクトリだけ（Unix の種類が記号リンクなどのものは不可）。同じパス・大文字と小文字だけが違うパスは不可
     // - 展開は宣言された大きさの上限まで実際のバイト数で数え、合計・1 ファイル・圧縮率の上限を超えたら止める（ZIP 爆弾）。CRC32 を確かめる
-    fun read(bytes: ByteArray, expectedName: String? = null, expectedVersion: String? = null): ArchiveResult {
+    public fun read(bytes: ByteArray, expectedName: String? = null, expectedVersion: String? = null): ArchiveResult {
         return try {
             val files = unzip(bytes)
             ArchiveResult(checkContents(files, expectedName, expectedVersion), emptyList())
@@ -290,7 +291,7 @@ object PackageArchives {
     }
 
     // .cscr のソースとして使えなければ理由（UTF-8 として正しく、BOM で始まらず、MAX_SOURCE_LENGTH 単位以下）
-    fun sourceProblem(contents: ByteArray): String? {
+    public fun sourceProblem(contents: ByteArray): String? {
         if (contents.size > ProjectRules.MAX_SOURCE_BYTES) return "larger than ${ProjectRules.MAX_SOURCE_BYTES} bytes"
         if (contents.size >= 3 && contents[0] == 0xEF.toByte() && contents[1] == 0xBB.toByte() && contents[2] == 0xBF.toByte()) return "starts with a byte order mark"
         val text = try {

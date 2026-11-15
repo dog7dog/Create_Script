@@ -1,24 +1,24 @@
 package com.creatrbypc.createanalytical.project
 
 // ロックファイルの root（このプロジェクト自身。マニフェストの name・version と同じ）
-data class LockRoot(val name: String, val version: String)
+public data class LockRoot(val name: String, val version: String)
 
 // 固定したパッケージ（S8.1）。パッケージの識別の規則は docs/packages.md の「パッケージの識別」:
 // - 1 つのロックファイルの中で、パッケージは name で識別する（同じ name は 1 つだけ。同じ名前の別の版・別の取得元を同時には使わない）
 // - version・source は、その name をどこのどの版から取るか、sha256 は取ったパッケージのアーカイブのバイト列そのもの（正式なパッケージアーカイブ。
 //   GitHub が自動で作るソースの ZIP・tar.gz は対象にしない）
 // - dependencies は、このパッケージが直接使うパッケージの name（名前の順・重複なし。どれもこのロックファイルにある）
-data class LockedPackage(val name: String, val version: String, val source: String, val sha256: String, val dependencies: List<String> = emptyList())
+public data class LockedPackage(val name: String, val version: String, val source: String, val sha256: String, val dependencies: List<String> = emptyList())
 
 // createscript.lock（lockVersion 1）。packages は名前の順に並べたもの（of で作る）
-class Lockfile private constructor(val root: LockRoot, val packages: List<LockedPackage>) {
-    override fun equals(other: Any?) = other is Lockfile && other.root == root && other.packages == packages
+public class Lockfile private constructor(public val root: LockRoot, public val packages: List<LockedPackage>) {
+    override fun equals(other: Any?): Boolean = other is Lockfile && other.root == root && other.packages == packages
 
-    override fun hashCode() = root.hashCode() * 31 + packages.hashCode()
+    override fun hashCode(): Int = root.hashCode() * 31 + packages.hashCode()
 
-    companion object {
+    public companion object {
         // 並べ替えて作る（入力の順に関係なく同じ内容になる）。値の形・重複・参照・循環が正しくなければ IllegalArgumentException
-        fun of(root: LockRoot, packages: List<LockedPackage>): Lockfile {
+        public fun of(root: LockRoot, packages: List<LockedPackage>): Lockfile {
             require(ProjectRules.isValidName(root.name) && ProjectRules.isValidVersion(root.version)) { "invalid root: $root" }
             require(packages.size <= Lockfiles.MAX_PACKAGES) { "too many packages" }
             val sorted = packages.map { it.copy(dependencies = it.dependencies.sorted()) }.sortedBy { it.name }
@@ -37,21 +37,21 @@ class Lockfile private constructor(val root: LockRoot, val packages: List<Locked
 }
 
 // lockfile はエラーが無いときだけ。packagePositions はパッケージの name の値の位置
-class LockfileResult(
-    val lockfile: Lockfile?,
-    val diagnostics: List<ProjectDiagnostic>,
-    val truncated: Boolean,
-    val rootPosition: Pair<Int, Int> = 1 to 1,
-    val packagePositions: Map<String, Pair<Int, Int>> = emptyMap(),
+public class LockfileResult(
+    public val lockfile: Lockfile?,
+    public val diagnostics: List<ProjectDiagnostic>,
+    public val truncated: Boolean,
+    public val rootPosition: FilePosition = FilePosition(1, 1),
+    public val packagePositions: Map<String, FilePosition> = emptyMap(),
 )
 
 // createscript.lock の読み取り・検査・書き出し（S8.1。ファイルの読み書きはしない）
-object Lockfiles {
-    const val FILE_NAME = "createscript.lock"
-    const val LOCK_VERSION = 1L
-    const val MAX_BYTES = 1024 * 1024
-    const val MAX_PACKAGES = 4096
-    const val MAX_PACKAGE_DEPENDENCIES = 1024
+public object Lockfiles {
+    public const val FILE_NAME: String = "createscript.lock"
+    public const val LOCK_VERSION: Long = 1L
+    public const val MAX_BYTES: Int = 1024 * 1024
+    public const val MAX_PACKAGES: Int = 4096
+    public const val MAX_PACKAGE_DEPENDENCIES: Int = 1024
 
     private val FIELDS = setOf("lockVersion", "root", "packages")
     private val ROOT_FIELDS = setOf("name", "version")
@@ -59,7 +59,7 @@ object Lockfiles {
 
     // 決まった形の書き出し。lockVersion・root（name・version）・packages（名前の順。各パッケージは name・version・source・sha256・dependencies の順）。
     // 同じ内容なら、必ず同じ文字列（UTF-8 にして同じバイト列）になる
-    fun write(lockfile: Lockfile): String = JsonWriter.write(
+    public fun write(lockfile: Lockfile): String = JsonWriter.write(
         JsonWriter.obj(
             "lockVersion" to JsonWriter.integer(LOCK_VERSION),
             "root" to JsonWriter.obj("name" to JsonWriter.string(lockfile.root.name), "version" to JsonWriter.string(lockfile.root.version)),
@@ -78,7 +78,7 @@ object Lockfiles {
     )
 
     // 読み取りと、ロックファイルの中だけで決まる検査（値の形・重複・参照・循環）。正規形・マニフェストとの整合は check で確かめる
-    fun parse(bytes: ByteArray): LockfileResult {
+    public fun parse(bytes: ByteArray): LockfileResult {
         val json = JsonParser.parse(bytes, MAX_BYTES)
         val root = json.value ?: return LockfileResult(null, json.diagnostics, false)
         val diagnostics = ProjectDiagnostics()
@@ -103,7 +103,7 @@ object Lockfiles {
             if (name != null && rootVersion != null) lockRoot = LockRoot(name.value, rootVersion.value)
         }
         val packages = ArrayList<LockedPackage>()
-        val positions = LinkedHashMap<String, Pair<Int, Int>>()
+        val positions = LinkedHashMap<String, FilePosition>()
         fields.array("packages")?.let { list ->
             if (list.elements.size > MAX_PACKAGES) diagnostics.add(ProjectDiagnosticCode.TOO_MANY_ENTRIES, list, "packages", MAX_PACKAGES.toString())
             for ((index, element) in list.elements.withIndex()) {
@@ -137,7 +137,7 @@ object Lockfiles {
                     diagnostics.add(ProjectDiagnosticCode.LOCK_DUPLICATE_PACKAGE, name, name.value)
                     continue
                 }
-                positions[name.value] = name.line to name.column
+                positions[name.value] = FilePosition(name.line, name.column)
                 if (packageVersion != null && source != null && sha256 != null) packages.add(LockedPackage(name.value, packageVersion.value, source.value, sha256.value, dependencies))
             }
         }
@@ -150,14 +150,14 @@ object Lockfiles {
             }
         }
         if (diagnostics.isEmpty) cycleMember(packages)?.let { diagnostics.add(ProjectDiagnosticCode.LOCK_DEPENDENCY_CYCLE, positions[it], it) }
-        val rootPosition = rootSection?.let { it.line to it.column } ?: (1 to 1)
+        val rootPosition = rootSection?.let { FilePosition(it.line, it.column) } ?: FilePosition(1, 1)
         if (!diagnostics.isEmpty || lockRoot == null) return LockfileResult(null, diagnostics.list, diagnostics.truncated, rootPosition, positions)
         return LockfileResult(Lockfile.of(lockRoot!!, packages), emptyList(), false, rootPosition, positions)
     }
 
     // 正規形（write の出力）と同じバイト列か、マニフェストと整合するか。どちらも parse が成功したロックファイルについて確かめる。
     // 正規形でなければ、最初に違う行を報告する
-    fun check(bytes: ByteArray, result: LockfileResult, manifest: Manifest): List<ProjectDiagnostic> {
+    public fun check(bytes: ByteArray, result: LockfileResult, manifest: Manifest): List<ProjectDiagnostic> {
         val lockfile = result.lockfile ?: return result.diagnostics
         val diagnostics = ProjectDiagnostics()
         val canonical = write(lockfile).toByteArray(Charsets.UTF_8)

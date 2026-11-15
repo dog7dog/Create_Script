@@ -1,7 +1,7 @@
 package com.creatrbypc.createanalytical.script.diagnostic
 
 // 診断コード。id は通信・翻訳キーに使う安定した識別子なので、一度決めたら変更・再利用しない
-enum class DiagnosticCode(val id: String) {
+public enum class DiagnosticCode(public val id: String) {
     LEX_SOURCE_TOO_LONG("CS_LEX_SOURCE_TOO_LONG"),
     LEX_INVALID_SURROGATE("CS_LEX_INVALID_SURROGATE"),
     LEX_FORBIDDEN_CONTROL_CHARACTER("CS_LEX_FORBIDDEN_CONTROL_CHARACTER"),

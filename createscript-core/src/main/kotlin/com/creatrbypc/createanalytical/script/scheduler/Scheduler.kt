@@ -1,11 +1,13 @@
 package com.creatrbypc.createanalytical.script.scheduler
 
+import com.creatrbypc.createanalytical.script.InternalCreateScriptApi
 import com.creatrbypc.createanalytical.script.vm.CsVm
 import com.creatrbypc.createanalytical.script.vm.VmState
 
 // 動力の段階と、1台あたりの1tickの実行命令数（SLOW 1 / MEDIUM 4 / FAST 128、NONE は一時停止。FAST は第3.10a-P段階で 16 から変更）。
 // Create の SpeedLevel（応力超過時は NONE）からの変換は Integration Adapter が行う
-enum class PowerLevel(val instructionsPerTick: Int) {
+@InternalCreateScriptApi
+public enum class PowerLevel(public val instructionsPerTick: Int) {
     NONE(0),
     SLOW(1),
     MEDIUM(4),
@@ -13,11 +15,13 @@ enum class PowerLevel(val instructionsPerTick: Int) {
 }
 
 // Phase 1 で Integration Adapter から受け取る、その tick の実行条件（VM の状態とは別に管理する）
-data class ExecutionCondition(val power: PowerLevel, val loaded: Boolean)
+@InternalCreateScriptApi
+public data class ExecutionCondition(val power: PowerLevel, val loaded: Boolean)
 
 // tick の結果。executed は実行した命令数、finished はこの tick で Scheduler から外した VM とその最終状態（登録順）。
 // collected は回収（GC）に使った作業の単位数、gcBudgetUsed はその合計（命令の予算とは別枠: 第3.9b段階の GC 対策）
-data class TickResult<K>(
+@InternalCreateScriptApi
+public data class TickResult<K>(
     val executed: Map<K, Int>,
     val finished: Map<K, VmState>,
     val budgetUsed: Int,
@@ -28,7 +32,8 @@ data class TickResult<K>(
 // 複数の VM を、サーバー全体で共有する予算の範囲でラウンドロビン方式で実行する。Minecraft に依存しない純粋な Kotlin。
 // K は VM を識別するキー（Integration 側ではディメンションと座標）。
 // 回収中の VM の回収（GC）は、命令とは別枠の、サーバー全体で共有する回収の予算（gcBudgetPerTick）と 1 台あたりの上限（gcBudgetPerVm）で進める
-class Scheduler<K : Any>(
+@InternalCreateScriptApi
+public class Scheduler<K : Any>(
     private val globalBudgetPerTick: Int,
     private val gcBudgetPerTick: Int = GC_BUDGET_PER_TICK,
     private val gcBudgetPerVm: Int = GC_BUDGET_PER_VM,
@@ -60,22 +65,22 @@ class Scheduler<K : Any>(
         require(gcBudgetPerTick > 0 && gcBudgetPerVm > 0) { "GC budgets must be positive: $gcBudgetPerTick, $gcBudgetPerVm" }
     }
 
-    val registeredKeys: Set<K> get() = entries.keys.toSet()
+    public val registeredKeys: Set<K> get() = entries.keys.toSet()
 
     // 登録・解除は次の tick の Phase 0 で反映する。同じ VM を別のキーで二重に登録することはできない（同一 tick の二重実行を防ぐ）
-    fun register(key: K, vm: CsVm) {
+    public fun register(key: K, vm: CsVm) {
         val registeredElsewhere = entries.any { (otherKey, entry) -> otherKey != key && entry.vm === vm } ||
             pendingChanges.any { it is Change.Register && it.key != key && it.vm === vm }
         require(!registeredElsewhere) { "VM is already registered under another key" }
         pendingChanges.add(Change.Register(key, vm))
     }
 
-    fun unregister(key: K) {
+    public fun unregister(key: K) {
         pendingChanges.add(Change.Unregister(key))
     }
 
     // サーバーの1tickにつき1回呼ぶ。conditionOf は Phase 1 で登録済みの各 VM について1回ずつ呼ばれる
-    fun tick(conditionOf: (K) -> ExecutionCondition): TickResult<K> {
+    public fun tick(conditionOf: (K) -> ExecutionCondition): TickResult<K> {
         check(!ticking) { "Scheduler.tick must not be called re-entrantly" }
         ticking = true
         try {
@@ -197,13 +202,13 @@ class Scheduler<K : Any>(
 
     private fun Entry.isEligible() = !registeredThisTick && condition.loaded && condition.power != PowerLevel.NONE
 
-    companion object {
+    public companion object {
         // 回収の予算（作業の単位。第3.9b段階の GC 対策の暫定値）。1 単位はおよそ 5 ns（開発機の計測）で、全体 16384 単位は 1 tick あたり約 0.1 ms。
         // 1 台あたり 4096 単位は、最大の回収（根 1152 + 取り出し 256 × 2 + プロパティ 4096 + リストの要素 4096 + SWEEP 257 + 1 = 10114 単位: 第3.10a段階）を、
         // その VM だけなら 3 tick で終える量。
         // 1回の訪問で進める量（GC_CHUNK）は、多数の VM が回収を待つときに順番を細かく回すための単位
-        const val GC_BUDGET_PER_TICK = 16_384
-        const val GC_BUDGET_PER_VM = 4_096
-        const val GC_CHUNK = 256
+        public const val GC_BUDGET_PER_TICK: Int = 16_384
+        public const val GC_BUDGET_PER_VM: Int = 4_096
+        public const val GC_CHUNK: Int = 256
     }
 }

@@ -1,5 +1,6 @@
 package com.creatrbypc.createanalytical.script.semantic
 
+import com.creatrbypc.createanalytical.script.InternalCreateScriptApi
 import com.creatrbypc.createanalytical.script.ast.Assignment
 import com.creatrbypc.createanalytical.script.ast.BinaryExpression
 import com.creatrbypc.createanalytical.script.ast.BinaryOperator
@@ -53,63 +54,64 @@ import java.util.IdentityHashMap
 
 // CreateScript の値の型。Unit は呼び出しの結果としてのみ現れ、値として使えない（A22）。代入・引数・戻り値での型どうしの暗黙の変換は無い
 // （数値の演算・大小比較の項だけは numericOperation の規則で広い方の型にそろえる: 第3.11a段階）
-sealed class ScriptType {
-    abstract val displayName: String
+@InternalCreateScriptApi
+public sealed class ScriptType {
+    public abstract val displayName: String
 
-    data object INT : ScriptType() {
-        override val displayName = "Int"
+    public data object INT : ScriptType() {
+        override val displayName: String = "Int"
     }
 
-    data object STRING : ScriptType() {
-        override val displayName = "String"
+    public data object STRING : ScriptType() {
+        override val displayName: String = "String"
     }
 
-    data object UNIT : ScriptType() {
-        override val displayName = "Unit"
+    public data object UNIT : ScriptType() {
+        override val displayName: String = "Unit"
     }
 
-    data object BOOLEAN : ScriptType() {
-        override val displayName = "Boolean"
+    public data object BOOLEAN : ScriptType() {
+        override val displayName: String = "Boolean"
     }
 
     // IEEE 754 の 32 ビット・64 ビットの浮動小数点数（第3.11a段階）
-    data object FLOAT : ScriptType() {
-        override val displayName = "Float"
+    public data object FLOAT : ScriptType() {
+        override val displayName: String = "Float"
     }
 
-    data object DOUBLE : ScriptType() {
-        override val displayName = "Double"
+    public data object DOUBLE : ScriptType() {
+        override val displayName: String = "Double"
     }
 
     // Vector（第3.11e段階）。1〜16 次元の Double のベクトルで、値は変更できない（演算は新しい Vector を作る）。List<Double> とは別の型で、
     // 互いに代入できず、== で比べられない。型名は予約しない（同じ名前のクラスがあればそちらを指す）
-    data object VECTOR : ScriptType() {
-        override val displayName = VECTOR_NAME
+    public data object VECTOR : ScriptType() {
+        override val displayName: String = VECTOR_NAME
     }
 
     // Matrix（第3.11e段階）。1〜8 行 × 1〜8 列の Double の行列で、値は変更できない。m[i] は行の Vector。型名は予約しない
-    data object MATRIX : ScriptType() {
-        override val displayName = MATRIX_NAME
+    public data object MATRIX : ScriptType() {
+        override val displayName: String = MATRIX_NAME
     }
 
     // クラス型（第3.9a段階）。同じクラス宣言どうしだけが同じ型（名前が同じでも別の宣言なら別の型）
-    class ClassType(val declaration: ClassDeclaration) : ScriptType() {
-        override val displayName get() = declaration.name
+    public class ClassType(public val declaration: ClassDeclaration) : ScriptType() {
+        override val displayName: String get() = declaration.name
 
-        override fun equals(other: Any?) = other is ClassType && other.declaration === declaration
+        override fun equals(other: Any?): Boolean = other is ClassType && other.declaration === declaration
 
-        override fun hashCode() = System.identityHashCode(declaration)
+        override fun hashCode(): Int = System.identityHashCode(declaration)
 
-        override fun toString() = "ClassType($displayName)"
+        override fun toString(): String = "ClassType($displayName)"
     }
 
     // リスト（第3.10a段階）。List<T> は読み取り専用（変更できない参照）、MutableList<T> は変更できる。同じリストを両方の型の参照が指すことがある。
     // 要素もリストにできる（第3.10b段階。可変性は段ごと）。深い入れ子でも再帰しないよう、名前は必要になったときに外側から順に組み立て、
     // 等価は外側から順にたどって判定し、ハッシュは作るときに 1 回だけ（内側の値から）計算する
-    class ListType(val element: ScriptType, val mutable: Boolean) : ScriptType() {
+    public class ListType(public val element: ScriptType, public val mutable: Boolean) : ScriptType() {
         private val hash = (element.hashCode() * 31 + if (mutable) 1 else 0) * 31 + 7
 
-        override fun hashCode() = hash
+        override fun hashCode(): Int = hash
 
         override fun equals(other: Any?): Boolean {
             var left: ListType = this
@@ -138,34 +140,34 @@ sealed class ScriptType {
             text.toString()
         }
 
-        override fun toString() = displayName
+        override fun toString(): String = displayName
     }
 
     // 関数の型（第9.3段階）。ラムダ・関数の参照を入れた val だけが持つ（値としては保存・受け渡しできない: インライン展開）。
     // 結果が Unit なら、ラムダの最後の式の値は捨てる
-    data class FunctionType(val parameters: List<ScriptType>, val result: ScriptType) : ScriptType() {
+    internal data class FunctionType(val parameters: List<ScriptType>, val result: ScriptType) : ScriptType() {
         override val displayName: String get() = parameters.joinToString(", ", "(", ")") { it.displayName } + " -> " + result.displayName
 
         override fun toString() = displayName
     }
 
-    companion object {
-        const val LIST = "List"
-        const val MUTABLE_LIST = "MutableList"
-        const val VECTOR_NAME = "Vector"
-        const val MATRIX_NAME = "Matrix"
+    public companion object {
+        public const val LIST: String = "List"
+        public const val MUTABLE_LIST: String = "MutableList"
+        public const val VECTOR_NAME: String = "Vector"
+        public const val MATRIX_NAME: String = "Matrix"
 
         // Vector・Matrix（第3.11e段階）。比較できず、読み出し専用の添字・メンバーだけを持つ
-        fun isLinearAlgebra(type: ScriptType) = type == VECTOR || type == MATRIX
+        public fun isLinearAlgebra(type: ScriptType): Boolean = type == VECTOR || type == MATRIX
 
         // 組み込みの型の名前（クラス名には使えない）。入れ子の object を参照すると、クラスの初期化が循環するため文字列で持つ
-        val BUILTIN_NAMES = setOf("Int", "String", "Unit", "Boolean", "Float", "Double", LIST, MUTABLE_LIST)
+        public val BUILTIN_NAMES: Set<String> = setOf("Int", "String", "Unit", "Boolean", "Float", "Double", LIST, MUTABLE_LIST)
 
-        fun isNumeric(type: ScriptType) = type == INT || type == FLOAT || type == DOUBLE
+        public fun isNumeric(type: ScriptType): Boolean = type == INT || type == FLOAT || type == DOUBLE
 
         // 数値の演算（+ - * / %）・大小比較の項をそろえる型（第3.11a段階。Kotlin と同じ）。同じ型ならその型、Double を含めば Double、
         // それ以外（Int と Float）は Float。数値でない型を含めば null。Int を Float にそろえると 2^24 を超える値は丸められる（Kotlin と同じ）
-        fun numericOperation(left: ScriptType, right: ScriptType): ScriptType? = when {
+        public fun numericOperation(left: ScriptType, right: ScriptType): ScriptType? = when {
             !isNumeric(left) || !isNumeric(right) -> null
             left == right -> left
             left == DOUBLE || right == DOUBLE -> DOUBLE
@@ -175,14 +177,16 @@ sealed class ScriptType {
 }
 
 // 数値の変換（第3.11a段階）。x.toInt()・x.toFloat()・x.toDouble() は Int・Float・Double のメソッドで、結果は変換先の型
-object NumericConversions {
-    val TARGETS = mapOf("toInt" to ScriptType.INT, "toFloat" to ScriptType.FLOAT, "toDouble" to ScriptType.DOUBLE)
+@InternalCreateScriptApi
+public object NumericConversions {
+    public val TARGETS: Map<String, ScriptType> = mapOf("toInt" to ScriptType.INT, "toFloat" to ScriptType.FLOAT, "toDouble" to ScriptType.DOUBLE)
 }
 
 // 数学関数（第3.11b段階。Kotlin の kotlin.math と同じ結果）。名前だけで呼ぶもの（abs(x) など）と、数値のメソッド（x.pow(y) など）。
 // 名前は予約しない（変数・関数・メソッド・クラスに同じ名前を使え、ユーザー定義の関数・メソッド・クラスがあればそちらを呼ぶ）。
 // floating は Float・Double だけに使えるか（それ以外は Int も使える）。引数の数値の型は暗黙に変換しない
-enum class MathOperation(val arity: Int, val floating: Boolean) {
+@InternalCreateScriptApi
+public enum class MathOperation(public val arity: Int, public val floating: Boolean) {
     ABS(1, false),
     MIN(2, false),
     MAX(2, false),
@@ -223,8 +227,8 @@ enum class MathOperation(val arity: Int, val floating: Boolean) {
     IS_CLOSE(3, true),
     ;
 
-    companion object {
-        val FUNCTIONS = mapOf(
+    public companion object {
+        public val FUNCTIONS: Map<String, MathOperation> = mapOf(
             "abs" to ABS, "min" to MIN, "max" to MAX, "sqrt" to SQRT, "floor" to FLOOR, "ceil" to CEIL, "round" to ROUND,
             "sin" to SIN, "cos" to COS, "tan" to TAN, "asin" to ASIN, "acos" to ACOS, "atan" to ATAN, "atan2" to ATAN2,
             "sinh" to SINH, "cosh" to COSH, "tanh" to TANH, "ln" to LN, "log10" to LOG10, "exp" to EXP, "hypot" to HYPOT, "sign" to SIGN,
@@ -232,9 +236,9 @@ enum class MathOperation(val arity: Int, val floating: Boolean) {
         )
 
         // isClose の tolerance を省いたときの値（第3.11e段階）
-        const val DEFAULT_DOUBLE_TOLERANCE = 1e-9
-        const val DEFAULT_FLOAT_TOLERANCE = 1e-5f
-        val METHODS = mapOf(
+        public const val DEFAULT_DOUBLE_TOLERANCE: Double = 1e-9
+        public const val DEFAULT_FLOAT_TOLERANCE: Float = 1e-5f
+        public val METHODS: Map<String, MathOperation> = mapOf(
             "pow" to POW, "roundToInt" to ROUND_TO_INT, "coerceIn" to COERCE_IN, "isNaN" to IS_NAN, "isInfinite" to IS_INFINITE,
         )
     }
@@ -242,24 +246,26 @@ enum class MathOperation(val arity: Int, val floating: Boolean) {
 
 // 乱数（第3.11e段階）。random()・random(min, max)・randomInt(min, max)・randomSeed(seed) で、名前だけで呼ぶ。範囲は max を含まない。
 // 名前は予約しない（同じ名前のユーザー定義の関数・メソッド・クラスがあればそちらを呼ぶ）。引数の数値の型は暗黙に変換しない
-enum class RandomOperation {
+@InternalCreateScriptApi
+public enum class RandomOperation {
     RANDOM,
     RANDOM_RANGE,
     RANDOM_INT,
     RANDOM_SEED,
     ;
 
-    companion object {
-        const val RANDOM_NAME = "random"
-        const val RANDOM_INT_NAME = "randomInt"
-        const val RANDOM_SEED_NAME = "randomSeed"
-        val NAMES = setOf(RANDOM_NAME, RANDOM_INT_NAME, RANDOM_SEED_NAME)
+    public companion object {
+        public const val RANDOM_NAME: String = "random"
+        public const val RANDOM_INT_NAME: String = "randomInt"
+        public const val RANDOM_SEED_NAME: String = "randomSeed"
+        public val NAMES: Set<String> = setOf(RANDOM_NAME, RANDOM_INT_NAME, RANDOM_SEED_NAME)
     }
 }
 
 // Vector・Matrix の演算（第3.11e段階）。名前だけで呼ぶ関数（vector・dot・length・normalize・matrix・transpose・matmul。名前は予約しない）と、
 // 演算子（Vector は + - * / と単項の -、Matrix は + - *）、m.columnCount。スカラーは Double だけ（Int・Float は暗黙に変換しない）
-enum class LinalgOperation {
+@InternalCreateScriptApi
+public enum class LinalgOperation {
     VECTOR_OF,
     VECTOR_OF_LIST,
     ADD,
@@ -282,131 +288,141 @@ enum class LinalgOperation {
     COLUMN_COUNT,
     ;
 
-    companion object {
-        const val VECTOR = "vector"
-        const val DOT_NAME = "dot"
-        const val LENGTH_NAME = "length"
-        const val NORMALIZE_NAME = "normalize"
-        const val MATRIX = "matrix"
-        const val TRANSPOSE_NAME = "transpose"
-        const val MATMUL_NAME = "matmul"
-        val FUNCTIONS = setOf(VECTOR, DOT_NAME, LENGTH_NAME, NORMALIZE_NAME, MATRIX, TRANSPOSE_NAME, MATMUL_NAME)
+    public companion object {
+        public const val VECTOR: String = "vector"
+        public const val DOT_NAME: String = "dot"
+        public const val LENGTH_NAME: String = "length"
+        public const val NORMALIZE_NAME: String = "normalize"
+        public const val MATRIX: String = "matrix"
+        public const val TRANSPOSE_NAME: String = "transpose"
+        public const val MATMUL_NAME: String = "matmul"
+        public val FUNCTIONS: Set<String> = setOf(VECTOR, DOT_NAME, LENGTH_NAME, NORMALIZE_NAME, MATRIX, TRANSPOSE_NAME, MATMUL_NAME)
 
         // m.rowCount・m.columnCount
-        const val ROW_COUNT = "rowCount"
-        const val COLUMN_COUNT_NAME = "columnCount"
+        public const val ROW_COUNT: String = "rowCount"
+        public const val COLUMN_COUNT_NAME: String = "columnCount"
 
         // vector(x1, …, xn) の要素の数・matrix(row1, …, rowr) の行の数の上限（VM の VmLimits.MAX_VECTOR_SIZE・MAX_MATRIX_SIZE と同じ値）
-        const val MAX_VECTOR_SIZE = 16
-        const val MAX_MATRIX_SIZE = 8
+        public const val MAX_VECTOR_SIZE: Int = 16
+        public const val MAX_MATRIX_SIZE: Int = 8
     }
 }
 
 // 数学の定数（第3.11c段階。Kotlin の kotlin.math.PI・E と同じ Double）。名前は予約しない（同じ名前の変数・引数・プロパティがあればそちらを参照する）。
 // 代入・呼び出しはできない
-object MathConstants {
-    val VALUES = mapOf("PI" to kotlin.math.PI, "E" to kotlin.math.E)
+@InternalCreateScriptApi
+public object MathConstants {
+    public val VALUES: Map<String, Double> = mapOf("PI" to kotlin.math.PI, "E" to kotlin.math.E)
 }
 
 // 数学関数の呼び出し（第3.11b段階）。type は計算する数値の型（最初の引数・受け手の型）
-data class MathCall(val operation: MathOperation, val type: ScriptType)
+@InternalCreateScriptApi
+public data class MathCall(val operation: MathOperation, val type: ScriptType)
 
 // リストのメンバーの操作（第3.10a段階。要素の読み書きは IndexExpression）
-enum class ListOperation { SIZE, ADD, REMOVE_AT, CLEAR }
+@InternalCreateScriptApi
+public enum class ListOperation { SIZE, ADD, REMOVE_AT, CLEAR }
 
 // リストの関数（第9.0段階）。where（条件に合う要素）・map（変換）・group（キーごとのグループ。最初に現れた順）・each（要素ごとに実行）・average（平均）
-enum class CollectionOperation(val methodName: String) {
+@InternalCreateScriptApi
+public enum class CollectionOperation(internal val methodName: String) {
     WHERE("where"), MAP("map"), GROUP("group"), EACH("each"), AVERAGE("average");
 
-    companion object {
-        val BY_NAME = entries.associateBy { it.methodName }
+    internal companion object {
+        internal val BY_NAME = entries.associateBy { it.methodName }
     }
 }
 
 // その場で展開する関数（第9.0・9.3段階）。Lambda はラムダの本体を引数の変数（parameters）とともに展開し、Function はユーザー定義関数を CALL で呼ぶ。
 // result は結果の型で、UNIT なら最後の式の値を捨てる
-sealed interface InlineFunction {
-    val result: ScriptType
+@InternalCreateScriptApi
+public sealed interface InlineFunction {
+    public val result: ScriptType
 
-    class Lambda(val expression: LambdaExpression, val parameters: List<VariableSymbol>, override val result: ScriptType) : InlineFunction
+    public class Lambda(internal val expression: LambdaExpression, internal val parameters: List<VariableSymbol>, override val result: ScriptType) : InlineFunction
 
-    class Function(val declaration: FunctionDeclaration, override val result: ScriptType) : InlineFunction
+    public class Function(internal val declaration: FunctionDeclaration, override val result: ScriptType) : InlineFunction
 }
 
 // リストの関数の呼び出し（第9.0段階）。element は受け手の要素の型、function は where・map・group・each の関数（average は null）、
 // key は group のキーの型（それ以外は null）
-class CollectionCall(val operation: CollectionOperation, val receiver: Expression, val element: ScriptType, val function: InlineFunction?, val key: ScriptType? = null)
+@InternalCreateScriptApi
+public class CollectionCall(internal val operation: CollectionOperation, internal val receiver: Expression, internal val element: ScriptType, internal val function: InlineFunction?, internal val key: ScriptType? = null)
 
 // Stage 3.5 の組み込み関数。変数名として再宣言できない（D20）
-object BuiltinFunctions {
-    const val PRINTLN = "println"
-    const val WAIT_TICKS = "waitTicks"
+@InternalCreateScriptApi
+public object BuiltinFunctions {
+    public const val PRINTLN: String = "println"
+    public const val WAIT_TICKS: String = "waitTicks"
 
     // リストの生成（第3.10a段階）
-    const val LIST_OF = "listOf"
-    const val MUTABLE_LIST_OF = "mutableListOf"
-    val NAMES = setOf(PRINTLN, WAIT_TICKS, LIST_OF, MUTABLE_LIST_OF)
+    public const val LIST_OF: String = "listOf"
+    public const val MUTABLE_LIST_OF: String = "mutableListOf"
+    public val NAMES: Set<String> = setOf(PRINTLN, WAIT_TICKS, LIST_OF, MUTABLE_LIST_OF)
 }
 
 // type が null の変数は、宣言にエラーがあり型を決められなかったもの（後続の誤診断を防ぐため、型検査の対象外にする）
-class VariableSymbol(val name: String, val type: ScriptType?, val isMutable: Boolean, val declarationPosition: SourcePosition)
+@InternalCreateScriptApi
+public class VariableSymbol(public val name: String, public val type: ScriptType?, public val isMutable: Boolean, public val declarationPosition: SourcePosition)
 
 // 意味解析の結果。AST ノードは同じ内容でも別ノードとして扱うため、すべて同一性（identity）で引く
-class AnalyzedProgram(
-    val program: Program,
+@InternalCreateScriptApi
+public class AnalyzedProgram(
+    public val program: Program,
     // 型が決まった式の型
-    val expressionTypes: Map<Expression, ScriptType>,
+    public val expressionTypes: Map<Expression, ScriptType>,
     // 整数定数の値。-2147483648 のように「符号 + 整数リテラル」を1つの定数にまとめたものは UnaryExpression に記録する
-    val intConstants: Map<Expression, Int>,
-    val references: Map<NameReference, VariableSymbol>,
-    val declarations: Map<VariableDeclaration, VariableSymbol>,
+    public val intConstants: Map<Expression, Int>,
+    public val references: Map<NameReference, VariableSymbol>,
+    public val declarations: Map<VariableDeclaration, VariableSymbol>,
     // for のループ変数（第3.8b段階）。宣言にエラーがあった for は含まない
-    val loopVariables: Map<ForStatement, VariableSymbol>,
+    public val loopVariables: Map<ForStatement, VariableSymbol>,
     // ユーザー定義関数・メソッド（第3.9b段階）の呼び出しと、呼び出す関数（第3.8c段階）
-    val calls: Map<CallExpression, FunctionDeclaration>,
+    public val calls: Map<CallExpression, FunctionDeclaration>,
     // 呼び出しフレームを作る手続き（第3.9b段階）: 関数（定義の順）と、クラスごと（宣言の順）のコンストラクタ（プロパティのあるクラスだけ）・
     // メソッド（定義の順）。この順の番号が CALL の operand になる
-    val routines: List<CallableDeclaration>,
+    public val routines: List<CallableDeclaration>,
     // 手続きごとの、本体・初期化式から呼ぶ手続き（呼び出しの順。重複を含む）。再帰（第3.8e段階）があれば循環する
-    val callees: Map<CallableDeclaration, List<CallableDeclaration>>,
+    public val callees: Map<CallableDeclaration, List<CallableDeclaration>>,
     // 関数・メソッドごとの引数（宣言の順。ローカル変数の先頭に入る。メソッドは this の後）と戻り値の型（第3.8d段階）
-    val parameters: Map<FunctionDeclaration, List<VariableSymbol>>,
-    val returnTypes: Map<FunctionDeclaration, ScriptType>,
+    public val parameters: Map<FunctionDeclaration, List<VariableSymbol>>,
+    public val returnTypes: Map<FunctionDeclaration, ScriptType>,
     // インスタンスの生成（クラス名の呼び出し）と、生成するクラス（第3.9a段階）
-    val constructions: Map<CallExpression, ClassDeclaration>,
+    public val constructions: Map<CallExpression, ClassDeclaration>,
     // プロパティの読み書き（第3.9b段階。暗黙の this の NameReference と MemberAccessExpression）と、プロパティの番号（宣言の順）
-    val propertyAccesses: Map<Expression, Int>,
+    public val propertyAccesses: Map<Expression, Int>,
     // メソッドと、それを定義したクラス（第3.9b段階）
-    val owners: Map<FunctionDeclaration, ClassDeclaration>,
+    public val owners: Map<FunctionDeclaration, ClassDeclaration>,
     // プロパティの型（第3.9b段階。型の注釈、または初期化式から推論した型）
-    val propertyTypes: Map<VariableDeclaration, ScriptType>,
+    public val propertyTypes: Map<VariableDeclaration, ScriptType>,
     // リストの生成（listOf / mutableListOf の呼び出し）と作るリストの型、リストのメンバーの操作（size の読み取り・add などの呼び出し: 第3.10a段階）
-    val listCreations: Map<CallExpression, ScriptType.ListType>,
-    val listOperations: Map<Expression, ListOperation>,
+    public val listCreations: Map<CallExpression, ScriptType.ListType>,
+    public val listOperations: Map<Expression, ListOperation>,
     // 数値の演算（単項の - +・+ - * / %）・大小比較と、その計算を行う型（第3.11a段階。項の型がこれと違えば Compiler が変換を挟む）
-    val numericOperations: Map<Expression, ScriptType>,
+    public val numericOperations: Map<Expression, ScriptType>,
     // 数値の変換（x.toDouble() など）の呼び出しと、変換先の型（第3.11a段階。変換元は受け手の式の型）
-    val conversions: Map<CallExpression, ScriptType>,
+    public val conversions: Map<CallExpression, ScriptType>,
     // 数学関数の呼び出し（第3.11b段階）
-    val mathCalls: Map<CallExpression, MathCall>,
+    public val mathCalls: Map<CallExpression, MathCall>,
     // 数学の定数の参照と、その値（第3.11c段階）
-    val mathConstants: Map<NameReference, Double>,
+    public val mathConstants: Map<NameReference, Double>,
     // 乱数の呼び出し（第3.11e段階）
-    val randomCalls: Map<CallExpression, RandomOperation>,
+    public val randomCalls: Map<CallExpression, RandomOperation>,
     // Vector の演算（第3.11e段階。関数の呼び出し・演算子の式）
-    val linalgOperations: Map<Expression, LinalgOperation>,
+    public val linalgOperations: Map<Expression, LinalgOperation>,
     // リストの関数の呼び出し（第9.0段階）
-    val collectionCalls: Map<CallExpression, CollectionCall> = emptyMap(),
+    internal val collectionCalls: Map<CallExpression, CollectionCall> = emptyMap(),
     // 関数の値の呼び出し f(…)（第9.3段階）と、展開する関数
-    val inlineCalls: Map<CallExpression, InlineFunction> = emptyMap(),
+    internal val inlineCalls: Map<CallExpression, InlineFunction> = emptyMap(),
     // パイプライン（第9.1段階）と、それを書き換えた呼び出し
-    val pipeCalls: Map<PipeExpression, CallExpression> = emptyMap(),
+    internal val pipeCalls: Map<PipeExpression, CallExpression> = emptyMap(),
     // 関数の値の宣言（第9.3段階。変数の番号を使わず、命令を出さない）
-    val functionValueDeclarations: Set<VariableDeclaration> = emptySet(),
+    internal val functionValueDeclarations: Set<VariableDeclaration> = emptySet(),
 )
 
 // program はエラーが無いときだけ返す（警告だけなら成功）。診断は Lexer・Parser の分を含めて最大16件
-data class SemanticResult(
+@InternalCreateScriptApi
+public data class SemanticResult(
     val program: AnalyzedProgram?,
     val diagnostics: List<Diagnostic>,
     val diagnosticsTruncated: Boolean,
@@ -415,7 +431,8 @@ data class SemanticResult(
 
 // CreateScript の意味解析器。Minecraft に依存しない純粋な Kotlin で、1回の analyze ごとに新しいインスタンスを使う
 // maxPropertyTypeChain は、型の注釈の無いプロパティの型を決めるために、別のプロパティの初期化式を先に解析する入れ子の上限（第8.0.1段階。null なら上限なし）
-class SemanticAnalyzer private constructor(private val diagnostics: DiagnosticCollector, private val maxPropertyTypeChain: Int?) {
+@InternalCreateScriptApi
+public class SemanticAnalyzer private constructor(private val diagnostics: DiagnosticCollector, private val maxPropertyTypeChain: Int?) {
     // スコープの並び（先頭がプログラム全体、末尾がいま解析しているブロック: 第3.7c段階）。名前は内側から外側へ探す。
     // 同じスコープ内の重複宣言はエラー、内側での同名の宣言（シャドーイング）は可（D4）
     private val scopes = ArrayList<HashMap<String, VariableSymbol>>().also { it.add(HashMap()) }
@@ -532,7 +549,7 @@ class SemanticAnalyzer private constructor(private val diagnostics: DiagnosticCo
     // 初期化式を別の初期化式の途中で解析するときに、解析中の文脈を退避する
     private class Context(val owner: ClassDeclaration?, val initializing: Int?, val routine: CallableDeclaration?, val function: FunctionDeclaration?, val conditionalDepth: Int)
 
-    companion object {
+    public companion object {
         private const val MAX_NEGATED_LITERAL = 2_147_483_648L
 
         // checkCalls が呼び出しの関係をたどって正確な変数を求める報告の数（表示されうる診断は、件数の上限 16 と、それに置き換えられうる警告 16 の分まで）
@@ -545,10 +562,10 @@ class SemanticAnalyzer private constructor(private val diagnostics: DiagnosticCo
         private const val IMPLICIT_PARAMETER = "it"
         private val LIST_METHODS = mapOf("add" to ListOperation.ADD, "removeAt" to ListOperation.REMOVE_AT, "clear" to ListOperation.CLEAR)
 
-        fun analyze(parseResult: ParseResult): SemanticResult = analyze(parseResult, null)
+        public fun analyze(parseResult: ParseResult): SemanticResult = analyze(parseResult, null)
 
         // 型の注釈の無いプロパティの連鎖の上限を指定する（第8.0.1段階。CompileOptions.maxPropertyTypeChain から使う）
-        fun analyze(parseResult: ParseResult, maxPropertyTypeChain: Int?): SemanticResult = analyze(parseResult, maxPropertyTypeChain, emptyMap())
+        public fun analyze(parseResult: ParseResult, maxPropertyTypeChain: Int?): SemanticResult = analyze(parseResult, maxPropertyTypeChain, emptyMap())
 
         // ModuleCompiler（モジュールの ID を使うコンパイル）から。moduleAliases は userFunction の読み替え
         internal fun analyze(parseResult: ParseResult, maxPropertyTypeChain: Int?, moduleAliases: Map<String?, Map<String, String>>): SemanticResult {

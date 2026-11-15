@@ -2,7 +2,7 @@ package com.creatrbypc.createanalytical.script.vm
 
 // CS_VM の実行途中の状態（D14）。命令と命令の間の状態だけを表す。Minecraft に依存しないデータで、保存形式への変換は Integration 側が行う。
 // state は RUNNING / WAITING だけ（HALTED / ERROR の VM は Scheduler から外れるため保存しない）
-data class VmSnapshot(
+public data class VmSnapshot(
     val pc: Int,
     val state: VmState,
     val waitRemaining: Int,
@@ -24,20 +24,20 @@ data class VmSnapshot(
 // オブジェクト1つ分の実体。classId は CompiledProgram.classes の番号。fields はプロパティの値（第3.9b段階。宣言の順で、
 // null は未初期化。初期化中のオブジェクトだけが持つ）。list はリスト（第3.10a段階。リストは classId が LIST_CLASS でプロパティが無い。
 // Vector は VECTOR_CLASS、Matrix は MATRIX_CLASS: 第3.11e段階）
-data class ObjectSnapshot(val id: Int, val classId: Int, val fields: List<Value?> = emptyList(), val list: ListSnapshot? = null) {
-    companion object {
-        const val LIST_CLASS = -1
+public data class ObjectSnapshot(val id: Int, val classId: Int, val fields: List<Value?> = emptyList(), val list: ListSnapshot? = null) {
+    public companion object {
+        public const val LIST_CLASS: Int = -1
 
         // Vector（第3.11e段階）。変更できない Double のリスト（要素は 1〜16 個）
-        const val VECTOR_CLASS = -2
+        public const val VECTOR_CLASS: Int = -2
 
         // Matrix（第3.11e段階）。変更できない、行の Vector（1〜8 個。長さが同じで 1〜8）のリスト
-        const val MATRIX_CLASS = -3
+        public const val MATRIX_CLASS: Int = -3
     }
 }
 
 // リストの中身（第3.10a段階）。element は要素の型、mutable は変更できるリスト（mutableListOf）か、elements は要素（先頭から）
-data class ListSnapshot(val element: SnapshotVerifier.SlotType, val mutable: Boolean, val elements: List<Value>)
+public data class ListSnapshot(val element: SnapshotVerifier.SlotType, val mutable: Boolean, val elements: List<Value>)
 
 // 呼び出しフレーム1つ分。function は CompiledProgram.functions の番号、returnPc は戻り先（CALL の次の命令）、locals はローカル変数（null は未初期化）
-data class CallFrameSnapshot(val function: Int, val returnPc: Int, val locals: List<Value?>)
+public data class CallFrameSnapshot(val function: Int, val returnPc: Int, val locals: List<Value?>)

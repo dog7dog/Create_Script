@@ -1,5 +1,6 @@
 package com.creatrbypc.createanalytical.script.module
 
+import com.creatrbypc.createanalytical.script.InternalCreateScriptApi
 import com.creatrbypc.createanalytical.script.ast.ImportDeclaration
 import com.creatrbypc.createanalytical.script.ast.Program
 import com.creatrbypc.createanalytical.script.compiler.CompileOptions
@@ -22,42 +23,43 @@ import com.creatrbypc.createanalytical.script.vm.CompiledProgram
 import com.creatrbypc.createanalytical.script.vm.ProgramFingerprint
 
 // ローカル import（第8.0段階）。Core はファイル・ネットワークを読まない。モジュールのソースは、ホスト（CLI など）が ModuleResolver で渡す
-object ModuleLimits {
+@InternalCreateScriptApi
+public object ModuleLimits {
     // エントリーのファイルを除くモジュールの数の既定（埋め込み先）。独立版は CompileOptions.STANDALONE で広げる（第8.0.1段階）。
     // 1 つのソースの上限（LexerLimits）はファイルごとに、命令数などの上限（VmLimits）はプログラム全体に適用する
-    const val MAX_MODULES = 16
+    public const val MAX_MODULES: Int = 16
 }
 
 // ホストがモジュールを探した結果。Found の source は、ホストが確かめた（プロジェクトのルートの中の、読める）ファイルの内容
-sealed interface ModuleLookup {
-    data class Found(val source: String) : ModuleLookup
+public sealed interface ModuleLookup {
+    public data class Found(val source: String) : ModuleLookup
 
-    data object NotFound : ModuleLookup
+    public data object NotFound : ModuleLookup
 
     // 同じ名前として扱うファイルが複数ある（大文字・小文字だけが違うものなど）
-    data object Ambiguous : ModuleLookup
+    public data object Ambiguous : ModuleLookup
 
     // プロジェクトのルートの外を指す（シンボリックリンクなど）
-    data object OutsideProject : ModuleLookup
+    public data object OutsideProject : ModuleLookup
 
     // 読めない。reason は診断に載せる短い説明（64 単位まで）
-    data class Unreadable(val reason: String) : ModuleLookup
+    public data class Unreadable(val reason: String) : ModuleLookup
 }
 
 // モジュール名（識別子 1 つ。Parser が確かめたもの）からソースを探す。同じ名前については 1 回だけ呼ぶ
-fun interface ModuleResolver {
-    fun resolve(name: String): ModuleLookup
+public fun interface ModuleResolver {
+    public fun resolve(name: String): ModuleLookup
 }
 
 // import できる範囲（S8.2 Phase 4）。importer は import を書いたモジュール（エントリーのファイルは null）、module は import するモジュール名。
 // Core は、各 import の宣言について、resolver を呼ぶ前に確かめる（同じモジュールを別のファイルから import するときも、宣言ごとに確かめる）。
 // 許されなければ CS_MODULE_NOT_VISIBLE。ModuleResolver とは別のインターフェースにして、ModuleResolver の形を変えない
-fun interface ModuleAccess {
-    fun allows(importer: String?, module: String): Boolean
+public fun interface ModuleAccess {
+    public fun allows(importer: String?, module: String): Boolean
 
-    companion object {
+    public companion object {
         // すべてを許す（ModuleAccess を渡さない compile と同じ）
-        val ALL: ModuleAccess = ModuleAccess { _, _ -> true }
+        public val ALL: ModuleAccess = ModuleAccess { _, _ -> true }
     }
 }
 
@@ -66,44 +68,44 @@ fun interface ModuleAccess {
 // 別のパッケージの同じ名前のモジュールに別の ID を付ければ、両方を 1 つのプログラムに入れられる（関数の名前は "ID.関数名"）。
 // 同じ import 元と名前については 1 回だけ呼ぶ。import できない（公開されていない・推移的な依存）なら NotVisible（CS_MODULE_NOT_VISIBLE）。
 // 循環は ID で確かめる（resolver に問い合わせた後）。エントリーのファイル自身を指す名前には、ID が entryModule の Found を返すと CS_MODULE_CYCLE になる
-fun interface ScopedModuleResolver {
-    fun resolve(importer: String?, name: String): ScopedModuleLookup
+public fun interface ScopedModuleResolver {
+    public fun resolve(importer: String?, name: String): ScopedModuleLookup
 }
 
-sealed interface ScopedModuleLookup {
+public sealed interface ScopedModuleLookup {
     // id は 1〜128 文字の英数字と _ / : @ + -（"." と空白は使えない。"." は関数の名前の区切りのため）。先頭は英数字か _
-    data class Found(val id: String, val source: String) : ScopedModuleLookup {
+    public data class Found(val id: String, val source: String) : ScopedModuleLookup {
         init {
             require(isValidId(id)) { "invalid module id: $id" }
         }
     }
 
     // 見つからない・曖昧・読めないなど（ModuleLookup.Found 以外）
-    data class Failed(val lookup: ModuleLookup) : ScopedModuleLookup {
+    public data class Failed(val lookup: ModuleLookup) : ScopedModuleLookup {
         init {
             require(lookup !is ModuleLookup.Found) { "Failed needs a failure, not Found" }
         }
     }
 
-    data object NotVisible : ScopedModuleLookup
+    public data object NotVisible : ScopedModuleLookup
 
-    companion object {
+    public companion object {
         private val ID = Regex("[A-Za-z0-9_][A-Za-z0-9_/:@+-]{0,127}")
 
-        fun isValidId(id: String): Boolean = ID.matches(id)
+        public fun isValidId(id: String): Boolean = ID.matches(id)
     }
 }
 
 // module はファイルのモジュール名（エントリーのファイルは null。compileScoped ではモジュールの ID）。diagnostic の位置は、そのファイルの中の位置
-data class ModuleDiagnostic(val module: String?, val diagnostic: Diagnostic)
+public data class ModuleDiagnostic(val module: String?, val diagnostic: Diagnostic)
 
 // program はエラーが無いときだけ返す。modules は解決したモジュール（プログラムに入れた順: import されるものが先）
-class ModuleCompileResult internal constructor(
-    val program: CompiledProgram?,
-    val diagnostics: List<ModuleDiagnostic>,
-    val diagnosticsTruncated: Boolean,
-    val hasErrors: Boolean,
-    val modules: List<String>,
+public class ModuleCompileResult internal constructor(
+    public val program: CompiledProgram?,
+    public val diagnostics: List<ModuleDiagnostic>,
+    public val diagnosticsTruncated: Boolean,
+    public val hasErrors: Boolean,
+    public val modules: List<String>,
     private val files: List<SourceFile>,
     private val sources: SourceSet,
 ) {
@@ -113,13 +115,13 @@ class ModuleCompileResult internal constructor(
     // エントリーと読めたすべてのモジュールのソースのハッシュ（ProgramFingerprint.ofModules。第8.0.1段階）。保存した実行状態を復元するホストは、
     // エントリーのソースのハッシュの代わりにこれを比べる（import の無いプログラムでは ProgramFingerprint.ofSource(source) と同じ値）。
     // プログラムのハッシュ（ProgramFingerprint.ofProgram）と合わせて比べれば、モジュールだけを変えたプログラムの状態も復元しない
-    val sourceFingerprint: ByteArray get() = ProgramFingerprint.ofModules(sources.entry, sources.modules)
+    public val sourceFingerprint: ByteArray get() = ProgramFingerprint.ofModules(sources.entry, sources.modules)
 
     // ファイルの名前と、プログラム全体での位置（offset）の始まり
     internal class SourceFile(val module: String?, val base: Int)
 
     // プログラムの位置（実行時エラー ScriptRun.error など）を、どのファイルのどの位置かに直す。行・列はもともとファイルの中の値
-    fun locate(diagnostic: Diagnostic): ModuleDiagnostic = locate(files, diagnostic)
+    public fun locate(diagnostic: Diagnostic): ModuleDiagnostic = locate(files, diagnostic)
 
     internal companion object {
         // files は base の昇順。base が offset 以下の最後のファイル（二分探索。ファイルが多くても診断 1 つあたりの手間は小さい）

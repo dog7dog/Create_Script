@@ -1,5 +1,6 @@
 package com.creatrbypc.createanalytical.project.registry
 
+import com.creatrbypc.createanalytical.project.InternalCreateScriptProjectApi
 import com.creatrbypc.createanalytical.project.FieldReader
 import com.creatrbypc.createanalytical.project.JsonArray
 import com.creatrbypc.createanalytical.project.JsonObject
@@ -13,10 +14,11 @@ import com.creatrbypc.createanalytical.project.ProjectDiagnostics
 // CreateScript-Registry のリポジトリのファイル（registry.json・reserved-names.json・packages/<頭文字>/<名前>.json）の読み取り・検査・書き出し（S8.3 Phase 1）。
 // ファイルの読み書きはしない（バイト列を受け取る）。どのファイルも、write の出力（2 字下げの決まった形）と同じバイト列であることを求める
 // （PR の差分に、審査で見落としやすい書き方の違いを入れないため）
-object RegistryFiles {
-    const val REGISTRY_VERSION = 1L
-    const val CONFIG_FILE = "registry.json"
-    const val RESERVED_FILE = "reserved-names.json"
+@InternalCreateScriptProjectApi
+public object RegistryFiles {
+    internal const val REGISTRY_VERSION = 1L
+    public const val CONFIG_FILE: String = "registry.json"
+    public const val RESERVED_FILE: String = "reserved-names.json"
 
     private val CONFIG_FIELDS = setOf("registryVersion", "indexValidityDays", "signingKeyIds")
     private val RESERVED_FIELDS = setOf("registryVersion", "names")
@@ -27,7 +29,7 @@ object RegistryFiles {
 
     // ---- registry.json ----
 
-    fun parseConfig(bytes: ByteArray): RegistryResult<RegistryConfig> {
+    public fun parseConfig(bytes: ByteArray): RegistryResult<RegistryConfig> {
         val diagnostics = ProjectDiagnostics()
         val reader = RegistryReader(diagnostics)
         val (_, fields) = reader.document(bytes, RegistryLimits.MAX_CONFIG_BYTES, CONFIG_FILE, "registryVersion", REGISTRY_VERSION, ProjectDiagnosticCode.UNSUPPORTED_REGISTRY_VERSION)
@@ -42,7 +44,7 @@ object RegistryFiles {
         return finish(diagnostics, config) { canonical(bytes, writeConfig(it), diagnostics) }
     }
 
-    fun writeConfig(config: RegistryConfig): String = JsonWriter.write(
+    public fun writeConfig(config: RegistryConfig): String = JsonWriter.write(
         JsonWriter.obj(
             "registryVersion" to JsonWriter.integer(REGISTRY_VERSION),
             "indexValidityDays" to JsonWriter.integer(config.indexValidityDays.toLong()),
@@ -52,7 +54,7 @@ object RegistryFiles {
 
     // ---- reserved-names.json ----
 
-    fun parseReserved(bytes: ByteArray): RegistryResult<ReservedNames> {
+    public fun parseReserved(bytes: ByteArray): RegistryResult<ReservedNames> {
         val diagnostics = ProjectDiagnostics()
         val reader = RegistryReader(diagnostics)
         val (_, fields) = reader.document(bytes, RegistryLimits.MAX_RESERVED_BYTES, RESERVED_FILE, "registryVersion", REGISTRY_VERSION, ProjectDiagnosticCode.UNSUPPORTED_REGISTRY_VERSION)
@@ -76,7 +78,7 @@ object RegistryFiles {
         return finish(diagnostics, names?.let(::ReservedNames)) { canonical(bytes, writeReserved(it), diagnostics) }
     }
 
-    fun writeReserved(reserved: ReservedNames): String = JsonWriter.write(
+    public fun writeReserved(reserved: ReservedNames): String = JsonWriter.write(
         JsonWriter.obj(
             "registryVersion" to JsonWriter.integer(REGISTRY_VERSION),
             "names" to JsonWriter.obj(*reserved.names.toSortedMap().map { (name, reason) -> name to JsonWriter.string(reason) }.toTypedArray()),
@@ -86,7 +88,7 @@ object RegistryFiles {
     // ---- packages/<頭文字>/<名前>.json ----
 
     // path はリポジトリの中のパス（区切りは /）。名前から決まるパス（RegistryRules.entryPath）でなければエラー
-    fun parseEntry(path: String, bytes: ByteArray): RegistryResult<PackageEntry> {
+    public fun parseEntry(path: String, bytes: ByteArray): RegistryResult<PackageEntry> {
         val diagnostics = ProjectDiagnostics()
         val reader = RegistryReader(diagnostics)
         val (_, fields) = reader.document(bytes, RegistryLimits.MAX_ENTRY_BYTES, path, "registryVersion", REGISTRY_VERSION, ProjectDiagnosticCode.UNSUPPORTED_REGISTRY_VERSION)
@@ -131,7 +133,7 @@ object RegistryFiles {
 
     // 決まった形: registryVersion・name・source・repositoryId・owners（ID の順）・description・license・removed（あれば）・versions（版の文字列の順）。
     // 各版は sha256・dependencies（名前の順）・review（pullRequest・reviewers（名前の順）・date）・yanked（あれば）
-    fun writeEntry(entry: PackageEntry): String {
+    public fun writeEntry(entry: PackageEntry): String {
         val members = arrayListOf<Pair<String, JsonValue>>(
             "registryVersion" to JsonWriter.integer(REGISTRY_VERSION),
             "name" to JsonWriter.string(entry.name),

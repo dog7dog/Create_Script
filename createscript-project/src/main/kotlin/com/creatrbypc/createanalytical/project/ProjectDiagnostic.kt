@@ -2,7 +2,7 @@ package com.creatrbypc.createanalytical.project
 
 // プロジェクトのファイル（createscript.json・createscript.lock）の診断（S8.1）。id は表示・翻訳に使う安定した識別子なので、一度決めたら変更・再利用しない。
 // 位置は行・列（1 始まり。UTF-16 単位）で、ファイル全体の問題は 1 行 1 列
-enum class ProjectDiagnosticCode(val id: String) {
+public enum class ProjectDiagnosticCode(public val id: String) {
     // ファイル（引数: 上限のバイト数）・文字コード
     FILE_TOO_LARGE("CS_PKG_FILE_TOO_LARGE"),
     NOT_UTF8("CS_PKG_NOT_UTF8"),
@@ -165,9 +165,9 @@ enum class ProjectDiagnosticCode(val id: String) {
     REPOSITORY_CHANGED("CS_REG_REPOSITORY_CHANGED"),
 }
 
-data class ProjectDiagnostic(val code: ProjectDiagnosticCode, val line: Int, val column: Int, val arguments: List<String> = emptyList()) {
+public data class ProjectDiagnostic(val code: ProjectDiagnosticCode, val line: Int, val column: Int, val arguments: List<String> = emptyList()) {
     // file:line:column: error CODE ("引数", …)（createscript run のコンパイルの診断と同じ形）
-    fun format(file: String): String =
+    public fun format(file: String): String =
         "$file:$line:$column: error ${code.id}" + if (arguments.isEmpty()) "" else arguments.joinToString(", ", " (", ")") { "\"${escape(it)}\"" }
 
     // 引数はファイルの中の文字列（信頼できない）なので、端末の表示を変えうる文字を \uXXXX にする: C0・C1 の制御文字と DEL（ESC・CSI による端末の操作）、
@@ -203,8 +203,8 @@ data class ProjectDiagnostic(val code: ProjectDiagnosticCode, val line: Int, val
         return type == Character.FORMAT || type == Character.LINE_SEPARATOR || type == Character.PARAGRAPH_SEPARATOR
     }
 
-    companion object {
+    public companion object {
         // 表示する引数の長さ（それを超える分は「…」で省く）
-        const val MAX_ARGUMENT_LENGTH = 80
+        public const val MAX_ARGUMENT_LENGTH: Int = 80
     }
 }

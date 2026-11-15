@@ -5,17 +5,17 @@ import java.io.DataOutputStream
 import java.security.MessageDigest
 
 // 保存した実行状態が、どのプログラムのものかを確かめるためのハッシュ（D14。SHA-256、32 バイト）
-object ProgramFingerprint {
-    const val SIZE = 32
+public object ProgramFingerprint {
+    public const val SIZE: Int = 32
 
     // ソース（UTF-8）のハッシュ。カードのコードが変わっていないかを確かめる
-    fun ofSource(source: String): ByteArray = sha256(source.toByteArray(Charsets.UTF_8))
+    public fun ofSource(source: String): ByteArray = sha256(source.toByteArray(Charsets.UTF_8))
 
     // エントリーのファイルと import したモジュールのソース全体のハッシュ（第8.0.1段階。32 バイトで ofSource と同じ大きさ）。
     // modules はモジュール名 → ソース。モジュールが無ければ ofSource(entry) と同じ値（単一ファイルのプログラムのハッシュは変えない）。
     // モジュールがあれば、先頭の印・エントリー・モジュール名の順に並べた（名前・ソースは長さ付きの UTF-8）ものの SHA-256。
     // 名前の順に並べるため、import の順・解決の順には依存しない。どれか 1 つのファイルの 1 文字が変わっても値が変わる
-    fun ofModules(entry: String, modules: Map<String, String>): ByteArray {
+    public fun ofModules(entry: String, modules: Map<String, String>): ByteArray {
         if (modules.isEmpty()) return ofSource(entry)
         val bytes = ByteArrayOutputStream()
         DataOutputStream(bytes).use { out ->
@@ -40,7 +40,7 @@ object ProgramFingerprint {
     }
 
     // コンパイル結果を決まった形に並べたもののハッシュ。同じソースでも Compiler の変更で命令が変われば値が変わる
-    fun ofProgram(program: CompiledProgram): ByteArray {
+    public fun ofProgram(program: CompiledProgram): ByteArray {
         val bytes = ByteArrayOutputStream()
         DataOutputStream(bytes).use { out ->
             out.writeInt(program.instructions.size)

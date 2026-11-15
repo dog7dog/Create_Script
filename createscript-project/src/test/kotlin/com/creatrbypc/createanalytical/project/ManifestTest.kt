@@ -47,7 +47,7 @@ class ManifestTest {
             listOf(Dependency("geometry", "2.0.0-beta.1+build.5", "github:Some-Owner/geometry.cs"), Dependency("vector-math", "1.2.0", "github:owner/vector-math")),
             manifest.dependencies,
         )
-        assertEquals(5 to 12, result.entryPosition)
+        assertEquals(FilePosition(5, 12), result.entryPosition)
         // license・dependencies は省略できる
         val minimal = parse("""{"schemaVersion": 1, "name": "a", "version": "1.0.0", "entry": "main.cscr"}""").manifest!!
         assertNull(minimal.license)
