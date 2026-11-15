@@ -1,0 +1,760 @@
+# Public API of createscript-project on the JVM (javap of JDK 21).
+# Made by ApiListingTest; to change it run the tests with CREATESCRIPT_API_UPDATE=1. See docs/api/api-surface.md.
+
+public final class com.creatrbypc.createanalytical.project.CanonicalJson  // opt-in
+  public final byte[] write(com.creatrbypc.createanalytical.project.JsonValue);  // opt-in; returns !; params !
+  public static final com.creatrbypc.createanalytical.project.CanonicalJson INSTANCE;  // opt-in; returns !
+  public static final long MAX_SAFE_INTEGER; = long 9007199254740991l  // opt-in
+
+public final class com.creatrbypc.createanalytical.project.Dependency
+  public boolean equals(java.lang.Object);  // params ?
+  public com.creatrbypc.createanalytical.project.Dependency(java.lang.String, java.lang.String, java.lang.String);  // params ! ! !
+  public final com.creatrbypc.createanalytical.project.Dependency copy(java.lang.String, java.lang.String, java.lang.String);  // returns !; params ! ! !
+  public final java.lang.String component1();  // returns !
+  public final java.lang.String component2();  // returns !
+  public final java.lang.String component3();  // returns !
+  public final java.lang.String getName();  // returns !
+  public final java.lang.String getSource();  // returns !
+  public final java.lang.String getVersion();  // returns !
+  public int hashCode();
+  public java.lang.String toString();  // returns !
+
+public final class com.creatrbypc.createanalytical.project.FieldReader
+  public com.creatrbypc.createanalytical.project.FieldReader(com.creatrbypc.createanalytical.project.ProjectDiagnostics, com.creatrbypc.createanalytical.project.JsonObject, java.lang.String);  // params ! ! !
+  public final boolean has(java.lang.String);  // params !
+  public final com.creatrbypc.createanalytical.project.JsonArray array(java.lang.String);  // returns ?; params !
+  public final com.creatrbypc.createanalytical.project.JsonInteger integer(java.lang.String);  // returns ?; params !
+  public final com.creatrbypc.createanalytical.project.JsonObject obj(java.lang.String, boolean);  // returns ?; params ! -
+  public final com.creatrbypc.createanalytical.project.JsonString string(java.lang.String, boolean);  // returns ?; params ! -
+  public final void allowOnly(java.util.Set<java.lang.String>);  // params !
+
+public final class com.creatrbypc.createanalytical.project.FilePosition
+  public boolean equals(java.lang.Object);  // params ?
+  public com.creatrbypc.createanalytical.project.FilePosition(int, int);
+  public final com.creatrbypc.createanalytical.project.FilePosition copy(int, int);  // returns !
+  public final int component1();
+  public final int component2();
+  public final int getColumn();
+  public final int getLine();
+  public int hashCode();
+  public java.lang.String toString();  // returns !
+
+public interface com.creatrbypc.createanalytical.project.InternalCreateScriptProjectApi extends java.lang.annotation.Annotation
+
+public final class com.creatrbypc.createanalytical.project.JsonArray implements com.creatrbypc.createanalytical.project.JsonValue  // opt-in
+  public com.creatrbypc.createanalytical.project.JsonArray(java.util.List<? extends com.creatrbypc.createanalytical.project.JsonValue>, int, int);  // opt-in; params ! - -
+  public final java.util.List<com.creatrbypc.createanalytical.project.JsonValue> getElements();  // opt-in; returns !
+  public int getColumn();  // opt-in
+  public int getLine();  // opt-in
+
+public final class com.creatrbypc.createanalytical.project.JsonBoolean implements com.creatrbypc.createanalytical.project.JsonValue  // opt-in
+  public boolean equals(java.lang.Object);  // opt-in; params ?
+  public com.creatrbypc.createanalytical.project.JsonBoolean(boolean, int, int);  // opt-in
+  public final boolean component1();  // opt-in
+  public final boolean getValue();  // opt-in
+  public final com.creatrbypc.createanalytical.project.JsonBoolean copy(boolean, int, int);  // opt-in; returns !
+  public final int component2();  // opt-in
+  public final int component3();  // opt-in
+  public int getColumn();  // opt-in
+  public int getLine();  // opt-in
+  public int hashCode();  // opt-in
+  public java.lang.String toString();  // opt-in; returns !
+
+public final class com.creatrbypc.createanalytical.project.JsonInteger implements com.creatrbypc.createanalytical.project.JsonValue  // opt-in
+  public boolean equals(java.lang.Object);  // opt-in; params ?
+  public com.creatrbypc.createanalytical.project.JsonInteger(long, int, int);  // opt-in
+  public final com.creatrbypc.createanalytical.project.JsonInteger copy(long, int, int);  // opt-in; returns !
+  public final int component2();  // opt-in
+  public final int component3();  // opt-in
+  public final long component1();  // opt-in
+  public final long getValue();  // opt-in
+  public int getColumn();  // opt-in
+  public int getLine();  // opt-in
+  public int hashCode();  // opt-in
+  public java.lang.String toString();  // opt-in; returns !
+
+public final class com.creatrbypc.createanalytical.project.JsonNull implements com.creatrbypc.createanalytical.project.JsonValue  // opt-in
+  public boolean equals(java.lang.Object);  // opt-in; params ?
+  public com.creatrbypc.createanalytical.project.JsonNull(int, int);  // opt-in
+  public final com.creatrbypc.createanalytical.project.JsonNull copy(int, int);  // opt-in; returns !
+  public final int component1();  // opt-in
+  public final int component2();  // opt-in
+  public int getColumn();  // opt-in
+  public int getLine();  // opt-in
+  public int hashCode();  // opt-in
+  public java.lang.String toString();  // opt-in; returns !
+
+public final class com.creatrbypc.createanalytical.project.JsonObject implements com.creatrbypc.createanalytical.project.JsonValue  // opt-in
+  public com.creatrbypc.createanalytical.project.JsonObject(java.util.Map<java.lang.String, ? extends com.creatrbypc.createanalytical.project.JsonValue>, java.util.Map<java.lang.String, kotlin.Pair<java.lang.Integer, java.lang.Integer>>, int, int);  // opt-in; params ! ! - -
+  public final java.util.Map<java.lang.String, com.creatrbypc.createanalytical.project.JsonValue> getMembers();  // opt-in; returns !
+  public int getColumn();  // opt-in
+  public int getLine();  // opt-in
+
+public final class com.creatrbypc.createanalytical.project.JsonParser  // opt-in
+  public static final com.creatrbypc.createanalytical.project.JsonParser$Companion Companion;  // opt-in; returns !
+  public static final int DEFAULT_MAX_DEPTH; = int 16  // opt-in
+
+public final class com.creatrbypc.createanalytical.project.JsonParser$Companion  // opt-in
+  public final com.creatrbypc.createanalytical.project.JsonResult parse(byte[], int, int);  // opt-in; returns !; params ! - -
+  public final com.creatrbypc.createanalytical.project.JsonResult parse(java.lang.String, int);  // opt-in; returns !; params ! -
+
+public final class com.creatrbypc.createanalytical.project.JsonResult  // opt-in
+  public com.creatrbypc.createanalytical.project.JsonResult(com.creatrbypc.createanalytical.project.JsonValue, java.util.List<com.creatrbypc.createanalytical.project.ProjectDiagnostic>);  // opt-in; params ? !
+  public final com.creatrbypc.createanalytical.project.JsonValue getValue();  // opt-in; returns ?
+  public final java.util.List<com.creatrbypc.createanalytical.project.ProjectDiagnostic> getDiagnostics();  // opt-in; returns !
+
+public final class com.creatrbypc.createanalytical.project.JsonString implements com.creatrbypc.createanalytical.project.JsonValue  // opt-in
+  public boolean equals(java.lang.Object);  // opt-in; params ?
+  public com.creatrbypc.createanalytical.project.JsonString(java.lang.String, int, int);  // opt-in; params ! - -
+  public final com.creatrbypc.createanalytical.project.JsonString copy(java.lang.String, int, int);  // opt-in; returns !; params ! - -
+  public final int component2();  // opt-in
+  public final int component3();  // opt-in
+  public final java.lang.String component1();  // opt-in; returns !
+  public final java.lang.String getValue();  // opt-in; returns !
+  public int getColumn();  // opt-in
+  public int getLine();  // opt-in
+  public int hashCode();  // opt-in
+  public java.lang.String toString();  // opt-in; returns !
+
+public interface com.creatrbypc.createanalytical.project.JsonValue  // opt-in
+  public abstract int getColumn();  // opt-in
+  public abstract int getLine();  // opt-in
+
+public final class com.creatrbypc.createanalytical.project.JsonWriter  // opt-in
+  public final com.creatrbypc.createanalytical.project.JsonArray array(java.util.List<? extends com.creatrbypc.createanalytical.project.JsonValue>);  // opt-in; returns !; params !
+  public final com.creatrbypc.createanalytical.project.JsonInteger integer(long);  // opt-in; returns !
+  public final com.creatrbypc.createanalytical.project.JsonObject obj(kotlin.Pair<java.lang.String, ? extends com.creatrbypc.createanalytical.project.JsonValue>...);  // opt-in; returns !; params !
+  public final com.creatrbypc.createanalytical.project.JsonString string(java.lang.String);  // opt-in; returns !; params !
+  public final java.lang.String write(com.creatrbypc.createanalytical.project.JsonValue);  // opt-in; returns !; params !
+  public static final com.creatrbypc.createanalytical.project.JsonWriter INSTANCE;  // opt-in; returns !
+
+public final class com.creatrbypc.createanalytical.project.LockRoot
+  public boolean equals(java.lang.Object);  // params ?
+  public com.creatrbypc.createanalytical.project.LockRoot(java.lang.String, java.lang.String);  // params ! !
+  public final com.creatrbypc.createanalytical.project.LockRoot copy(java.lang.String, java.lang.String);  // returns !; params ! !
+  public final java.lang.String component1();  // returns !
+  public final java.lang.String component2();  // returns !
+  public final java.lang.String getName();  // returns !
+  public final java.lang.String getVersion();  // returns !
+  public int hashCode();
+  public java.lang.String toString();  // returns !
+
+public final class com.creatrbypc.createanalytical.project.LockedPackage
+  public boolean equals(java.lang.Object);  // params ?
+  public com.creatrbypc.createanalytical.project.LockedPackage(java.lang.String, java.lang.String, java.lang.String, java.lang.String, java.util.List<java.lang.String>);  // params ! ! ! ! !
+  public final com.creatrbypc.createanalytical.project.LockedPackage copy(java.lang.String, java.lang.String, java.lang.String, java.lang.String, java.util.List<java.lang.String>);  // returns !; params ! ! ! ! !
+  public final java.lang.String component1();  // returns !
+  public final java.lang.String component2();  // returns !
+  public final java.lang.String component3();  // returns !
+  public final java.lang.String component4();  // returns !
+  public final java.lang.String getName();  // returns !
+  public final java.lang.String getSha256();  // returns !
+  public final java.lang.String getSource();  // returns !
+  public final java.lang.String getVersion();  // returns !
+  public final java.util.List<java.lang.String> component5();  // returns !
+  public final java.util.List<java.lang.String> getDependencies();  // returns !
+  public int hashCode();
+  public java.lang.String toString();  // returns !
+
+public final class com.creatrbypc.createanalytical.project.Lockfile
+  public boolean equals(java.lang.Object);  // params ?
+  public final com.creatrbypc.createanalytical.project.LockRoot getRoot();  // returns !
+  public final java.util.List<com.creatrbypc.createanalytical.project.LockedPackage> getPackages();  // returns !
+  public int hashCode();
+  public static final com.creatrbypc.createanalytical.project.Lockfile$Companion Companion;  // returns !
+
+public final class com.creatrbypc.createanalytical.project.Lockfile$Companion
+  public final com.creatrbypc.createanalytical.project.Lockfile of(com.creatrbypc.createanalytical.project.LockRoot, java.util.List<com.creatrbypc.createanalytical.project.LockedPackage>);  // returns !; params ! !
+
+public final class com.creatrbypc.createanalytical.project.Lockfile$Companion$of$$inlined$sortedBy$1<T extends java.lang.Object> extends java.lang.Object implements java.util.Comparator
+  public com.creatrbypc.createanalytical.project.Lockfile$Companion$of$$inlined$sortedBy$1();
+  public final int compare(T, T);
+
+public final class com.creatrbypc.createanalytical.project.LockfileResult
+  public com.creatrbypc.createanalytical.project.LockfileResult(com.creatrbypc.createanalytical.project.Lockfile, java.util.List<com.creatrbypc.createanalytical.project.ProjectDiagnostic>, boolean, com.creatrbypc.createanalytical.project.FilePosition, java.util.Map<java.lang.String, com.creatrbypc.createanalytical.project.FilePosition>);  // params ? ! - ! !
+  public final boolean getTruncated();
+  public final com.creatrbypc.createanalytical.project.FilePosition getRootPosition();  // returns !
+  public final com.creatrbypc.createanalytical.project.Lockfile getLockfile();  // returns ?
+  public final java.util.List<com.creatrbypc.createanalytical.project.ProjectDiagnostic> getDiagnostics();  // returns !
+  public final java.util.Map<java.lang.String, com.creatrbypc.createanalytical.project.FilePosition> getPackagePositions();  // returns !
+
+public final class com.creatrbypc.createanalytical.project.Lockfiles
+  public final com.creatrbypc.createanalytical.project.LockfileResult parse(byte[]);  // returns !; params !
+  public final java.lang.String write(com.creatrbypc.createanalytical.project.Lockfile);  // returns !; params !
+  public final java.util.List<com.creatrbypc.createanalytical.project.ProjectDiagnostic> check(byte[], com.creatrbypc.createanalytical.project.LockfileResult, com.creatrbypc.createanalytical.project.Manifest);  // returns !; params ! ! !
+  public static final com.creatrbypc.createanalytical.project.Lockfiles INSTANCE;  // returns !
+  public static final int MAX_BYTES; = int 1048576
+  public static final int MAX_PACKAGES; = int 4096
+  public static final int MAX_PACKAGE_DEPENDENCIES; = int 1024
+  public static final java.lang.String FILE_NAME; = String createscript.lock  // returns !
+  public static final long LOCK_VERSION; = long 1l
+
+public final class com.creatrbypc.createanalytical.project.Manifest
+  public boolean equals(java.lang.Object);  // params ?
+  public com.creatrbypc.createanalytical.project.Manifest(java.lang.String, java.lang.String, java.lang.String, java.lang.String, java.util.List<com.creatrbypc.createanalytical.project.Dependency>, int, com.creatrbypc.createanalytical.project.PackageKind, java.util.List<java.lang.String>);  // params ! ! ? ? ! - ! !
+  public final com.creatrbypc.createanalytical.project.Manifest copy(java.lang.String, java.lang.String, java.lang.String, java.lang.String, java.util.List<com.creatrbypc.createanalytical.project.Dependency>, int, com.creatrbypc.createanalytical.project.PackageKind, java.util.List<java.lang.String>);  // returns !; params ! ! ? ? ! - ! !
+  public final com.creatrbypc.createanalytical.project.PackageKind component7();  // returns !
+  public final com.creatrbypc.createanalytical.project.PackageKind getKind();  // returns !
+  public final int component6();
+  public final int getSchemaVersion();
+  public final java.lang.String component1();  // returns !
+  public final java.lang.String component2();  // returns !
+  public final java.lang.String component3();  // returns ?
+  public final java.lang.String component4();  // returns ?
+  public final java.lang.String getEntry();  // returns ?
+  public final java.lang.String getLicense();  // returns ?
+  public final java.lang.String getName();  // returns !
+  public final java.lang.String getVersion();  // returns !
+  public final java.util.List<com.creatrbypc.createanalytical.project.Dependency> component5();  // returns !
+  public final java.util.List<com.creatrbypc.createanalytical.project.Dependency> getDependencies();  // returns !
+  public final java.util.List<java.lang.String> component8();  // returns !
+  public final java.util.List<java.lang.String> getModules();  // returns !
+  public int hashCode();
+  public java.lang.String toString();  // returns !
+
+public final class com.creatrbypc.createanalytical.project.ManifestResult
+  public com.creatrbypc.createanalytical.project.ManifestResult(com.creatrbypc.createanalytical.project.Manifest, java.util.List<com.creatrbypc.createanalytical.project.ProjectDiagnostic>, boolean, com.creatrbypc.createanalytical.project.FilePosition, java.util.Map<java.lang.String, com.creatrbypc.createanalytical.project.FilePosition>, java.util.Map<java.lang.String, com.creatrbypc.createanalytical.project.FilePosition>);  // params ? ! - ! ! !
+  public final boolean getTruncated();
+  public final com.creatrbypc.createanalytical.project.FilePosition getEntryPosition();  // returns !
+  public final com.creatrbypc.createanalytical.project.Manifest getManifest();  // returns ?
+  public final java.util.List<com.creatrbypc.createanalytical.project.ProjectDiagnostic> getDiagnostics();  // returns !
+  public final java.util.Map<java.lang.String, com.creatrbypc.createanalytical.project.FilePosition> getDependencyPositions();  // returns !
+  public final java.util.Map<java.lang.String, com.creatrbypc.createanalytical.project.FilePosition> getModulePositions();  // returns !
+
+public final class com.creatrbypc.createanalytical.project.Manifests
+  public final com.creatrbypc.createanalytical.project.ManifestResult parse(byte[]);  // returns !; params !
+  public final java.lang.String write(com.creatrbypc.createanalytical.project.Manifest);  // returns !; params !
+  public final java.util.Set<java.lang.Long> getSCHEMA_VERSIONS();  // returns !
+  public static final com.creatrbypc.createanalytical.project.Manifests INSTANCE;  // returns !
+  public static final int MAX_BYTES; = int 65536
+  public static final int MAX_DEPENDENCIES; = int 1024
+  public static final int MAX_MODULES; = int 1024
+  public static final java.lang.String FILE_NAME; = String createscript.json  // returns !
+  public static final long LATEST_SCHEMA_VERSION; = long 2l
+  public static final long SCHEMA_VERSION; = long 1l
+
+public final class com.creatrbypc.createanalytical.project.Manifests$parse$$inlined$sortedBy$1<T extends java.lang.Object> extends java.lang.Object implements java.util.Comparator
+  public com.creatrbypc.createanalytical.project.Manifests$parse$$inlined$sortedBy$1();
+  public final int compare(T, T);
+
+public final class com.creatrbypc.createanalytical.project.PackageArchives  // opt-in
+  public final boolean isCanonical(byte[], com.creatrbypc.createanalytical.project.PackageArchives$Archive);  // opt-in; params ! !
+  public final byte[] rebuild(java.util.Map<java.lang.String, byte[]>);  // opt-in; returns ?; params !
+  public final byte[] write(java.util.Map<java.lang.String, byte[]>);  // opt-in; returns !; params !
+  public final com.creatrbypc.createanalytical.project.PackageArchives$ArchiveResult read(byte[], java.lang.String, java.lang.String);  // opt-in; returns !; params ! ? ?
+  public final java.lang.String pathProblem(java.lang.String);  // opt-in; returns ?; params !
+  public final java.lang.String sourceProblem(byte[]);  // opt-in; returns ?; params !
+  public static final com.creatrbypc.createanalytical.project.PackageArchives INSTANCE;  // opt-in; returns !
+  public static final int MAX_ARCHIVE_BYTES; = int 33554432  // opt-in
+  public static final int MAX_COMPRESSION_RATIO; = int 100  // opt-in
+  public static final int MAX_ENTRIES; = int 1024  // opt-in
+  public static final int MAX_OTHER_FILE_BYTES; = int 1048576  // opt-in
+  public static final int MAX_TOTAL_BYTES; = int 16777216  // opt-in
+  public static final java.lang.String FILE_NAME; = String createscript-package.zip  // opt-in; returns !
+
+public final class com.creatrbypc.createanalytical.project.PackageArchives$Archive  // opt-in
+  public com.creatrbypc.createanalytical.project.PackageArchives$Archive(com.creatrbypc.createanalytical.project.Manifest, java.util.Map<java.lang.String, byte[]>);  // opt-in; params ! !
+  public final com.creatrbypc.createanalytical.project.Manifest getManifest();  // opt-in; returns !
+  public final java.util.Map<java.lang.String, byte[]> getFiles();  // opt-in; returns !
+
+public final class com.creatrbypc.createanalytical.project.PackageArchives$ArchiveDiagnostic  // opt-in
+  public com.creatrbypc.createanalytical.project.PackageArchives$ArchiveDiagnostic(java.lang.String, com.creatrbypc.createanalytical.project.ProjectDiagnostic);  // opt-in; params ? !
+  public final com.creatrbypc.createanalytical.project.ProjectDiagnostic getDiagnostic();  // opt-in; returns !
+  public final java.lang.String getPath();  // opt-in; returns ?
+
+public final class com.creatrbypc.createanalytical.project.PackageArchives$ArchiveResult  // opt-in
+  public com.creatrbypc.createanalytical.project.PackageArchives$ArchiveResult(com.creatrbypc.createanalytical.project.PackageArchives$Archive, java.util.List<com.creatrbypc.createanalytical.project.PackageArchives$ArchiveDiagnostic>);  // opt-in; params ? !
+  public final com.creatrbypc.createanalytical.project.PackageArchives$Archive getArchive();  // opt-in; returns ?
+  public final java.util.List<com.creatrbypc.createanalytical.project.PackageArchives$ArchiveDiagnostic> getDiagnostics();  // opt-in; returns !
+
+public final class com.creatrbypc.createanalytical.project.PackageArchives$unzip$$inlined$sortedBy$1<T extends java.lang.Object> extends java.lang.Object implements java.util.Comparator  // opt-in
+  public com.creatrbypc.createanalytical.project.PackageArchives$unzip$$inlined$sortedBy$1();  // opt-in
+  public final int compare(T, T);  // opt-in
+
+public final class com.creatrbypc.createanalytical.project.PackageArchives$write$$inlined$sortedBy$1<T extends java.lang.Object> extends java.lang.Object implements java.util.Comparator  // opt-in
+  public com.creatrbypc.createanalytical.project.PackageArchives$write$$inlined$sortedBy$1();  // opt-in
+  public final int compare(T, T);  // opt-in
+
+public final class com.creatrbypc.createanalytical.project.PackageKind extends java.lang.Enum<com.creatrbypc.createanalytical.project.PackageKind>
+  public final java.lang.String getId();  // returns !
+  public static com.creatrbypc.createanalytical.project.PackageKind valueOf(java.lang.String);
+  public static com.creatrbypc.createanalytical.project.PackageKind[] values();
+  public static final com.creatrbypc.createanalytical.project.PackageKind APPLICATION;
+  public static final com.creatrbypc.createanalytical.project.PackageKind LIBRARY;
+  public static final com.creatrbypc.createanalytical.project.PackageKind$Companion Companion;  // returns !
+  public static kotlin.enums.EnumEntries<com.creatrbypc.createanalytical.project.PackageKind> getEntries();  // returns !
+
+public final class com.creatrbypc.createanalytical.project.PackageKind$Companion
+  public final com.creatrbypc.createanalytical.project.PackageKind of(java.lang.String);  // returns ?; params !
+
+public final class com.creatrbypc.createanalytical.project.ProjectDiagnostic
+  public boolean equals(java.lang.Object);  // params ?
+  public com.creatrbypc.createanalytical.project.ProjectDiagnostic(com.creatrbypc.createanalytical.project.ProjectDiagnosticCode, int, int, java.util.List<java.lang.String>);  // params ! - - !
+  public final com.creatrbypc.createanalytical.project.ProjectDiagnostic copy(com.creatrbypc.createanalytical.project.ProjectDiagnosticCode, int, int, java.util.List<java.lang.String>);  // returns !; params ! - - !
+  public final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode component1();  // returns !
+  public final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode getCode();  // returns !
+  public final int component2();
+  public final int component3();
+  public final int getColumn();
+  public final int getLine();
+  public final java.lang.String format(java.lang.String);  // returns !; params !
+  public final java.util.List<java.lang.String> component4();  // returns !
+  public final java.util.List<java.lang.String> getArguments();  // returns !
+  public int hashCode();
+  public java.lang.String toString();  // returns !
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnostic$Companion Companion;  // returns !
+  public static final int MAX_ARGUMENT_LENGTH; = int 80
+
+public final class com.creatrbypc.createanalytical.project.ProjectDiagnostic$Companion
+
+public final class com.creatrbypc.createanalytical.project.ProjectDiagnosticCode extends java.lang.Enum<com.creatrbypc.createanalytical.project.ProjectDiagnosticCode>
+  public final java.lang.String getId();  // returns !
+  public static com.creatrbypc.createanalytical.project.ProjectDiagnosticCode valueOf(java.lang.String);
+  public static com.creatrbypc.createanalytical.project.ProjectDiagnosticCode[] values();
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode ARCHIVE_COMPRESSION_RATIO;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode ARCHIVE_CORRUPT_ENTRY;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode ARCHIVE_DUPLICATE_PATH;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode ARCHIVE_FILE_TOO_LARGE;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode ARCHIVE_INVALID_PATH;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode ARCHIVE_INVALID_SOURCE;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode ARCHIVE_MALFORMED;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode ARCHIVE_MISSING_MANIFEST;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode ARCHIVE_MISSING_MODULE;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode ARCHIVE_NAME_MISMATCH;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode ARCHIVE_NOT_A_LIBRARY;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode ARCHIVE_SPECIAL_FILE;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode ARCHIVE_TOO_LARGE;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode ARCHIVE_TOO_MANY_FILES;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode ARCHIVE_TOTAL_TOO_LARGE;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode ARCHIVE_UNSUPPORTED;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode ARCHIVE_VERSION_MISMATCH;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode BYTE_ORDER_MARK;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode DEPENDENCIES_CHANGED;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode DEPENDENCY_CONFLICT;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode DEPENDENCY_CYCLE;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode DEPENDENCY_ON_REMOVED;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode DEPENDS_ON_ITSELF;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode DUPLICATE_MODULE;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode DUPLICATE_PACKAGE;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode DUPLICATE_REPOSITORY;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode DUPLICATE_SOURCE;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode DUPLICATE_VALUE;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode ENTRY_NOT_A_FILE;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode ENTRY_NOT_FOUND;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode ENTRY_OUTSIDE_PROJECT;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode ENTRY_PATH_MISMATCH;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode FIELD_NOT_ALLOWED;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode FILE_CHANGED_WHILE_READING;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode FILE_OUTSIDE_PROJECT;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode FILE_TOO_LARGE;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode INDEX_EXPIRED;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode INDEX_NOT_YET_VALID;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode INDEX_ROLLBACK;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode INDEX_SERIAL_REUSED;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode INDEX_TIME_ROLLBACK;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode INVALID_DATE;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode INVALID_ID;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode INVALID_KEY_ID;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode INVALID_KIND;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode INVALID_LICENSE;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode INVALID_LOGIN;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode INVALID_MODULE_NAME;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode INVALID_NAME;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode INVALID_PATH;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode INVALID_SETTING;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode INVALID_SHA256;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode INVALID_SOURCE;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode INVALID_TEXT;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode INVALID_VALIDITY;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode INVALID_VERSION;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode JSON_DUPLICATE_KEY;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode JSON_NUMBER_NOT_INTEGER;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode JSON_NUMBER_OUT_OF_RANGE;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode JSON_SYNTAX;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode JSON_TOO_DEEP;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode LOCK_DEPENDENCY_CYCLE;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode LOCK_DUPLICATE_DEPENDENCY;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode LOCK_DUPLICATE_PACKAGE;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode LOCK_MISSING;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode LOCK_MISSING_PACKAGE;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode LOCK_NOT_CANONICAL;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode LOCK_ROOT_MISMATCH;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode LOCK_SOURCE_MISMATCH;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode LOCK_UNKNOWN_DEPENDENCY;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode LOCK_UNUSED_PACKAGE;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode LOCK_VERSION_MISMATCH;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode MISSING_FIELD;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode MODULE_FILE_NOT_FOUND;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode NOT_AN_OBJECT;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode NOT_A_REGULAR_FILE;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode NOT_UTF8;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode NO_MODULES;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode NO_VERSIONS;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode PACKAGE_DISAPPEARED;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode REGISTRY_NOT_CANONICAL;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode REPOSITORY_CHANGED;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode RESERVED_NAME;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode RESERVED_PACKAGE_NAME;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode SHA256_CHANGED;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode SIGNATURE_INVALID;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode SIGNATURE_MALFORMED;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode SIGNATURE_MISSING;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode SIGNATURE_UNKNOWN_KEY;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode SIMILAR_NAME;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode TOO_MANY_ENTRIES;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode UNKNOWN_DEPENDENCY;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode UNKNOWN_FIELD;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode UNSUPPORTED_INDEX_VERSION;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode UNSUPPORTED_LOCK_VERSION;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode UNSUPPORTED_REGISTRY_VERSION;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode UNSUPPORTED_SCHEMA_VERSION;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode UNSUPPORTED_SIGNATURE_VERSION;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode VERSION_BUILD_METADATA;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode VERSION_DISAPPEARED;
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnosticCode WRONG_TYPE;
+  public static kotlin.enums.EnumEntries<com.creatrbypc.createanalytical.project.ProjectDiagnosticCode> getEntries();  // returns !
+
+public final class com.creatrbypc.createanalytical.project.ProjectDiagnostics  // opt-in
+  public com.creatrbypc.createanalytical.project.ProjectDiagnostics();  // opt-in
+  public static final com.creatrbypc.createanalytical.project.ProjectDiagnostics$Companion Companion;  // opt-in; returns !
+  public static final int MAX; = int 64  // opt-in
+
+public final class com.creatrbypc.createanalytical.project.ProjectDiagnostics$Companion  // opt-in
+
+public final class com.creatrbypc.createanalytical.project.ProjectRules
+  public final boolean isValidLicense(java.lang.String);  // params !
+  public final boolean isValidModuleName(java.lang.String);  // params !
+  public final boolean isValidName(java.lang.String);  // params !
+  public final boolean isValidSha256(java.lang.String);  // params !
+  public final boolean isValidSource(java.lang.String);  // params !
+  public final boolean isValidVersion(java.lang.String);  // params !
+  public final boolean isWindowsReserved(java.lang.String);  // params !
+  public final java.lang.String pathProblem(java.lang.String);  // returns ?; params !
+  public final java.lang.String reservedNameReason(java.lang.String);  // returns !; params !
+  public final java.util.Set<java.lang.String> getBUILTIN_FUNCTIONS();  // returns !
+  public final java.util.Set<java.lang.String> getHARD_KEYWORDS();  // returns !
+  public static final com.creatrbypc.createanalytical.project.ProjectRules INSTANCE;  // returns !
+  public static final int MAX_LICENSE_LENGTH; = int 64
+  public static final int MAX_MODULE_NAME_LENGTH; = int 32
+  public static final int MAX_NAME_LENGTH; = int 64
+  public static final int MAX_PATH_LENGTH; = int 256
+  public static final int MAX_SOURCE_BYTES; = int 3000000
+  public static final int MAX_SOURCE_LENGTH; = int 1000000
+  public static final int MAX_VERSION_LENGTH; = int 128
+
+public final class com.creatrbypc.createanalytical.project.registry.AcceptedIndex  // opt-in
+  public com.creatrbypc.createanalytical.project.registry.AcceptedIndex(byte[], com.creatrbypc.createanalytical.project.registry.RegistryIndex, java.lang.String, java.util.List<java.lang.String>);  // opt-in; params ! ! ! !
+  public final byte[] getBytes();  // opt-in; returns !
+  public final com.creatrbypc.createanalytical.project.registry.RegistryIndex getIndex();  // opt-in; returns !
+  public final java.lang.String getSha256();  // opt-in; returns !
+  public final java.util.List<java.lang.String> getKeyIds();  // opt-in; returns !
+
+public final class com.creatrbypc.createanalytical.project.registry.Ed25519
+  public final boolean verify(java.security.PublicKey, byte[], byte[]);  // params ! ! !
+  public final java.security.PublicKey publicKey(byte[]);  // returns !; params !
+  public static final com.creatrbypc.createanalytical.project.registry.Ed25519 INSTANCE;  // returns !
+  public static final int PUBLIC_KEY_SIZE; = int 32
+  public static final int SIGNATURE_SIZE; = int 64
+
+public final class com.creatrbypc.createanalytical.project.registry.EntryVersion  // opt-in
+  public boolean equals(java.lang.Object);  // opt-in; params ?
+  public com.creatrbypc.createanalytical.project.registry.EntryVersion(java.lang.String, java.util.Map<java.lang.String, java.lang.String>, com.creatrbypc.createanalytical.project.registry.Review, com.creatrbypc.createanalytical.project.registry.Withdrawal);  // opt-in; params ! ! ! ?
+  public final com.creatrbypc.createanalytical.project.registry.EntryVersion copy(java.lang.String, java.util.Map<java.lang.String, java.lang.String>, com.creatrbypc.createanalytical.project.registry.Review, com.creatrbypc.createanalytical.project.registry.Withdrawal);  // opt-in; returns !; params ! ! ! ?
+  public final com.creatrbypc.createanalytical.project.registry.Review component3();  // opt-in; returns !
+  public final com.creatrbypc.createanalytical.project.registry.Review getReview();  // opt-in; returns !
+  public final com.creatrbypc.createanalytical.project.registry.Withdrawal component4();  // opt-in; returns ?
+  public final com.creatrbypc.createanalytical.project.registry.Withdrawal getYanked();  // opt-in; returns ?
+  public final java.lang.String component1();  // opt-in; returns !
+  public final java.lang.String getSha256();  // opt-in; returns !
+  public final java.util.Map<java.lang.String, java.lang.String> component2();  // opt-in; returns !
+  public final java.util.Map<java.lang.String, java.lang.String> getDependencies();  // opt-in; returns !
+  public int hashCode();  // opt-in
+  public java.lang.String toString();  // opt-in; returns !
+
+public final class com.creatrbypc.createanalytical.project.registry.IndexHistory  // opt-in
+  public final java.util.List<com.creatrbypc.createanalytical.project.ProjectDiagnostic> compare(com.creatrbypc.createanalytical.project.registry.RegistryIndex, java.lang.String, com.creatrbypc.createanalytical.project.registry.RegistryIndex, java.lang.String);  // opt-in; returns !; params ! ! ! !
+  public final java.util.List<com.creatrbypc.createanalytical.project.ProjectDiagnostic> compareEntries(java.util.List<com.creatrbypc.createanalytical.project.registry.PackageEntry>, java.util.List<com.creatrbypc.createanalytical.project.registry.PackageEntry>);  // opt-in; returns !; params ! !
+  public static final com.creatrbypc.createanalytical.project.registry.IndexHistory INSTANCE;  // opt-in; returns !
+
+public final class com.creatrbypc.createanalytical.project.registry.IndexPackage  // opt-in
+  public boolean equals(java.lang.Object);  // opt-in; params ?
+  public com.creatrbypc.createanalytical.project.registry.IndexPackage(java.lang.String, long, java.lang.String, java.lang.String, com.creatrbypc.createanalytical.project.registry.Withdrawal, java.util.Map<java.lang.String, com.creatrbypc.createanalytical.project.registry.IndexVersion>);  // opt-in; params ! - ! ! ? !
+  public final com.creatrbypc.createanalytical.project.registry.IndexPackage copy(java.lang.String, long, java.lang.String, java.lang.String, com.creatrbypc.createanalytical.project.registry.Withdrawal, java.util.Map<java.lang.String, com.creatrbypc.createanalytical.project.registry.IndexVersion>);  // opt-in; returns !; params ! - ! ! ? !
+  public final com.creatrbypc.createanalytical.project.registry.Withdrawal component5();  // opt-in; returns ?
+  public final com.creatrbypc.createanalytical.project.registry.Withdrawal getRemoved();  // opt-in; returns ?
+  public final java.lang.String component1();  // opt-in; returns !
+  public final java.lang.String component3();  // opt-in; returns !
+  public final java.lang.String component4();  // opt-in; returns !
+  public final java.lang.String getDescription();  // opt-in; returns !
+  public final java.lang.String getLicense();  // opt-in; returns !
+  public final java.lang.String getSource();  // opt-in; returns !
+  public final java.util.Map<java.lang.String, com.creatrbypc.createanalytical.project.registry.IndexVersion> component6();  // opt-in; returns !
+  public final java.util.Map<java.lang.String, com.creatrbypc.createanalytical.project.registry.IndexVersion> getVersions();  // opt-in; returns !
+  public final long component2();  // opt-in
+  public final long getRepositoryId();  // opt-in
+  public int hashCode();  // opt-in
+  public java.lang.String toString();  // opt-in; returns !
+
+public final class com.creatrbypc.createanalytical.project.registry.IndexSignature  // opt-in
+  public boolean equals(java.lang.Object);  // opt-in; params ?
+  public com.creatrbypc.createanalytical.project.registry.IndexSignature(java.lang.String, byte[]);  // opt-in; params ! !
+  public final byte[] component2();  // opt-in; returns !
+  public final byte[] getSignature();  // opt-in; returns !
+  public final com.creatrbypc.createanalytical.project.registry.IndexSignature copy(java.lang.String, byte[]);  // opt-in; returns !; params ! !
+  public final java.lang.String component1();  // opt-in; returns !
+  public final java.lang.String getKeyId();  // opt-in; returns !
+  public int hashCode();  // opt-in
+  public java.lang.String toString();  // opt-in; returns !
+
+public final class com.creatrbypc.createanalytical.project.registry.IndexSignatures  // opt-in
+  public final byte[] message(java.lang.String, byte[]);  // opt-in; returns !; params ! !
+  public final byte[] write(java.util.List<com.creatrbypc.createanalytical.project.registry.IndexSignature>);  // opt-in; returns !; params !
+  public final com.creatrbypc.createanalytical.project.registry.RegistryResult<java.util.List<com.creatrbypc.createanalytical.project.registry.IndexSignature>> parse(byte[]);  // opt-in; returns !; params !
+  public final com.creatrbypc.createanalytical.project.registry.RegistryResult<java.util.List<java.lang.String>> verify(byte[], byte[], com.creatrbypc.createanalytical.project.registry.RegistryKeys);  // opt-in; returns !; params ! ? !
+  public static final com.creatrbypc.createanalytical.project.registry.IndexSignatures INSTANCE;  // opt-in; returns !
+  public static final int MAX_SIGNATURES; = int 4  // opt-in
+  public static final java.lang.String DOMAIN; = String CreateScript-Registry index signature v1  // opt-in; returns !
+  public static final java.lang.String FILE_NAME; = String index.json.sig  // opt-in; returns !
+  public static final long SIGNATURE_VERSION; = long 1l  // opt-in
+
+public final class com.creatrbypc.createanalytical.project.registry.IndexVerification  // opt-in
+  public com.creatrbypc.createanalytical.project.registry.IndexVerification(com.creatrbypc.createanalytical.project.registry.AcceptedIndex, java.util.List<com.creatrbypc.createanalytical.project.ProjectDiagnostic>, boolean);  // opt-in; params ? ! -
+  public final boolean getUnchanged();  // opt-in
+  public final com.creatrbypc.createanalytical.project.registry.AcceptedIndex getAccepted();  // opt-in; returns ?
+  public final java.util.List<com.creatrbypc.createanalytical.project.ProjectDiagnostic> getDiagnostics();  // opt-in; returns !
+
+public final class com.creatrbypc.createanalytical.project.registry.IndexVerifier  // opt-in
+  public com.creatrbypc.createanalytical.project.registry.IndexVerifier(com.creatrbypc.createanalytical.project.registry.RegistryKeys, java.time.Duration);  // opt-in; params ! !
+  public final com.creatrbypc.createanalytical.project.registry.IndexVerification verify(byte[], byte[], com.creatrbypc.createanalytical.project.registry.AcceptedIndex, java.time.Instant, boolean);  // opt-in; returns !; params ! ? ? ! -
+
+public final class com.creatrbypc.createanalytical.project.registry.IndexVersion  // opt-in
+  public boolean equals(java.lang.Object);  // opt-in; params ?
+  public com.creatrbypc.createanalytical.project.registry.IndexVersion(java.lang.String, java.util.Map<java.lang.String, java.lang.String>, long, com.creatrbypc.createanalytical.project.registry.Withdrawal);  // opt-in; params ! ! - ?
+  public final com.creatrbypc.createanalytical.project.registry.IndexVersion copy(java.lang.String, java.util.Map<java.lang.String, java.lang.String>, long, com.creatrbypc.createanalytical.project.registry.Withdrawal);  // opt-in; returns !; params ! ! - ?
+  public final com.creatrbypc.createanalytical.project.registry.Withdrawal component4();  // opt-in; returns ?
+  public final com.creatrbypc.createanalytical.project.registry.Withdrawal getYanked();  // opt-in; returns ?
+  public final java.lang.String component1();  // opt-in; returns !
+  public final java.lang.String getSha256();  // opt-in; returns !
+  public final java.util.Map<java.lang.String, java.lang.String> component2();  // opt-in; returns !
+  public final java.util.Map<java.lang.String, java.lang.String> getDependencies();  // opt-in; returns !
+  public final long component3();  // opt-in
+  public final long getPullRequest();  // opt-in
+  public int hashCode();  // opt-in
+  public java.lang.String toString();  // opt-in; returns !
+
+public final class com.creatrbypc.createanalytical.project.registry.Owner  // opt-in
+  public boolean equals(java.lang.Object);  // opt-in; params ?
+  public com.creatrbypc.createanalytical.project.registry.Owner(java.lang.String, long);  // opt-in; params ! -
+  public final com.creatrbypc.createanalytical.project.registry.Owner copy(java.lang.String, long);  // opt-in; returns !; params ! -
+  public final java.lang.String component1();  // opt-in; returns !
+  public final java.lang.String getLogin();  // opt-in; returns !
+  public final long component2();  // opt-in
+  public final long getId();  // opt-in
+  public int hashCode();  // opt-in
+  public java.lang.String toString();  // opt-in; returns !
+
+public final class com.creatrbypc.createanalytical.project.registry.PackageEntry  // opt-in
+  public boolean equals(java.lang.Object);  // opt-in; params ?
+  public com.creatrbypc.createanalytical.project.registry.PackageEntry(java.lang.String, java.lang.String, long, java.util.List<com.creatrbypc.createanalytical.project.registry.Owner>, java.lang.String, java.lang.String, com.creatrbypc.createanalytical.project.registry.Withdrawal, java.util.Map<java.lang.String, com.creatrbypc.createanalytical.project.registry.EntryVersion>);  // opt-in; params ! ! - ! ! ! ? !
+  public final com.creatrbypc.createanalytical.project.registry.PackageEntry copy(java.lang.String, java.lang.String, long, java.util.List<com.creatrbypc.createanalytical.project.registry.Owner>, java.lang.String, java.lang.String, com.creatrbypc.createanalytical.project.registry.Withdrawal, java.util.Map<java.lang.String, com.creatrbypc.createanalytical.project.registry.EntryVersion>);  // opt-in; returns !; params ! ! - ! ! ! ? !
+  public final com.creatrbypc.createanalytical.project.registry.Withdrawal component7();  // opt-in; returns ?
+  public final com.creatrbypc.createanalytical.project.registry.Withdrawal getRemoved();  // opt-in; returns ?
+  public final java.lang.String component1();  // opt-in; returns !
+  public final java.lang.String component2();  // opt-in; returns !
+  public final java.lang.String component5();  // opt-in; returns !
+  public final java.lang.String component6();  // opt-in; returns !
+  public final java.lang.String getDescription();  // opt-in; returns !
+  public final java.lang.String getLicense();  // opt-in; returns !
+  public final java.lang.String getName();  // opt-in; returns !
+  public final java.lang.String getSource();  // opt-in; returns !
+  public final java.util.List<com.creatrbypc.createanalytical.project.registry.Owner> component4();  // opt-in; returns !
+  public final java.util.List<com.creatrbypc.createanalytical.project.registry.Owner> getOwners();  // opt-in; returns !
+  public final java.util.Map<java.lang.String, com.creatrbypc.createanalytical.project.registry.EntryVersion> component8();  // opt-in; returns !
+  public final java.util.Map<java.lang.String, com.creatrbypc.createanalytical.project.registry.EntryVersion> getVersions();  // opt-in; returns !
+  public final long component3();  // opt-in
+  public final long getRepositoryId();  // opt-in
+  public int hashCode();  // opt-in
+  public java.lang.String toString();  // opt-in; returns !
+
+public final class com.creatrbypc.createanalytical.project.registry.RegistryConfig  // opt-in
+  public boolean equals(java.lang.Object);  // opt-in; params ?
+  public com.creatrbypc.createanalytical.project.registry.RegistryConfig(int, java.util.List<java.lang.String>);  // opt-in; params - !
+  public final com.creatrbypc.createanalytical.project.registry.RegistryConfig copy(int, java.util.List<java.lang.String>);  // opt-in; returns !; params - !
+  public final int component1();  // opt-in
+  public final int getIndexValidityDays();  // opt-in
+  public final java.util.List<java.lang.String> component2();  // opt-in; returns !
+  public final java.util.List<java.lang.String> getSigningKeyIds();  // opt-in; returns !
+  public int hashCode();  // opt-in
+  public java.lang.String toString();  // opt-in; returns !
+
+public final class com.creatrbypc.createanalytical.project.registry.RegistryFiles  // opt-in
+  public final com.creatrbypc.createanalytical.project.registry.RegistryResult<com.creatrbypc.createanalytical.project.registry.PackageEntry> parseEntry(java.lang.String, byte[]);  // opt-in; returns !; params ! !
+  public final com.creatrbypc.createanalytical.project.registry.RegistryResult<com.creatrbypc.createanalytical.project.registry.RegistryConfig> parseConfig(byte[]);  // opt-in; returns !; params !
+  public final com.creatrbypc.createanalytical.project.registry.RegistryResult<com.creatrbypc.createanalytical.project.registry.ReservedNames> parseReserved(byte[]);  // opt-in; returns !; params !
+  public final java.lang.String writeConfig(com.creatrbypc.createanalytical.project.registry.RegistryConfig);  // opt-in; returns !; params !
+  public final java.lang.String writeEntry(com.creatrbypc.createanalytical.project.registry.PackageEntry);  // opt-in; returns !; params !
+  public final java.lang.String writeReserved(com.creatrbypc.createanalytical.project.registry.ReservedNames);  // opt-in; returns !; params !
+  public static final com.creatrbypc.createanalytical.project.registry.RegistryFiles INSTANCE;  // opt-in; returns !
+  public static final java.lang.String CONFIG_FILE; = String registry.json  // opt-in; returns !
+  public static final java.lang.String RESERVED_FILE; = String reserved-names.json  // opt-in; returns !
+  public static final long REGISTRY_VERSION; = long 1l  // opt-in
+
+public final class com.creatrbypc.createanalytical.project.registry.RegistryFiles$writeEntry$$inlined$sortedBy$1<T extends java.lang.Object> extends java.lang.Object implements java.util.Comparator  // opt-in
+  public com.creatrbypc.createanalytical.project.registry.RegistryFiles$writeEntry$$inlined$sortedBy$1();  // opt-in
+  public final int compare(T, T);  // opt-in
+
+public final class com.creatrbypc.createanalytical.project.registry.RegistryIndex  // opt-in
+  public boolean equals(java.lang.Object);  // opt-in; params ?
+  public com.creatrbypc.createanalytical.project.registry.RegistryIndex(long, java.time.Instant, java.time.Instant, java.util.Map<java.lang.String, com.creatrbypc.createanalytical.project.registry.IndexPackage>);  // opt-in; params - ! ! !
+  public final com.creatrbypc.createanalytical.project.registry.RegistryIndex copy(long, java.time.Instant, java.time.Instant, java.util.Map<java.lang.String, com.creatrbypc.createanalytical.project.registry.IndexPackage>);  // opt-in; returns !; params - ! ! !
+  public final com.creatrbypc.createanalytical.project.registry.RegistryStatus status(com.creatrbypc.createanalytical.project.LockedPackage);  // opt-in; returns !; params !
+  public final com.creatrbypc.createanalytical.project.registry.RegistryStatus status(java.lang.String, java.lang.String, java.lang.String, java.lang.String);  // opt-in; returns !; params ! ! ! !
+  public final java.time.Instant component2();  // opt-in; returns !
+  public final java.time.Instant component3();  // opt-in; returns !
+  public final java.time.Instant getExpires();  // opt-in; returns !
+  public final java.time.Instant getGenerated();  // opt-in; returns !
+  public final java.util.List<com.creatrbypc.createanalytical.project.LockedPackage> lockedClosure(java.lang.String, java.lang.String);  // opt-in; returns ?; params ! !
+  public final java.util.Map<java.lang.String, com.creatrbypc.createanalytical.project.registry.IndexPackage> component4();  // opt-in; returns !
+  public final java.util.Map<java.lang.String, com.creatrbypc.createanalytical.project.registry.IndexPackage> getPackages();  // opt-in; returns !
+  public final long component1();  // opt-in
+  public final long getSerial();  // opt-in
+  public int hashCode();  // opt-in
+  public java.lang.String toString();  // opt-in; returns !
+
+public final class com.creatrbypc.createanalytical.project.registry.RegistryIndex$lockedClosure$$inlined$sortedBy$1<T extends java.lang.Object> extends java.lang.Object implements java.util.Comparator  // opt-in
+  public com.creatrbypc.createanalytical.project.registry.RegistryIndex$lockedClosure$$inlined$sortedBy$1();  // opt-in
+  public final int compare(T, T);  // opt-in
+
+public final class com.creatrbypc.createanalytical.project.registry.RegistryIndexes  // opt-in
+  public final byte[] write(com.creatrbypc.createanalytical.project.registry.RegistryIndex);  // opt-in; returns !; params !
+  public final com.creatrbypc.createanalytical.project.registry.RegistryResult<com.creatrbypc.createanalytical.project.registry.RegistryIndex> build(com.creatrbypc.createanalytical.project.registry.RegistryConfig, com.creatrbypc.createanalytical.project.registry.ReservedNames, java.util.List<com.creatrbypc.createanalytical.project.registry.PackageEntry>, long, java.time.Instant);  // opt-in; returns !; params ! ! ! - !
+  public final com.creatrbypc.createanalytical.project.registry.RegistryResult<com.creatrbypc.createanalytical.project.registry.RegistryIndex> parse(byte[]);  // opt-in; returns !; params !
+  public final java.lang.String sha256(byte[]);  // opt-in; returns !; params !
+  public static final com.creatrbypc.createanalytical.project.registry.RegistryIndexes INSTANCE;  // opt-in; returns !
+  public static final java.lang.String FILE_NAME; = String index.json  // opt-in; returns !
+  public static final long INDEX_VERSION; = long 1l  // opt-in
+
+public final class com.creatrbypc.createanalytical.project.registry.RegistryIndexes$build$$inlined$sortedBy$1<T extends java.lang.Object> extends java.lang.Object implements java.util.Comparator  // opt-in
+  public com.creatrbypc.createanalytical.project.registry.RegistryIndexes$build$$inlined$sortedBy$1();  // opt-in
+  public final int compare(T, T);  // opt-in
+
+public final class com.creatrbypc.createanalytical.project.registry.RegistryIndexes$cycleMember$$inlined$sortedBy$1<T extends java.lang.Object> extends java.lang.Object implements java.util.Comparator  // opt-in
+  public com.creatrbypc.createanalytical.project.registry.RegistryIndexes$cycleMember$$inlined$sortedBy$1();  // opt-in
+  public final int compare(T, T);  // opt-in
+
+public final class com.creatrbypc.createanalytical.project.registry.RegistryIndexes$cycleMember$$inlined$sortedBy$2<T extends java.lang.Object> extends java.lang.Object implements java.util.Comparator  // opt-in
+  public com.creatrbypc.createanalytical.project.registry.RegistryIndexes$cycleMember$$inlined$sortedBy$2();  // opt-in
+  public final int compare(T, T);  // opt-in
+
+public final class com.creatrbypc.createanalytical.project.registry.RegistryKeys  // opt-in
+  public com.creatrbypc.createanalytical.project.registry.RegistryKeys(java.util.List<com.creatrbypc.createanalytical.project.registry.TrustedKey>);  // opt-in; params !
+  public final com.creatrbypc.createanalytical.project.registry.TrustedKey find(java.lang.String);  // opt-in; returns ?; params !
+  public final java.util.List<com.creatrbypc.createanalytical.project.registry.TrustedKey> getKeys();  // opt-in; returns !
+
+public final class com.creatrbypc.createanalytical.project.registry.RegistryLimits  // opt-in
+  public static final com.creatrbypc.createanalytical.project.registry.RegistryLimits INSTANCE;  // opt-in; returns !
+  public static final int MAX_CLOSURE; = int 4096  // opt-in
+  public static final int MAX_CONFIG_BYTES; = int 16384  // opt-in
+  public static final int MAX_DEPENDENCIES; = int 256  // opt-in
+  public static final int MAX_ENTRY_BYTES; = int 1048576  // opt-in
+  public static final int MAX_INDEX_BYTES; = int 16777216  // opt-in
+  public static final int MAX_OWNERS; = int 16  // opt-in
+  public static final int MAX_PACKAGES; = int 20000  // opt-in
+  public static final int MAX_RESERVED_BYTES; = int 262144  // opt-in
+  public static final int MAX_RESERVED_NAMES; = int 4096  // opt-in
+  public static final int MAX_REVIEWERS; = int 16  // opt-in
+  public static final int MAX_SIGNATURE_BYTES; = int 4096  // opt-in
+  public static final int MAX_SIGNING_KEYS; = int 4  // opt-in
+  public static final int MAX_TOTAL_VERSIONS; = int 200000  // opt-in
+  public static final int MAX_VALIDITY_DAYS; = int 90  // opt-in
+  public static final int MAX_VERSIONS_PER_PACKAGE; = int 1000  // opt-in
+
+public final class com.creatrbypc.createanalytical.project.registry.RegistryReader
+  public com.creatrbypc.createanalytical.project.registry.RegistryReader(com.creatrbypc.createanalytical.project.ProjectDiagnostics);  // params !
+  public final com.creatrbypc.createanalytical.project.ProjectDiagnostics getDiagnostics();  // returns !
+  public final com.creatrbypc.createanalytical.project.registry.Withdrawal withdrawal(com.creatrbypc.createanalytical.project.JsonObject, java.lang.String);  // returns ?; params ? !
+  public final java.lang.Long id(com.creatrbypc.createanalytical.project.JsonInteger, java.lang.String);  // returns ?; params ? !
+  public final java.lang.String keyId(com.creatrbypc.createanalytical.project.JsonValue, java.lang.String);  // returns ?; params ? !
+  public final java.lang.String license(com.creatrbypc.createanalytical.project.JsonString);  // returns ?; params ?
+  public final java.lang.String login(com.creatrbypc.createanalytical.project.JsonValue, java.lang.String);  // returns ?; params ? !
+  public final java.lang.String name(com.creatrbypc.createanalytical.project.JsonString);  // returns ?; params ?
+  public final java.lang.String name(java.lang.String, kotlin.Pair<java.lang.Integer, java.lang.Integer>);  // returns ?; params ! ?
+  public final java.lang.String sha256(com.creatrbypc.createanalytical.project.JsonString);  // returns ?; params ?
+  public final java.lang.String source(com.creatrbypc.createanalytical.project.JsonString);  // returns ?; params ?
+  public final java.lang.String text(com.creatrbypc.createanalytical.project.JsonString, java.lang.String);  // returns ?; params ? !
+  public final java.lang.String version(com.creatrbypc.createanalytical.project.JsonString);  // returns ?; params ?
+  public final java.lang.String version(java.lang.String, kotlin.Pair<java.lang.Integer, java.lang.Integer>);  // returns ?; params ! ?
+  public final java.time.Instant timestamp(com.creatrbypc.createanalytical.project.JsonString, java.lang.String);  // returns ?; params ? !
+  public final java.time.LocalDate date(com.creatrbypc.createanalytical.project.JsonString, java.lang.String);  // returns ?; params ? !
+  public final java.util.List<kotlin.Pair<java.lang.String, com.creatrbypc.createanalytical.project.JsonValue>> versionKeys(com.creatrbypc.createanalytical.project.JsonObject, java.lang.String, java.lang.String);  // returns ?; params ? ! ?
+  public final java.util.Map<java.lang.String, java.lang.String> dependencies(com.creatrbypc.createanalytical.project.JsonObject, java.lang.String);  // returns ?; params ? !
+  public final kotlin.Pair<com.creatrbypc.createanalytical.project.JsonObject, com.creatrbypc.createanalytical.project.FieldReader> document(byte[], int, java.lang.String, java.lang.String, long, com.creatrbypc.createanalytical.project.ProjectDiagnosticCode);  // returns ?; params ! - ! ! - !
+
+public final class com.creatrbypc.createanalytical.project.registry.RegistryResult<T extends java.lang.Object> extends java.lang.Object  // opt-in
+  public com.creatrbypc.createanalytical.project.registry.RegistryResult(T, java.util.List<com.creatrbypc.createanalytical.project.ProjectDiagnostic>, boolean);  // opt-in; params ? ! -
+  public final T getValue();  // opt-in; returns ?
+  public final java.util.List<com.creatrbypc.createanalytical.project.ProjectDiagnostic> getDiagnostics();  // opt-in; returns !
+
+public final class com.creatrbypc.createanalytical.project.registry.RegistryRules  // opt-in
+  public final boolean isValidId(long);  // opt-in
+  public final boolean isValidLogin(java.lang.String);  // opt-in; params !
+  public final boolean sameSource(java.lang.String, java.lang.String);  // opt-in; params ! !
+  public final java.lang.String entryPath(java.lang.String);  // opt-in; returns !; params !
+  public final java.lang.String formatTimestamp(java.time.Instant);  // opt-in; returns !; params !
+  public final java.time.Instant parseTimestamp(java.lang.String);  // opt-in; returns ?; params !
+  public final java.util.List<java.lang.String> similarNames(java.lang.String, java.util.Collection<java.lang.String>);  // opt-in; returns !; params ! !
+  public static final com.creatrbypc.createanalytical.project.registry.RegistryRules INSTANCE;  // opt-in; returns !
+  public static final int MAX_KEY_ID_LENGTH; = int 64  // opt-in
+  public static final int MAX_TEXT_LENGTH; = int 200  // opt-in
+  public static final long MAX_ID; = long 9007199254740991l  // opt-in
+
+public final class com.creatrbypc.createanalytical.project.registry.RegistryStatus extends java.lang.Enum<com.creatrbypc.createanalytical.project.registry.RegistryStatus>  // opt-in
+  public static com.creatrbypc.createanalytical.project.registry.RegistryStatus valueOf(java.lang.String);  // opt-in
+  public static com.creatrbypc.createanalytical.project.registry.RegistryStatus[] values();  // opt-in
+  public static final com.creatrbypc.createanalytical.project.registry.RegistryStatus NAME_MISMATCH;  // opt-in
+  public static final com.creatrbypc.createanalytical.project.registry.RegistryStatus NAME_USED_BY_ANOTHER_SOURCE;  // opt-in
+  public static final com.creatrbypc.createanalytical.project.registry.RegistryStatus NOT_IN_REGISTRY;  // opt-in
+  public static final com.creatrbypc.createanalytical.project.registry.RegistryStatus REMOVED;  // opt-in
+  public static final com.creatrbypc.createanalytical.project.registry.RegistryStatus REVIEWED;  // opt-in
+  public static final com.creatrbypc.createanalytical.project.registry.RegistryStatus SHA256_MISMATCH;  // opt-in
+  public static final com.creatrbypc.createanalytical.project.registry.RegistryStatus VERSION_NOT_REVIEWED;  // opt-in
+  public static final com.creatrbypc.createanalytical.project.registry.RegistryStatus YANKED;  // opt-in
+  public static kotlin.enums.EnumEntries<com.creatrbypc.createanalytical.project.registry.RegistryStatus> getEntries();  // opt-in; returns !
+
+public final class com.creatrbypc.createanalytical.project.registry.ReservedNames  // opt-in
+  public boolean equals(java.lang.Object);  // opt-in; params ?
+  public com.creatrbypc.createanalytical.project.registry.ReservedNames(java.util.Map<java.lang.String, java.lang.String>);  // opt-in; params !
+  public final com.creatrbypc.createanalytical.project.registry.ReservedNames copy(java.util.Map<java.lang.String, java.lang.String>);  // opt-in; returns !; params !
+  public final java.util.Map<java.lang.String, java.lang.String> component1();  // opt-in; returns !
+  public final java.util.Map<java.lang.String, java.lang.String> getNames();  // opt-in; returns !
+  public int hashCode();  // opt-in
+  public java.lang.String toString();  // opt-in; returns !
+
+public final class com.creatrbypc.createanalytical.project.registry.Review  // opt-in
+  public boolean equals(java.lang.Object);  // opt-in; params ?
+  public com.creatrbypc.createanalytical.project.registry.Review(long, java.util.List<java.lang.String>, java.time.LocalDate);  // opt-in; params - ! !
+  public final com.creatrbypc.createanalytical.project.registry.Review copy(long, java.util.List<java.lang.String>, java.time.LocalDate);  // opt-in; returns !; params - ! !
+  public final java.time.LocalDate component3();  // opt-in; returns !
+  public final java.time.LocalDate getDate();  // opt-in; returns !
+  public final java.util.List<java.lang.String> component2();  // opt-in; returns !
+  public final java.util.List<java.lang.String> getReviewers();  // opt-in; returns !
+  public final long component1();  // opt-in
+  public final long getPullRequest();  // opt-in
+  public int hashCode();  // opt-in
+  public java.lang.String toString();  // opt-in; returns !
+
+public final class com.creatrbypc.createanalytical.project.registry.TrustedKey  // opt-in
+  public com.creatrbypc.createanalytical.project.registry.TrustedKey(java.lang.String, byte[]);  // opt-in; params ! !
+  public final byte[] getPublicKey();  // opt-in; returns !
+  public final java.lang.String getKeyId();  // opt-in; returns !
+
+public final class com.creatrbypc.createanalytical.project.registry.Withdrawal  // opt-in
+  public boolean equals(java.lang.Object);  // opt-in; params ?
+  public com.creatrbypc.createanalytical.project.registry.Withdrawal(java.lang.String, java.time.LocalDate);  // opt-in; params ! !
+  public final com.creatrbypc.createanalytical.project.registry.Withdrawal copy(java.lang.String, java.time.LocalDate);  // opt-in; returns !; params ! !
+  public final java.lang.String component1();  // opt-in; returns !
+  public final java.lang.String getReason();  // opt-in; returns !
+  public final java.time.LocalDate component2();  // opt-in; returns !
+  public final java.time.LocalDate getDate();  // opt-in; returns !
+  public int hashCode();  // opt-in
+  public java.lang.String toString();  // opt-in; returns !

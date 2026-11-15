@@ -283,6 +283,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   (use `.line` and `.column` instead of `.first` and `.second`). This module was not in v0.1.0-alpha.
 - Tests: a host compiled against the v0.1.0-alpha Core saves runs, rebuilds the saved state field by field and
   resumes them with the current Core (`BinaryCompatibilityTest`, `compat/v010alpha/OldSnapshotHost`).
+- Tests (stage A3): `api/createscript-core.api` and `api/createscript-project.api` list the public API on the JVM;
+  `ApiListingTest` fails when the compiled API differs from them. They are rewritten only with
+  `CREATESCRIPT_API_UPDATE=1` (see `docs/api/api-surface.md`).
 
 ### Fixed
 

@@ -1,9 +1,9 @@
 # API surface of `createscript-core` and `createscript-project`
 
-Status: **applied in code (stage A2)**. This document classifies every public top-level declaration of the two
-library modules. Stage A1 made the classification; stage A2 applied it with Kotlin's explicit API mode and two
-opt-in annotations (see "Applied in A2" at the end). Stage A3 will check it with a committed API listing, and
-stage A4 will add KDoc to the Stable part.
+Status: **applied in code and checked (stage A3)**. This document classifies every public top-level declaration
+of the two library modules. Stage A1 made the classification; stage A2 applied it with Kotlin's explicit API mode
+and two opt-in annotations (see "Applied in A2"); stage A3 checks it with a committed API listing (see "API
+listing"). Stage A4 will add KDoc to the Stable part.
 
 Inventory taken on `main` at `b80f73d` (2026-11-15). 172 public top-level declarations were found
 (core 122, project 50); members are classified with their declaration unless a row says otherwise.
@@ -154,3 +154,47 @@ Checked with the compiler and with `javap` on the built jars (2026-11-15, on top
   interruptions. An instruction that spans ticks (`vector(...)` and the other linear algebra operations) is not
   saved half done: after a restore it starts again. A host that restores after every single instruction would not
   get past it; this is existing behaviour, to be documented on `CreateScript.resume` in A4.
+
+## API listing (A3)
+
+`createscript-core/api/createscript-core.api` and `createscript-project/api/createscript-project.api` list the
+public API of the two modules as the JVM sees it. `ApiListingTest` in each module makes the listing again from the
+compiled classes and fails when it differs, with the lines that were removed (`-`) and added (`+`). The code that
+makes the listing is shared: `test-support/api-listing/.../ApiListing.kt`, added to the test sources of both modules.
+It uses only the JDK (`javap -v -p` through `java.util.spi.ToolProvider`, or `$JAVA_HOME/bin/javap` when the tool
+provider is missing).
+
+To change the API on purpose, make the change, then run
+
+```
+CREATESCRIPT_API_UPDATE=1 ./gradlew :createscript-core:test --tests '*ApiListingTest*' :createscript-project:test --tests '*ApiListingTest*'
+```
+
+(`--tests` applies to the task before it) and review the diff of the `.api` files with the change. The files are written only when `CREATESCRIPT_API_UPDATE` is
+`1`; otherwise a missing or different listing is a test failure. The listing is made with JDK 21 (the test fails on
+another JDK version), and it is the same on macOS and Linux.
+
+What a listing contains:
+
+- Public classes whose outer classes are public too (not synthetic), with their public and protected fields,
+  constructors and methods that are not synthetic, as `javap` prints them, sorted. A constant field shows its value,
+  because code that uses it copies the value.
+- After `//`: `opt-in` when the declaration needs opt-in (it, a class around it, or for a getter its property, has
+  `@InternalCreateScriptApi` or `@InternalCreateScriptProjectApi`); `returns !` or `returns ?` for a result marked
+  `@NotNull` or `@Nullable` by Kotlin; `params` with one mark per parameter (`!`, `?`, or `-` for neither). So a change
+  of nullability, which the JVM descriptors do not show, also changes the listing.
+
+Kotlin `internal` and the JVM: an `internal` function or property accessor is public on the JVM with a name that ends
+in `$createscript_core` or `$createscript_project`; these are left out. An `internal` class, constructor or constant is
+public on the JVM without such a name, and `javap` cannot tell it from a public one (that needs the Kotlin metadata,
+which the JDK cannot read). They are listed like the other JVM-public declarations: after A2 there are 14
+`internal` classes, objects and interfaces, 3 `internal` constructors and 24 `internal` constants in the two modules.
+A change to them shows in the listing too.
+
+What the listing does not show:
+
+- Synthetic members, among them the hidden compatibility constructors and `copy` of `Program` and `CompiledProgram`
+  (`@Deprecated(level = HIDDEN)`). `BinaryCompatibilityTest` keeps checking those.
+- Default values of parameters and other facts kept only in the Kotlin metadata.
+- `copy` and `componentN` of `CompiledProgram` are not marked `opt-in` in the listing (the compiler adds no marker to
+  them), although using them needs opt-in because their types do.

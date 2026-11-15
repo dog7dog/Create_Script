@@ -38,3 +38,15 @@ dependencies {
 tasks.named('test', Test) {
     useJUnitPlatform()
 }
+
+// A3: 公開 API の一覧（api/createscript-project.api）。ApiListingTest が JDK 21 の javap でコンパイル済みのクラスから一覧を作って比べる。
+// 一覧を書き直すのは CREATESCRIPT_API_UPDATE=1 のときだけ（docs/api/api-surface.md）。比べる処理は core と project で共有する
+kotlin.sourceSets.test.kotlin.srcDir(rootProject.file('test-support/api-listing'))
+tasks.named('test') {
+    def listing = file('api/createscript-project.api')
+    def mainClasses = sourceSets.main.output.classesDirs
+    inputs.files(listing).withPropertyName('apiListing').withPathSensitivity(PathSensitivity.RELATIVE)
+    inputs.property('apiUpdate', providers.environmentVariable('CREATESCRIPT_API_UPDATE').orElse(''))
+    systemProperty 'createscript.api.listing', listing.absolutePath
+    systemProperty 'createscript.api.classes', mainClasses.asPath
+}
