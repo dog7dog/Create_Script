@@ -1,0 +1,32 @@
+// CreateScript Install：GitHub Releases からのパッケージアーカイブのダウンロード、SHA-256 の照合、キャッシュ（S8.2 Phase 2）、
+// 依存の解決とジャーナルによるインストール（S8.2 Phase 3）。
+// JDK の HttpClient だけを使い、ほかのライブラリに依存しない。ダウンロードしたものを実行しない。Minecraft・NeoForge・Create・Kotlin for Forge に依存しない
+plugins {
+    id 'java-library'
+    // 版はルートの build.gradle で指定した 2.0.0 を使う（同じビルドの中で版を二重に指定できないため）
+    id 'org.jetbrains.kotlin.jvm'
+}
+
+repositories {
+    mavenCentral()
+}
+
+java.toolchain.languageVersion = JavaLanguageVersion.of(21)
+
+kotlin {
+    jvmToolchain(21)
+}
+
+dependencies {
+    // SHA-256 の形・パッケージの名前と取得元の規則・JSON（GitHub API の応答を読む）
+    implementation project(':createscript-project')
+
+    // JUnit（単体テスト用。通信のテストは JDK の jdk.httpserver によるローカルのサーバーで行う）
+    testImplementation(platform("org.junit:junit-bom:5.10.2"))
+    testImplementation("org.junit.jupiter:junit-jupiter")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+}
+
+tasks.named('test', Test) {
+    useJUnitPlatform()
+}

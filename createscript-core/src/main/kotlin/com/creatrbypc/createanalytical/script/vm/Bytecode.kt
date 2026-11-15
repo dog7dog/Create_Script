@@ -4,6 +4,8 @@ import com.creatrbypc.createanalytical.script.diagnostic.SourcePosition
 
 // 命令数・定数・変数・スタックの上限（定数 256 は A10 で確定、それ以外は暫定値）
 object VmLimits {
+    // コンパイルしたプログラムの命令の数の上限の既定値（CompileOptions.DEFAULT・EMBEDDED。第8.0.1段階からは CompileOptions で指定し、
+    // 独立版の createscript コマンドでは使わない）。コンパイル時の上限で、VM は実行中に確かめない
     const val MAX_INSTRUCTIONS = 4096
     const val MAX_CONSTANTS = 256
     const val MAX_VARIABLES = 64
@@ -324,4 +326,35 @@ data class CompiledProgram(
     val classes: List<ClassInfo> = emptyList(),
     // NEW_LIST で作るリストの形（第3.10a段階。同じ形は1つにまとめる）
     val lists: List<ListShape> = emptyList(),
-)
+    // エラーフォールバック ?! の範囲（第9.2段階。内側の範囲が先）。?! を使わないプログラムは空で、命令・ハッシュはこれまでと同じ
+    val handlers: List<ErrorHandler> = emptyList(),
+) {
+    // 第9.2段階より前（handlers の無い 7 つの項目）のバイナリとの互換。それに対してコンパイルしたコードが呼ぶコンストラクター（既定値付きの合成コンストラクターを含む）・
+    // copy・copy$default を JVM に残す（Program の v0.1.0-alpha 互換と同じ方法。ソースからは見えない）。互換用の copy は handlers を引き継ぐ
+    @Deprecated("Binary compatibility with programs compiled before stage 9.2", level = DeprecationLevel.HIDDEN)
+    constructor(
+        instructions: List<Instruction>,
+        constants: List<Constant>,
+        variableCount: Int,
+        maxStackDepth: Int,
+        functions: List<FunctionInfo> = emptyList(),
+        classes: List<ClassInfo> = emptyList(),
+        lists: List<ListShape> = emptyList(),
+    ) : this(instructions, constants, variableCount, maxStackDepth, functions, classes, lists, emptyList())
+
+    @Deprecated("Binary compatibility with programs compiled before stage 9.2", level = DeprecationLevel.HIDDEN)
+    fun copy(
+        instructions: List<Instruction> = this.instructions,
+        constants: List<Constant> = this.constants,
+        variableCount: Int = this.variableCount,
+        maxStackDepth: Int = this.maxStackDepth,
+        functions: List<FunctionInfo> = this.functions,
+        classes: List<ClassInfo> = this.classes,
+        lists: List<ListShape> = this.lists,
+    ): CompiledProgram = CompiledProgram(instructions, constants, variableCount, maxStackDepth, functions, classes, lists, handlers)
+}
+
+// エラーフォールバック（第9.2段階）の範囲。start 以上 end 未満の命令（とそこから呼んだ関数）で回復できる実行時エラーが起きたら、呼び出しフレームを
+// この範囲のある手続きのフレームまで戻し、そのフレームのスタックを先頭の stackDepth 個に切り詰めて handler へ移る。handler は範囲と同じ手続きの中で、範囲の外。
+// 状態は命令の表だけで、保存する実行状態（VmSnapshot）には何も加えない
+data class ErrorHandler(val start: Int, val end: Int, val handler: Int, val stackDepth: Int)

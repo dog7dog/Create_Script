@@ -12,6 +12,10 @@ import com.creatrbypc.createanalytical.script.ast.ContinueStatement
 import com.creatrbypc.createanalytical.script.ast.DoubleLiteral
 import com.creatrbypc.createanalytical.script.ast.Expression
 import com.creatrbypc.createanalytical.script.ast.ExpressionStatement
+import com.creatrbypc.createanalytical.script.ast.FallbackExpression
+import com.creatrbypc.createanalytical.script.ast.FunctionReference
+import com.creatrbypc.createanalytical.script.ast.LambdaExpression
+import com.creatrbypc.createanalytical.script.ast.PipeExpression
 import com.creatrbypc.createanalytical.script.ast.FloatLiteral
 import com.creatrbypc.createanalytical.script.ast.ForStatement
 import com.creatrbypc.createanalytical.script.ast.FunctionDeclaration
@@ -38,10 +42,17 @@ import com.creatrbypc.createanalytical.script.diagnostic.DiagnosticCollector
 import com.creatrbypc.createanalytical.script.diagnostic.DiagnosticPhase
 import com.creatrbypc.createanalytical.script.diagnostic.DiagnosticSeverity
 import com.creatrbypc.createanalytical.script.diagnostic.SourcePosition
+import com.creatrbypc.createanalytical.script.graph.Graphs
 import com.creatrbypc.createanalytical.script.lexer.Lexer
+import com.creatrbypc.createanalytical.script.lexer.LexerLimits
+import com.creatrbypc.createanalytical.script.module.ModuleLimits
 import com.creatrbypc.createanalytical.script.parser.Parser
+import com.creatrbypc.createanalytical.script.parser.ParserLimits
 import com.creatrbypc.createanalytical.script.semantic.AnalyzedProgram
 import com.creatrbypc.createanalytical.script.semantic.BuiltinFunctions
+import com.creatrbypc.createanalytical.script.semantic.CollectionCall
+import com.creatrbypc.createanalytical.script.semantic.CollectionOperation
+import com.creatrbypc.createanalytical.script.semantic.InlineFunction
 import com.creatrbypc.createanalytical.script.semantic.LinalgOperation
 import com.creatrbypc.createanalytical.script.semantic.ListOperation
 import com.creatrbypc.createanalytical.script.semantic.MathCall
@@ -54,6 +65,7 @@ import com.creatrbypc.createanalytical.script.semantic.VariableSymbol
 import com.creatrbypc.createanalytical.script.vm.ClassInfo
 import com.creatrbypc.createanalytical.script.vm.CompiledProgram
 import com.creatrbypc.createanalytical.script.vm.Constant
+import com.creatrbypc.createanalytical.script.vm.ErrorHandler
 import com.creatrbypc.createanalytical.script.vm.FieldInfo
 import com.creatrbypc.createanalytical.script.vm.FunctionInfo
 import com.creatrbypc.createanalytical.script.vm.HostFunction
@@ -75,8 +87,72 @@ data class CompileResult(
     val hasErrors: Boolean,
 )
 
+// コンパイルの設定（第8.0.1段階）。maxInstructions はコンパイルしたプログラムの大きさ（バイトコードの命令の数）の上限で、null なら上限なし。
+// これはコンパイル時の上限で、VM は実行中に確かめない。実行時の予算（1 tick の命令数: RunOptions.instructionsPerTick）・スタック・呼び出しの深さ・
+// オブジェクト・リストなどの上限とは別で、どの設定でもそれらは変わらない。定数・変数・引数・プロパティの数の上限も、VM と検証の前提のため変わらない。
+// 設定はプログラムを受け付けるかどうかだけを決め、受け付けたプログラムの命令・ハッシュ（ProgramFingerprint）は設定によらず同じ。
+//
+// null（上限なし）でも、コンパイルが際限なく資源を使ってよいという意味ではない。プログラムの大きさは、入力の上限（1 つのソースの文字数・トークン数・
+// AST のノード数: LexerLimits・ParserLimits、モジュールの数: ModuleLimits）で抑えられている。コンパイルのたびに行う検証（SnapshotVerifier.framesOf）の
+// 時間とメモリーは命令数にほぼ比例する（開発機の計測で、検証に不利な形の 65,535 命令で約 2.4 秒・約 180 MiB）。
+// 入力の上限を広げるときは、コンパイルの時間とメモリーの上限を設計し直すこと
+//
+// 入力の上限（第8.0.1段階）: maxSourceLength・maxTokens・maxNodes は 1 つのファイルごと、maxModules はエントリーを除くモジュールの数、
+// maxTotalSourceLength はエントリーとすべてのモジュールの長さの合計。既定（DEFAULT・EMBEDDED）はこれまでの値（合計はファイルごとの上限 × ファイルの数で、
+// これまでと同じく実質的な制限にならない）
+data class CompileOptions(
+    val maxInstructions: Int? = VmLimits.MAX_INSTRUCTIONS,
+    val maxSourceLength: Int = LexerLimits.MAX_SOURCE_LENGTH,
+    val maxTokens: Int = LexerLimits.MAX_TOKENS,
+    val maxNodes: Int = ParserLimits.MAX_NODES,
+    val maxModules: Int = ModuleLimits.MAX_MODULES,
+    val maxTotalSourceLength: Int = LexerLimits.MAX_SOURCE_LENGTH * (ModuleLimits.MAX_MODULES + 1),
+    // 型の注釈の無いプロパティの型の連鎖（C1 の初期化式が C2 のプロパティの型を使い、C2 が C3 の…）の上限。null なら上限なし（既定。ノード数 2048 で連鎖は短い）
+    val maxPropertyTypeChain: Int? = null,
+    // エントリーとすべてのモジュールのトークン数の合計の上限。コンパイル中に保持する AST などのメモリーはトークン数にほぼ比例する（開発機の計測で 1 トークンあたり最大約 330 バイト）
+    val maxTotalTokens: Int = LexerLimits.MAX_TOKENS * (ModuleLimits.MAX_MODULES + 1),
+    // コンパイルの最後に行うバイトコードの検証（SnapshotVerifier）の処理回数の上限。null なら理論上の上限（SnapshotVerifier.maxSteps。既定）。
+    // 正しいプログラムの処理回数は、ふつう命令数の数倍で済むが、変数の初期化の状態が少しずつ伝わる形では命令数 ×（変数の数 + 1）まで増える
+    val maxVerificationSteps: Long? = null,
+) {
+    init {
+        require(maxInstructions == null || maxInstructions > 0) { "maxInstructions must be positive or null: $maxInstructions" }
+        require(maxSourceLength > 0 && maxTokens > 0 && maxNodes > 0 && maxModules >= 0 && maxTotalSourceLength > 0) { "limits must be positive: $this" }
+        require(maxPropertyTypeChain == null || maxPropertyTypeChain > 0) { "maxPropertyTypeChain must be positive or null: $maxPropertyTypeChain" }
+        require(maxTotalTokens >= maxTokens) { "maxTotalTokens must be at least maxTokens: $this" }
+        require(maxVerificationSteps == null || maxVerificationSteps > 0) { "maxVerificationSteps must be positive or null: $maxVerificationSteps" }
+        // プログラム全体の位置（offset）は Int。ファイルごとに 1 つ区切りを足すため、合計の上限とファイルの数の和が Int に収まること
+        require(maxTotalSourceLength.toLong() + maxModules + 1 <= Int.MAX_VALUE) { "maxTotalSourceLength is too large: $maxTotalSourceLength" }
+    }
+
+    companion object {
+        // CreateScript.compile(source)・Compiler.compileSource(source) の既定（これまでと同じ 4096 命令）
+        val DEFAULT = CompileOptions()
+
+        // 埋め込み先（Create: Analytical などのホスト）向け。4096 命令を明示して指定する
+        val EMBEDDED = CompileOptions(VmLimits.MAX_INSTRUCTIONS)
+
+        // 独立版の createscript コマンド向け。命令数の上限なし（入力の上限・実行時の上限はそのまま）
+        val STANDALONE = CompileOptions(
+            maxInstructions = null,
+            maxSourceLength = 1_000_000,
+            maxTokens = 250_000,
+            maxNodes = 250_000,
+            maxModules = 1024,
+            maxTotalSourceLength = 8_000_000,
+            maxPropertyTypeChain = 128,
+            maxTotalTokens = 1_000_000,
+            maxVerificationSteps = 100_000_000,
+        )
+    }
+}
+
 // 意味解析済みの AST をスタック型 VM のバイトコードへ変換する。Minecraft に依存しない純粋な Kotlin
-class Compiler private constructor(private val analyzed: AnalyzedProgram, private val diagnostics: DiagnosticCollector) {
+class Compiler private constructor(
+    private val analyzed: AnalyzedProgram,
+    private val diagnostics: DiagnosticCollector,
+    private val options: CompileOptions,
+) {
     private val instructions = ArrayList<Instruction>()
     private val constants = ArrayList<Constant>()
 
@@ -126,32 +202,69 @@ class Compiler private constructor(private val analyzed: AnalyzedProgram, privat
 
     private val loops = ArrayList<Loop>()
 
+    // エラーフォールバックの範囲（第9.2段階。内側の範囲が先に閉じるため先に並ぶ）と、ラムダの展開の回数・入れ子（第9.0・9.3段階）
+    private val handlers = ArrayList<ErrorHandler>()
+    private var inlineExpansions = 0
+    private var inlineDepth = 0
+    private var inlinedInstructions = 0
+
     // 上限超過。報告済みのため、これ以上変換しない
     private class CompileAbort : RuntimeException(null, null, false, false)
 
     companion object {
-        fun compile(semanticResult: SemanticResult): CompileResult {
+        // 引数 1 つのものは CompileOptions.DEFAULT（4096 命令）。これまでの呼び出し（コンパイル済みのものを含む）のため、既定値付きの引数ではなく別の関数にする
+        fun compile(semanticResult: SemanticResult): CompileResult = compile(semanticResult, CompileOptions.DEFAULT)
+
+        fun compile(semanticResult: SemanticResult, options: CompileOptions): CompileResult {
             val diagnostics = DiagnosticCollector()
             diagnostics.merge(semanticResult.diagnostics, semanticResult.diagnosticsTruncated, semanticResult.hasErrors)
             // 前の段階でエラーがあれば変換しない（A8）
-            val program = semanticResult.program?.let { Compiler(it, diagnostics).run() }?.let { verified(it, diagnostics) }
+            val program = semanticResult.program?.let { Compiler(it, diagnostics, options).run() }?.let { verified(it, diagnostics, options) }
             return CompileResult(program.takeUnless { diagnostics.hasErrors }, diagnostics.diagnostics, diagnostics.isTruncated, diagnostics.hasErrors)
         }
 
         // ソースから Lexer → Parser → Semantic → Compiler を順に実行する
-        fun compileSource(source: String): CompileResult =
-            compile(SemanticAnalyzer.analyze(Parser.parse(Lexer.tokenize(source))))
+        fun compileSource(source: String): CompileResult = compileSource(source, CompileOptions.DEFAULT)
+
+        fun compileSource(source: String, options: CompileOptions): CompileResult =
+            compile(SemanticAnalyzer.analyze(Parser.parse(Lexer.tokenize(source, options.maxSourceLength, options.maxTokens), options.maxNodes), options.maxPropertyTypeChain), options)
 
         // 出力したバイトコードを SnapshotVerifier で検証する（第3.7b段階）。分岐先・合流点のスタックの深さと型・変数の初期化を確かめ、
         // スタックの深さが maxStackDepth を超えないことも確かめる。通らなければ Compiler の内部エラーとして報告し、プログラムを返さない
-        internal fun verified(program: CompiledProgram, diagnostics: DiagnosticCollector): CompiledProgram? {
-            val frames = SnapshotVerifier.framesOf(program)
-            if (frames != null && frames.all { (it?.stack?.size ?: 0) <= program.maxStackDepth }) return program
+        // 第8.0.1段階: CompileOptions.maxVerificationSteps（独立版）があれば、検証の処理回数をそこまでに抑え、超えたら CS_COMP_PROGRAM_TOO_COMPLEX にする
+        // （上限の無いときは、これまでどおり SnapshotVerifier.maxSteps。正しいプログラムがそれに達することは無い）
+        // その場合は、基本ブロックの先頭の状態だけを持つ SnapshotVerifier.analyzeBlocks で検証する（framesOf と同じ規則で、メモリーと時間が少ない）
+        internal fun verified(program: CompiledProgram, diagnostics: DiagnosticCollector, options: CompileOptions = CompileOptions.DEFAULT): CompiledProgram? {
+            val limit = options.maxVerificationSteps
+            if (limit == null) {
+                val frames = SnapshotVerifier.framesOf(program)
+                if (frames != null && frames.all { (it?.stack?.size ?: 0) <= program.maxStackDepth }) return program
+                diagnostics.report(Diagnostic(DiagnosticCode.COMP_VERIFICATION_FAILED, DiagnosticSeverity.ERROR, DiagnosticPhase.COMPILER, END))
+                return null
+            }
+            when (val analysis = SnapshotVerifier.analyzeBlocks(program, minOf(limit, SnapshotVerifier.maxSteps(program)))) {
+                is SnapshotVerifier.BlockAnalysis.Verified -> if (analysis.maxStackDepth <= program.maxStackDepth) return program
+                SnapshotVerifier.BlockAnalysis.StepLimitReached -> {
+                    diagnostics.report(
+                        Diagnostic(DiagnosticCode.COMP_PROGRAM_TOO_COMPLEX, DiagnosticSeverity.ERROR, DiagnosticPhase.COMPILER, END, listOf(DiagnosticArgument.IntArgument(options.maxVerificationSteps!!.coerceAtMost(Int.MAX_VALUE.toLong()).toInt())))
+                    )
+                    return null
+                }
+                SnapshotVerifier.BlockAnalysis.Invalid -> {}
+            }
             diagnostics.report(Diagnostic(DiagnosticCode.COMP_VERIFICATION_FAILED, DiagnosticSeverity.ERROR, DiagnosticPhase.COMPILER, END))
             return null
         }
 
         private val END = SourcePosition(0, 1, 1)
+
+        // ラムダの展開の上限（第9.3段階）。関数の値を入れ子に呼ぶと展開が指数的に増えうるため、回数と入れ子の深さを抑える
+        const val MAX_INLINE_EXPANSIONS = 4096
+        const val MAX_INLINE_DEPTH = 32
+
+        // ラムダの展開の中で出す命令の合計の上限（第9.3段階）。命令数の上限の無い独立版でも、大きな本体の関数の値を何度も呼んで
+        // コンパイルのメモリーと検証の時間が入力の大きさに比べて際限なく増えないようにする
+        const val MAX_INLINED_INSTRUCTIONS = 1_000_000
     }
 
     // トップレベルの文（HALT で終わる）の後に、手続きを AnalyzedProgram.routines の順に並べる。関数の無いプログラムの命令は第3.8b段階と、
@@ -179,7 +292,7 @@ class Compiler private constructor(private val analyzed: AnalyzedProgram, privat
             val fields = declaration.properties.map { FieldInfo(it.name, slotTypeOf(analyzed.propertyTypes.getValue(it))) }
             ClassInfo(declaration.name, fields, routineIndices[declaration] ?: -1)
         }
-        CompiledProgram(instructions.toList(), constants.toList(), slotCount, maxStackDepth, functions, classes, listShapes.toList())
+        CompiledProgram(instructions.toList(), constants.toList(), slotCount, maxStackDepth, functions, classes, listShapes.toList(), handlers.toList())
     } catch (abort: CompileAbort) {
         null
     }
@@ -208,6 +321,7 @@ class Compiler private constructor(private val analyzed: AnalyzedProgram, privat
             ScriptType.UNIT -> error("Semantic analysis should have rejected a Unit property")
             is ScriptType.ClassType -> SnapshotVerifier.SlotType.OBJECT(classIndices.getValue(current.declaration))
             is ScriptType.ListType -> error("unreachable")
+            is ScriptType.FunctionType -> error("Semantic analysis should have rejected a function value")
         }.also { slotTypes[current] = it }
         for (list in pending.asReversed()) {
             result = SnapshotVerifier.SlotType.LIST(result)
@@ -268,11 +382,14 @@ class Compiler private constructor(private val analyzed: AnalyzedProgram, privat
     // これにより、再帰に入らない呼び出しは実行時に CS_RUN_STACK_OVERFLOW にならない（トップレベル自身の深さは emit が上限を確かめる）。
     // 再帰に入りうる関数の深さは実行時の引数で決まるため、ここでは確かめず、VM が実行時に上限で止める（第3.8e段階）。
     // 再帰に入らない関数が呼ぶ関数も再帰に入らないため、neededBy がたどる関係に循環は無く、必ず終わる
+    // 呼び出しを呼び出し元ごとにまとめておく（第8.0.1段階。関数ごとにすべての呼び出しを探すと、関数の数の 2 乗の手間になるため）。
+    // neededBy の再帰の深さは、checkCallDepth を通った再帰に入らない呼び出しの連鎖の長さ（MAX_CALL_DEPTH 以下）
     private fun checkTotalStackDepth() {
         val needed = IntArray(functionMaxDepths.size) { -1 }
+        val sitesByCaller = callSites.filter { it.caller >= 0 }.groupBy { it.caller }
         fun neededBy(function: Int): Int {
             if (needed[function] < 0) {
-                needed[function] = maxOf(functionMaxDepths[function], callSites.filter { it.caller == function }.maxOfOrNull { it.base + neededBy(it.callee) } ?: 0)
+                needed[function] = maxOf(functionMaxDepths[function], sitesByCaller[function].orEmpty().maxOfOrNull { it.base + neededBy(it.callee) } ?: 0)
             }
             return needed[function]
         }
@@ -285,11 +402,17 @@ class Compiler private constructor(private val analyzed: AnalyzedProgram, privat
     // 呼び出しの深さ（その関数から始まる最も長い呼び出しの連鎖に含まれる関数の数）が上限を超える関数を拒否する。
     // 再帰に入りうる関数は深さが実行時に決まるため対象外（VM が CS_RUN_CALL_DEPTH_EXCEEDED で止める）。
     // 再帰に入らない関数が呼ぶ関数も再帰に入らないため、depthOf がたどる関係に循環は無く、必ず終わる
+    // 第8.0.1段階: 再帰せずに求める。再帰に入らない関数どうしの呼び出しの関係には循環が無いため、行き先が先になる順（強連結成分の番号の順）に
+    // 深さを決める。深さは MAX_CALL_DEPTH + 1 で打ち切る（それを超えるかどうかだけが必要で、長い連鎖でも値が大きくならない）
     private fun checkCallDepth() {
-        val depths = IdentityHashMap<CallableDeclaration, Int>()
-        fun depthOf(routine: CallableDeclaration): Int =
-            depths[routine] ?: (1 + (analyzed.callees.getValue(routine).maxOfOrNull(::depthOf) ?: 0)).also { depths[routine] = it }
-        val tooDeep = analyzed.routines.firstOrNull { !reachesRecursion[routineIndices.getValue(it)] && depthOf(it) > VmLimits.MAX_CALL_DEPTH } ?: return
+        val routines = analyzed.routines
+        val component = Graphs.stronglyConnectedComponents(routines.size, calleeIndices::get)
+        val depths = IntArray(routines.size)
+        for (index in routines.indices.sortedBy { component[it] }) {
+            if (reachesRecursion[index]) continue
+            depths[index] = minOf(VmLimits.MAX_CALL_DEPTH + 1, 1 + (calleeIndices[index].maxOfOrNull { depths[it] } ?: 0))
+        }
+        val tooDeep = routines.withIndex().firstOrNull { (index, _) -> !reachesRecursion[index] && depths[index] > VmLimits.MAX_CALL_DEPTH }?.value ?: return
         val position = when (tooDeep) {
             is FunctionDeclaration -> tooDeep.namePosition
             is ClassDeclaration -> tooDeep.namePosition
@@ -297,33 +420,20 @@ class Compiler private constructor(private val analyzed: AnalyzedProgram, privat
         abort(DiagnosticCode.COMP_CALL_TOO_DEEP, position, VmLimits.MAX_CALL_DEPTH)
     }
 
-    // 深さ優先でたどり、たどっている途中の関数へ戻る呼び出し（循環）を見つけたら、その経路の関数をすべて「循環に入りうる」とする。
-    // 各関数は1回だけたどる（たどる深さは関数の数まで。関数の数は AST ノード数の上限 2048 で数百個に抑えられる）
-    private fun recursionReachability(): BooleanArray {
-        val functions = analyzed.routines
-        // 0: 未訪問、1: たどっている途中、2: 循環に入らない、3: 循環に入りうる
-        val state = IntArray(functions.size)
-        fun visit(index: Int): Boolean {
-            when (state[index]) {
-                1, 3 -> return true
-                2 -> return false
-            }
-            state[index] = 1
-            var cyclic = false
-            for (callee in analyzed.callees.getValue(functions[index])) {
-                if (visit(routineIndices.getValue(callee))) cyclic = true
-            }
-            state[index] = if (cyclic) 3 else 2
-            return cyclic
-        }
-        functions.indices.forEach(::visit)
-        return BooleanArray(functions.size) { state[it] == 3 }
+    // 循環に入りうる関数（循環の上にあるか、呼び出しをたどって循環へ行ける関数）。第8.0.1段階から、深さ優先の再帰の代わりに強連結成分で求める
+    // （関数の数が多くても JVM のスタックを使わない。結果は第8.0段階までの深さ優先の判定と同じ）
+    private fun recursionReachability(): BooleanArray = Graphs.reachesCycle(analyzed.routines.size, calleeIndices::get)
+
+    // 手続きごとの、呼び出す手続きの番号（AnalyzedProgram.callees を番号にしたもの）
+    private val calleeIndices: List<IntArray> by lazy {
+        analyzed.routines.map { routine -> analyzed.callees.getValue(routine).map { routineIndices.getValue(it) }.toIntArray() }
     }
 
     // 文の前後でスタックの深さは 0
     private fun compileStatement(statement: Statement) {
         when (statement) {
-            is VariableDeclaration -> {
+            // 関数の値の宣言（第9.3段階）は命令を出さない（呼び出す場所で展開する）
+            is VariableDeclaration -> if (statement !in analyzed.functionValueDeclarations) {
                 compileExpression(statement.initializer)
                 storeSlot(declareSlot(statement), statement.position)
             }
@@ -347,10 +457,7 @@ class Compiler private constructor(private val analyzed: AnalyzedProgram, privat
                 }
             }
             // 式だけの文の結果（Unit を含む）は POP で捨てる（A2）
-            is ExpressionStatement -> {
-                compileExpression(statement.expression)
-                emit(Opcode.POP, 0, statement.position, -1)
-            }
+            is ExpressionStatement -> compileDiscarded(statement.expression, statement.position)
             is IfStatement -> compileIf(statement)
             is WhileStatement -> compileWhile(statement)
             // 文の境界ではスタックの深さが 0 のため、ブロックを途中で抜けてもスタックに値は残らない。
@@ -544,8 +651,251 @@ class Compiler private constructor(private val analyzed: AnalyzedProgram, privat
             }
             is LogicalExpression -> compileLogical(expression)
             is CallExpression -> compileCall(expression)
-            is IntLiteral -> error("Semantic analysis should have rejected: $expression")
+            is PipeExpression -> compileExpression(analyzed.pipeCalls.getValue(expression))
+            is FallbackExpression -> compileFallback(expression, discard = false)
+            is IntLiteral, is LambdaExpression, is FunctionReference -> error("Semantic analysis should have rejected: $expression")
         }
+    }
+
+    // ---- リストの関数・ラムダ・エラーフォールバック（第9.0〜9.3段階） ----
+
+    // 値を残さない式の文。Unit を返す展開（each・結果が Unit の関数の値・Unit の ?!）は値を積まずに済ませ、それ以外は値を積んで POP で捨てる
+    private fun compileDiscarded(expression: Expression, position: SourcePosition) {
+        when {
+            expression is PipeExpression -> compileDiscarded(analyzed.pipeCalls.getValue(expression), position)
+            expression is CallExpression && analyzed.inlineCalls.containsKey(expression) -> compileInlineCall(expression, analyzed.inlineCalls.getValue(expression), discard = true)
+            expression is CallExpression && analyzed.collectionCalls.containsKey(expression) -> compileCollection(expression, analyzed.collectionCalls.getValue(expression), discard = true)
+            expression is FallbackExpression -> compileFallback(expression, discard = true)
+            else -> {
+                compileExpression(expression)
+                emit(Opcode.POP, 0, position, -1)
+            }
+        }
+    }
+
+    // 関数の値の呼び出し f(…)（第9.3段階）: 引数を左から積んで展開する
+    private fun compileInlineCall(call: CallExpression, function: InlineFunction, discard: Boolean) {
+        call.arguments.forEach(::compileExpression)
+        invokeInline(function, call.arguments.size, discard, call.position)
+    }
+
+    // 引数 argumentCount 個がスタックの上にある状態で関数を展開する（第9.0・9.3段階）。discard なら結果を残さず、そうでなければ結果 1 つを残す。
+    // ユーザー定義関数（関数の参照）は CALL。ラムダは引数を展開ごとに新しい変数に入れ（右の引数から STORE）、本体の文をその場でコンパイルする。
+    // 結果を残すときは最後の式の文の値をそのまま残す（Semantic が、結果のあるラムダの最後の文は式の文であることを確かめた）
+    private fun invokeInline(function: InlineFunction, argumentCount: Int, discard: Boolean, position: SourcePosition) {
+        when (function) {
+            is InlineFunction.Function -> {
+                emitCall(routineIndices.getValue(function.declaration), argumentCount, position)
+                if (discard) emit(Opcode.POP, 0, position, -1)
+            }
+            is InlineFunction.Lambda -> {
+                if (++inlineExpansions > MAX_INLINE_EXPANSIONS) abort(DiagnosticCode.COMP_TOO_MANY_INLINE_EXPANSIONS, position, MAX_INLINE_EXPANSIONS)
+                if (inlineDepth >= MAX_INLINE_DEPTH) abort(DiagnosticCode.COMP_TOO_MANY_INLINE_EXPANSIONS, position, MAX_INLINE_DEPTH)
+                inlineDepth++
+                val parameterSlots = function.parameters.map { allocateSlot(position) }
+                for (slot in parameterSlots.asReversed()) storeSlot(slot, position)
+                function.parameters.forEachIndexed { index, symbol -> (locals ?: slots)[symbol] = parameterSlots[index] }
+                val body = function.expression.body
+                val keepValue = !discard && function.result != ScriptType.UNIT
+                check(discard || keepValue) { "a Unit lambda cannot leave a value" }
+                body.forEachIndexed { index, statement ->
+                    if (keepValue && index == body.lastIndex) compileExpression((statement as ExpressionStatement).expression) else compileStatement(statement)
+                }
+                inlineDepth--
+            }
+        }
+    }
+
+    private fun pushInt(value: Int, position: SourcePosition) =
+        emit(Opcode.PUSH_CONST, constantIndex(Constant.IntConstant(value), position), position, 1)
+
+    // 空の MutableList（要素の型 element）を積む
+    private fun emitEmptyList(element: ScriptType, position: SourcePosition) {
+        val shape = ListShape(slotTypeOf(element), true, 0)
+        val index = listShapeIndices.getOrPut(shape) {
+            listShapes.add(shape)
+            listShapes.lastIndex
+        }
+        emit(Opcode.NEW_LIST, index, position, 1)
+    }
+
+    // list に value を加える（list・value の順に積む命令を body が出す）。結果の Unit は捨てる
+    private fun emitAdd(position: SourcePosition, operands: () -> Unit) {
+        operands()
+        emit(Opcode.LIST_ADD, 0, position, -1)
+        emit(Opcode.POP, 0, position, -1)
+    }
+
+    // 変数 counter を 1 増やす
+    private fun emitIncrement(counter: Int, position: SourcePosition) {
+        loadSlot(counter, position)
+        pushInt(1, position)
+        emit(Opcode.ADD, NumericKind.INT, position, -1)
+        storeSlot(counter, position)
+    }
+
+    // 変数 index を 0 から list の要素数の手前まで進めるループ。要素数は反復ごとに読み直す（本体が受け手を変更しても範囲外を読まない）:
+    //   index = 0; 先頭: index < list.size でなければ出口; 本体; index = index + 1; JUMP 先頭; 出口:
+    private fun emitIndexLoop(list: Int, position: SourcePosition, body: (index: Int) -> Unit) {
+        val index = allocateSlot(position)
+        pushInt(0, position)
+        storeSlot(index, position)
+        val head = instructions.size
+        loadSlot(index, position)
+        loadSlot(list, position)
+        emit(Opcode.LIST_SIZE, 0, position, 0)
+        emit(Opcode.LESS, NumericKind.INT, position, -1)
+        val exit = emitJump(Opcode.JUMP_IF_FALSE, position, -1)
+        body(index)
+        emitIncrement(index, position)
+        emit(Opcode.JUMP, head, position, 0)
+        patchJump(exit)
+    }
+
+    private fun emitElement(list: Int, index: Int, position: SourcePosition) {
+        loadSlot(list, position)
+        loadSlot(index, position)
+        emit(Opcode.LIST_GET, 0, position, -1)
+    }
+
+    // リストの関数（第9.0段階）。既存の命令だけのループに展開する（実行の途中で止めて保存・再開でき、命令数の予算も同じく数える）。
+    // 受け手・結果・添字・要素は名前の無い変数に置く。結果のリストは MutableList として作る（型は List で、ソースからは変更できない）
+    private fun compileCollection(call: CallExpression, collection: CollectionCall, discard: Boolean) {
+        val position = call.position
+        compileExpression(collection.receiver)
+        val source = allocateSlot(position)
+        storeSlot(source, position)
+        val function = collection.function
+        when (collection.operation) {
+            CollectionOperation.EACH -> {
+                emitIndexLoop(source, position) { index ->
+                    emitElement(source, index, position)
+                    invokeInline(function!!, 1, true, position)
+                }
+                check(discard) { "each has no value" }
+                return
+            }
+            CollectionOperation.WHERE -> {
+                emitEmptyList(collection.element, position)
+                val result = allocateSlot(position)
+                storeSlot(result, position)
+                val element = allocateSlot(position)
+                emitIndexLoop(source, position) { index ->
+                    emitElement(source, index, position)
+                    storeSlot(element, position)
+                    loadSlot(element, position)
+                    invokeInline(function!!, 1, false, position)
+                    val skip = emitJump(Opcode.JUMP_IF_FALSE, position, -1)
+                    emitAdd(position) {
+                        loadSlot(result, position)
+                        loadSlot(element, position)
+                    }
+                    patchJump(skip)
+                }
+                loadSlot(result, position)
+            }
+            CollectionOperation.MAP -> {
+                emitEmptyList(function!!.result, position)
+                val result = allocateSlot(position)
+                storeSlot(result, position)
+                emitIndexLoop(source, position) { index ->
+                    emitAdd(position) {
+                        loadSlot(result, position)
+                        emitElement(source, index, position)
+                        invokeInline(function, 1, false, position)
+                    }
+                }
+                loadSlot(result, position)
+            }
+            // キーの一覧 keys とグループの一覧 groups を並べて持ち、要素ごとにキーを keys から探す（無ければ末尾に加え、空のグループも加える）:
+            //   e = 要素; k = キー(e); j = 0; 探す: j < keys.size でなければ 無い; keys[j] == k なら 見つけた; j = j + 1; JUMP 探す
+            //   無い: keys.add(k); groups.add(空のリスト)（j は keys.size のまま）; 見つけた: groups[j].add(e)
+            CollectionOperation.GROUP -> {
+                val key = collection.key!!
+                emitEmptyList(key, position)
+                val keys = allocateSlot(position)
+                storeSlot(keys, position)
+                val group = ScriptType.ListType(collection.element, true)
+                emitEmptyList(group, position)
+                val groups = allocateSlot(position)
+                storeSlot(groups, position)
+                val element = allocateSlot(position)
+                val keyValue = allocateSlot(position)
+                val found = allocateSlot(position)
+                emitIndexLoop(source, position) { index ->
+                    emitElement(source, index, position)
+                    storeSlot(element, position)
+                    loadSlot(element, position)
+                    invokeInline(function!!, 1, false, position)
+                    storeSlot(keyValue, position)
+                    pushInt(0, position)
+                    storeSlot(found, position)
+                    val search = instructions.size
+                    loadSlot(found, position)
+                    loadSlot(keys, position)
+                    emit(Opcode.LIST_SIZE, 0, position, 0)
+                    emit(Opcode.LESS, NumericKind.INT, position, -1)
+                    val missing = emitJump(Opcode.JUMP_IF_FALSE, position, -1)
+                    emitElement(keys, found, position)
+                    loadSlot(keyValue, position)
+                    emit(Opcode.EQUAL, NumericKind.INT, position, -1)
+                    val next = emitJump(Opcode.JUMP_IF_FALSE, position, -1)
+                    val hit = emitJump(Opcode.JUMP, position, 0)
+                    patchJump(next)
+                    emitIncrement(found, position)
+                    emit(Opcode.JUMP, search, position, 0)
+                    patchJump(missing)
+                    emitAdd(position) {
+                        loadSlot(keys, position)
+                        loadSlot(keyValue, position)
+                    }
+                    emitAdd(position) {
+                        loadSlot(groups, position)
+                        emitEmptyList(collection.element, position)
+                    }
+                    patchJump(hit)
+                    emitAdd(position) {
+                        emitElement(groups, found, position)
+                        loadSlot(element, position)
+                    }
+                }
+                loadSlot(groups, position)
+            }
+            // Double で合計し、要素数（Double）で割る。空のリストは 0.0 / 0.0 = NaN（Kotlin の average と同じ）
+            CollectionOperation.AVERAGE -> {
+                val sum = allocateSlot(position)
+                emit(Opcode.PUSH_CONST, constantIndex(Constant.DoubleConstant(0.0.toRawBits()), position), position, 1)
+                storeSlot(sum, position)
+                emitIndexLoop(source, position) { index ->
+                    loadSlot(sum, position)
+                    emitElement(source, index, position)
+                    convertTo(collection.element, ScriptType.DOUBLE, position)
+                    emit(Opcode.ADD, NumericKind.DOUBLE, position, -1)
+                    storeSlot(sum, position)
+                }
+                loadSlot(sum, position)
+                loadSlot(source, position)
+                emit(Opcode.LIST_SIZE, 0, position, 0)
+                convertTo(ScriptType.INT, ScriptType.DOUBLE, position)
+                emit(Opcode.DIVIDE, NumericKind.DOUBLE, position, -1)
+            }
+        }
+        if (discard) emit(Opcode.POP, 0, position, -1)
+    }
+
+    // 左 ?! 右（第9.2段階）: 範囲: 左; JUMP 出口; 受け手: 右; 出口:。左の命令の範囲を ErrorHandler に記録する（受け手ではスタックを左の前の深さに戻す）。
+    // discard（Unit の ?! の文）なら両辺とも値を残さない
+    private fun compileFallback(fallback: FallbackExpression, discard: Boolean) {
+        val base = stackDepth
+        val start = instructions.size
+        if (discard) compileDiscarded(fallback.left, fallback.position) else compileExpression(fallback.left)
+        val end = instructions.size
+        val exit = emitJump(Opcode.JUMP, fallback.position, 0)
+        stackDepth = base
+        val handler = instructions.size
+        if (discard) compileDiscarded(fallback.right, fallback.position) else compileExpression(fallback.right)
+        patchJump(exit)
+        if (end > start) handlers.add(ErrorHandler(start, end, handler, base))
     }
 
     // 数値の型の NumericKind（第3.11a段階）
@@ -608,6 +958,15 @@ class Compiler private constructor(private val analyzed: AnalyzedProgram, privat
 
     // 呼び出し先はコンパイル時に HostFunction（D12）・ユーザー定義関数・メソッド（CALL。第3.8c・3.9b段階）・リストの命令（第3.10a段階）へ解決する
     private fun compileCall(call: CallExpression) {
+        // リストの関数・関数の値（第9.0・9.3段階）
+        analyzed.collectionCalls[call]?.let {
+            compileCollection(call, it, discard = false)
+            return
+        }
+        analyzed.inlineCalls[call]?.let {
+            compileInlineCall(call, it, discard = false)
+            return
+        }
         // Vector・Matrix の関数（第3.11e段階）: 引数を左から積み、LINALG で計算する（vector(…)・matrix(…) は個数を operand に含める）
         val linalg = analyzed.linalgOperations[call]
         if (linalg != null) {
@@ -822,7 +1181,10 @@ class Compiler private constructor(private val analyzed: AnalyzedProgram, privat
 
     // stackEffect は命令の実行によるスタックの増減。最大の深さを記録し、上限を超えたらエラーにする
     private fun emit(opcode: Opcode, operand: Int, position: SourcePosition, stackEffect: Int) {
-        if (instructions.size >= VmLimits.MAX_INSTRUCTIONS) abort(DiagnosticCode.COMP_TOO_MANY_INSTRUCTIONS, position, VmLimits.MAX_INSTRUCTIONS)
+        // プログラムの大きさの上限（CompileOptions。null なら上限なし）。引数は設定した上限
+        val limit = options.maxInstructions
+        if (limit != null && instructions.size >= limit) abort(DiagnosticCode.COMP_TOO_MANY_INSTRUCTIONS, position, limit)
+        if (inlineDepth > 0 && ++inlinedInstructions > MAX_INLINED_INSTRUCTIONS) abort(DiagnosticCode.COMP_TOO_MANY_INLINE_EXPANSIONS, position, MAX_INLINED_INSTRUCTIONS)
         stackDepth += stackEffect
         if (stackDepth > VmLimits.MAX_STACK_DEPTH) abort(DiagnosticCode.COMP_STACK_TOO_DEEP, position, VmLimits.MAX_STACK_DEPTH)
         maxStackDepth = maxOf(maxStackDepth, stackDepth)

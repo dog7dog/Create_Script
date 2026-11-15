@@ -1,0 +1,5 @@
+# CreateScript-Registry code owners (see GOVERNANCE.md).
+# Every maintainer is a code owner, so a pull request by any maintainer, the lead included, can get the
+# code owner approval from another maintainer. The tool checks that this one rule lists exactly the maintainers
+# in maintainers.json; change both in the same pull request. Before the bootstrap it lists only the lead.
+* @dog7dog

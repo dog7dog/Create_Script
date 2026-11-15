@@ -6,6 +6,9 @@ import com.creatrbypc.createanalytical.script.api.ScriptRun
 import com.creatrbypc.createanalytical.script.ast.ExpressionStatement
 import com.creatrbypc.createanalytical.script.compiler.CompileResult
 import com.creatrbypc.createanalytical.script.diagnostic.Diagnostic
+import com.creatrbypc.createanalytical.script.diagnostic.DiagnosticArgument
+import com.creatrbypc.createanalytical.script.diagnostic.DiagnosticCode
+import com.creatrbypc.createanalytical.script.diagnostic.DiagnosticPhase
 import com.creatrbypc.createanalytical.script.diagnostic.DiagnosticSeverity
 import com.creatrbypc.createanalytical.script.diagnostic.SourcePosition
 import com.creatrbypc.createanalytical.script.lexer.Lexer
@@ -76,7 +79,7 @@ class Repl(private val input: LineInput, private val out: PrintStream, private v
     // 括弧（{ ( [）が閉じていなければ、入力の続きを待つ
     private fun isIncomplete(text: String): Boolean {
         var depth = 0
-        for (token in Lexer.tokenize(text).tokens) {
+        for (token in tokenize(text).tokens) {
             when (token.type) {
                 TokenType.LEFT_BRACE, TokenType.LEFT_PAREN, TokenType.LEFT_BRACKET -> depth++
                 TokenType.RIGHT_BRACE, TokenType.RIGHT_PAREN, TokenType.RIGHT_BRACKET -> depth--
@@ -95,13 +98,15 @@ class Repl(private val input: LineInput, private val out: PrintStream, private v
     }
 
     private fun evaluate(text: String) {
+        if (rejectImports(text)) return
         val raw = Candidate(text, "", "", session)
         // 1 つの式だけの入力は、値を表示する（Unit の式は println できないため、コンパイルできなければそのまま実行する）
         val candidates = if (isSingleExpression(text)) listOf(Candidate(text, "println(\n", "\n)", session), raw) else listOf(raw)
         var chosen: Candidate? = null
         var compiled: CompileResult? = null
         for (candidate in candidates) {
-            val result = CreateScript.compile(candidate.source)
+            // 独立版のコマンドなので、プログラムの命令の数に上限を設けない（第8.0.1段階。セッションのソースの長さなどの上限はそのまま）
+            val result = CreateScript.compile(candidate.source, CliLimits.COMPILE_OPTIONS)
             if (result.program != null) {
                 chosen = candidate
                 compiled = result
@@ -150,8 +155,29 @@ class Repl(private val input: LineInput, private val out: PrintStream, private v
         err.println("(this input was not added to the session)")
     }
 
+    // 対話モードでは import を使えない（第8.0段階。モジュールを探すプロジェクトのルートが無いため）。入力の中の import を
+    // CS_MODULE_IMPORT_UNAVAILABLE として報告し、入力を実行しない（セッションの後ろにつなぐと、ファイルの先頭以外の import の診断になるため先に確かめる）
+    private fun rejectImports(text: String): Boolean {
+        val imports = parse(text)?.imports.orEmpty()
+        if (imports.isEmpty()) return false
+        for (declaration in imports) {
+            val diagnostic = Diagnostic(
+                DiagnosticCode.MODULE_IMPORT_UNAVAILABLE, DiagnosticSeverity.ERROR, DiagnosticPhase.MODULE, declaration.namePosition,
+                listOf(DiagnosticArgument.StringArgument.truncated(declaration.name)),
+            )
+            err.println(CreateScriptCli.format("<input>", diagnostic))
+        }
+        err.println("(import works only in files: createscript run <file${CliLimits.EXTENSION}>; this input was not added to the session)")
+        return true
+    }
+
+    // 入力だけの字句解析・構文解析。上限はコンパイルと同じ（第8.0.1段階）
+    private fun tokenize(text: String) = Lexer.tokenize(text, CliLimits.COMPILE_OPTIONS.maxSourceLength, CliLimits.COMPILE_OPTIONS.maxTokens)
+
+    private fun parse(text: String) = Parser.parse(tokenize(text), CliLimits.COMPILE_OPTIONS.maxNodes).program
+
     private fun isSingleExpression(text: String): Boolean {
-        val parsed = Parser.parse(Lexer.tokenize(text)).program ?: return false
+        val parsed = parse(text) ?: return false
         return parsed.functions.isEmpty() && parsed.classes.isEmpty() && parsed.statements.singleOrNull() is ExpressionStatement
     }
 
@@ -216,6 +242,7 @@ class Repl(private val input: LineInput, private val out: PrintStream, private v
             |  Variables, functions, classes, and objects are kept for later inputs.
             |  An input continues on "..." lines until its brackets { ( [ are closed.
             |  An input with an error, or that does not finish within ${CliLimits.DEFAULT_MAX_TICKS} ticks, is not kept.
+            |  import is not available here; use it in files run with "createscript run".
             |Commands
             |  help   show this help
             |  exit   quit (also: quit, Ctrl+D)

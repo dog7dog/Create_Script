@@ -1,0 +1,34 @@
+package compat.v010alpha
+
+import com.creatrbypc.createanalytical.script.api.CreateScript
+import com.creatrbypc.createanalytical.script.ast.Program
+import com.creatrbypc.createanalytical.script.lexer.Lexer
+import com.creatrbypc.createanalytical.script.parser.Parser
+
+// CreateScript v0.1.0-alpha（コミット 5c7d68c）の createscript-core.jar に対してコンパイルした呼び出し（S8.1 のバイナリ互換性の回帰テスト用）。
+// 新しい Core で実行し、v0.1.0-alpha の Program の API（3 つの項目）が JVM に残っていることを確かめる。結果は確かめた項目の名前の一覧
+object OldCaller {
+    @JvmStatic
+    fun run(): List<String> {
+        val results = ArrayList<String>()
+        val withDefaults = Program(emptyList())
+        results.add("constructor with defaults")
+        val full = Program(emptyList(), emptyList(), emptyList())
+        results.add("constructor with three lists")
+        val (statements, functions, classes) = full
+        results.add("component1-3")
+        val copied = full.copy(statements = statements)
+        results.add("copy with defaults")
+        val copiedAll = full.copy(statements, functions, classes)
+        results.add("copy with three lists")
+        if (withDefaults == full && copied == full && copiedAll == full && full.hashCode() == withDefaults.hashCode()) results.add("equals and hashCode")
+        // 新しい Parser が作った import のある Program を、古い API の copy で写す（imports が残ることは呼び出し側のテストが確かめる）
+        val parsed = Parser.parse(Lexer.tokenize("import geometry\n")).program
+        if (parsed != null) {
+            val moved = parsed.copy(statements = parsed.statements)
+            if (moved == parsed) results.add("copy keeps the other fields")
+        }
+        if (CreateScript.compile("println(1)").program != null) results.add("compile")
+        return results
+    }
+}

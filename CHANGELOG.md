@@ -6,7 +6,280 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
-## [0.1.0-alpha] - not released yet
+### Added
+
+- Install (S8.3 L-5 fix): on macOS and Linux every change to files in the project goes through a helper process
+  (`/bin/sh` with a fixed script; names passed as arguments) whose working directory is checked against the project
+  directory (device and inode, and `..` back to the project) and then held, so swapping a directory on the path for a
+  link no longer redirects writes, moves, renames, permission changes or removals. Files are created exclusively and
+  written after the open file is confirmed; names are given with `link` or `mv -h` / `mv -T`; permissions are changed
+  through the open file. Package directories are written in place as `packages/<name>/.placing-<id>` and renamed,
+  and `createscript.json`, `createscript.lock` and the journal are written next to their final names. Windows keeps
+  the earlier checks. New tests: `AnchoredFsTest` (fixed-point swaps, hard links, FIFOs, a killed or silent helper);
+  `L5RaceTest` gained bait modes. The install module's "runs no code" test allows exactly this helper.
+- `docs/registry-github-execution-plan.md`: the GitHub integration operations (G1–G7) with targets, steps and
+  rollback, all awaiting approval, and the read-only U-2 results.
+
+- Language (stage 9.0): list functions `where`, `map`, `group` (a list of groups in first-appearance order),
+  `each` and `average` (`Double`, `NaN` for an empty list) with Kotlin-style lambdas `{ x -> … }`, `it` and
+  trailing lambdas. Lambdas are expanded inline into ordinary loops, so runs can still be paused, saved and
+  restored at any instruction.
+- Language (stage 9.1): the pipeline operator `x |> f(a)` (`f(x, a)`), also with list functions
+  (`xs |> where { … }`).
+- Language (stage 9.2): the error fallback operator `a ?! b`, which gives `b` when a value error (division by
+  zero, overflow, index out of range, math and vector errors) happens while `a` runs. Resource limits are not
+  recovered. Core: `CompiledProgram.handlers` (`ErrorHandler`); programs without `?!` have no handlers and the same
+  instructions and `ProgramFingerprint.ofProgram` as before. The saved state (`VmSnapshot`) is unchanged, so states
+  saved by earlier versions still restore.
+- Language (stage 9.3): lambda parameter and result types inferred from context, lambda values in a `val`
+  (`val f = { x: Int -> x * 2 }`, `val g: (Int) -> Int = { it * 2 }`), function references `::name`, and empty
+  `listOf()` / `mutableListOf()` typed from a declared type, an assignment target or a return type.
+- New diagnostics: `CS_SEM_LAMBDA_NOT_ALLOWED`, `CS_SEM_LAMBDA_PARAMETER_COUNT`,
+  `CS_SEM_LAMBDA_PARAMETER_TYPE_REQUIRED`, `CS_SEM_RETURN_IN_LAMBDA`, `CS_SEM_LAMBDA_IN_INITIALIZER`,
+  `CS_SEM_FUNCTION_VALUE_OUTSIDE_SCOPE`, `CS_SEM_INVALID_PIPE_TARGET`, `CS_SEM_GROUP_KEY_TYPE`,
+  `CS_SEM_FUNCTION_TYPE_NOT_ALLOWED` and `CS_COMP_TOO_MANY_INLINE_EXPANSIONS`. `{ }` in an expression is now a
+  lambda instead of `CS_PARSE_LAMBDA_UNSUPPORTED` (a `{` at the start of a statement still reports it).
+
+- Local modules: `import name` at the top of a file uses the functions of `name.cscr` as `name.f(...)`,
+  with type checks across files, one resolution per module, and diagnostics for missing, ambiguous,
+  cyclic and out-of-project modules. Modules contain only `import` lines and functions.
+- Core: `CreateScript.compile(source, resolver, entryModule)` with the `ModuleResolver` interface; the host
+  gives the module sources, and the Core does not read files. `CreateScript.compile(source)` is unchanged
+  and reports `CS_MODULE_IMPORT_UNAVAILABLE` for `import`.
+- Core: `ModuleCompileResult.sourceFingerprint` and `ProgramFingerprint.ofModules`, a hash of the entry
+  file and all modules for hosts that save and restore runs (the same value as `ofSource` without `import`).
+- Core: `DiagnosticPhase.MODULE` for diagnostics about modules and imports (`CS_MODULE_…`). Code with a `when`
+  over `DiagnosticPhase` that lists every value and has no `else` needs a branch for it.
+- Core: `CompileOptions` sets the compile-time program size limit. `CompileOptions.DEFAULT` and `EMBEDDED`
+  keep 4096 instructions (`CreateScript.compile(source)` is unchanged); `STANDALONE` has no instruction
+  limit. The input limits and the runtime limits are unchanged.
+- `CompileOptions.STANDALONE` raises the input limits: 1,000,000 characters, 250,000 tokens and 250,000
+  syntax tree nodes per file, 1024 modules, and 8,000,000 characters and 1,000,000 tokens in all files.
+  Its bytecode verification keeps state only at basic blocks and stops after 100,000,000 steps
+  (`CS_COMP_PROGRAM_TOO_COMPLEX`); chains of properties without type annotations are limited to 128
+  (`CS_SEM_PROPERTY_TYPE_CHAIN_TOO_DEEP`); too large programs give `CS_MODULE_PROGRAM_TOO_LARGE`.
+- The compiler no longer recurses deeply or takes quadratic time on long call chains, recursion, import
+  chains, construction cycles and comparisons that look like type arguments.
+- `createscript run` and the interactive mode compile with `CompileOptions.STANDALONE`; the command reads
+  files up to 3,000,000 bytes.
+- `createscript-project`: a new module for the project files `createscript.json` (schema version 1) and
+  `createscript.lock` (lock version 1): a strict JSON parser and writer (duplicate keys, size and nesting
+  limits), validation of names, SemVer versions, entry paths, sources and SHA-256 values, the canonical lock file
+  form and its consistency with the manifest. It does not access files or the network.
+- `createscript init`, `createscript manifest check` and `createscript lock check`; exit code 73 when `init`
+  cannot create the files. No downloads, installation or dependency resolution yet. `init` rolls back only
+  files and directories that are still the ones it created (identifier, size, SHA-256). The checks read only
+  regular files inside the project (`CS_PKG_FILE_OUTSIDE_PROJECT`, `CS_PKG_NOT_A_REGULAR_FILE`,
+  `CS_PKG_FILE_CHANGED_WHILE_READING`).
+- Project files schema version 2 (`kind` `application` or `library`, `modules`) and package archives
+  (`createscript-package.zip`): a strict ZIP reader (layout, no ZIP64, encryption, data descriptors, links or
+  special files, size, count and ratio limits, CRC checks) and a deterministic writer. `createscript pack` makes a
+  package archive from a library project. Schema version 1 is unchanged.
+- `createscript run [directory]`: runs the `entry` of `createscript.json` with the installed packages, without the
+  network. Before compiling, the lock file is checked as by `lock check` and every installed package must match its
+  marker and the lock file (SHA-256 of the archive, its manifest and dependencies), and the canonical archive made
+  again from the installed files must have the SHA-256 of the lock file, so files changed together with their
+  marker are also refused; otherwise nothing is run (exit code 65). `install` accepts only archives in the
+  canonical form that `createscript pack` writes (other valid ZIP files are refused with exit code 65). The project and each package can import the public modules of their direct dependencies and their own
+  modules; private modules of other packages and transitive dependencies give `CS_MODULE_NOT_VISIBLE`. Each import
+  is looked up in the scope of its file, so modules with the same name in different packages (private modules
+  included) or a local module and a private package module can be used together; only a name that exists twice in
+  one scope gives `CS_MODULE_AMBIGUOUS`. A package module named like the entry file is no longer reported as an
+  import cycle. `createscript run <file>.cscr` is unchanged.
+- Core: `ScopedModuleResolver`, `ScopedModuleLookup` and `CreateScript.compileScoped(source, resolver,
+  entryModule, options)`: modules are named by an id from the resolver, which is asked for each importing file;
+  functions are named `id.function`. The existing `compile` functions, `ModuleResolver` and `ModuleAccess` are
+  unchanged and give the same instructions, diagnostics and fingerprints as before.
+- Core: `ModuleAccess` and `CreateScript.compile(source, resolver, entryModule, options, access)`, checked for every
+  `import` before the resolver; the diagnostic `CS_MODULE_NOT_VISIBLE`. The existing `compile` functions and
+  `ModuleResolver` are unchanged (code compiled against the earlier Core runs unchanged; a regression test runs
+  such code).
+- `createscript init` creates a `.gitignore` with `/.createscript/` when the directory has none; an existing one is
+  never changed.
+- `createscript install [github:owner/repo@v1.2.0] [directory] [--offline]`: installs a package and its
+  dependencies (exact versions, followed depth first in name order; conflicts, cycles and more than 256 packages,
+  a depth of 32 or 128 MiB are errors) into `.createscript/packages/<name>/<version>/`, adds the package to
+  `createscript.json` (only that entry changes) and writes `createscript.lock`. SHA-256 values in the lock file are
+  always enforced; `--offline` uses only the cache. A journal (`.createscript/transaction.json`) and
+  `.createscript/install.lock` make the update of several files safe: a failed or interrupted installation is
+  finished or undone, files changed by another program are never overwritten or removed, and a damaged journal
+  stops with instructions. New exit codes 69 and 75. `manifest check`, `lock check` and `pack` stop while an
+  installation is interrupted. When an interrupted installation cannot be finished or undone safely, the message
+  lists the files that are left, the state of the manifest and the lock file, and the steps to check them; it does
+  not ask to delete the journal first. The journal records the real path of the project and the file identity of
+  `.createscript` and of the transaction directory, and is used automatically only where it was written (a journal
+  in a copied, downloaded, moved or restored project, or on a file system without file identities, stops with
+  these instructions). Before a recovery writes the manifest or the lock file, it checks that the manifest is the
+  old one with at most one dependency added or changed, that the lock file passes `lock check` and keeps the
+  SHA-256 of packages that did not change, and that every package makes again the canonical archive of the lock
+  file; saved copies used to undo are checked too. A failure after a recovery still reports the recovery.
+  The journal is written first as `journal.tmp` in the transaction directory and published with a hard link or,
+  where there are none, an atomic move; it is never copied, and the installation stops unchanged where neither
+  works. A `txn-*` directory that no journal refers to is removed by the next install only when everything in it
+  matches that record (no links, this user's files, no other files); otherwise it is kept and reported with the
+  reason. Drives that add `._` files (FAT and exFAT on macOS) are refused before anything changes.
+  An installation that stopped while the journal was being rewritten (a half-written `journal.tmp`) is finished
+  on the next install: the temporary file is removed only when it belongs to this user, is not a link and is a
+  complete journal of this transaction or the beginning of one; otherwise the command stops with steps to check
+  by hand. A journal whose transaction directory is missing is reported as such.
+  Before each package is moved, the directories on the way must be real directories inside the project; after the
+  move and again before the manifest is written, each package must be where it was moved (same `fileKey`), or the
+  installation is not completed and is undone without touching anything behind a symbolic link. A move redirected
+  by a symbolic link that replaces a directory at that moment cannot be prevented and is documented.
+- `createscript install` warns about package directories in `.createscript/packages` that cannot be used (files
+  that do not match the marker or no longer make its archive, symbolic links, unknown names), for example one
+  edited after an interrupted installation was undone; it does not remove, repair or follow them. Usable old
+  versions are not reported.
+- `install.lock` has a gate and a data range: `install` takes the gate first, so runs that start again and again no
+  longer keep it out, and `install` (up to 30 seconds) and `run` (up to 10 seconds) wait for each other, saying so
+  after a second, before they stop with exit code 75. Messages of `run` and `install` about symbolic links and
+  directories in `.createscript` name them relative to the project and say what to do.
+- Names reserved on Windows (`CON`, `PRN`, `AUX`, `NUL`, `COM0`–`COM9`, `LPT0`–`LPT9`, in any case and with any
+  extension) are rejected as package names, module names, entry paths and module files in package archives
+  (`CS_PKG_RESERVED_NAME`, or the reason in `CS_PKG_INVALID_PATH` and `CS_PKG_ARCHIVE_INVALID_PATH`), by
+  `init`, `pack` and `install`, and as local modules of `import` (`CS_MODULE_UNREADABLE`). Running a single file
+  is unchanged.
+- Files of an installation are written under a temporary name (`.part-<inode>-<size>-<name>`) and renamed when
+  complete, so an installation that stopped while it was writing them leaves no half-written file under the real
+  name, and the next install removes the temporary file when it is still the file it created (same inode, not
+  larger than recorded, expected by the record); otherwise it is kept and reported.
+  The temporary file is read-only (`r--------`) while it is written through the descriptor that created it, so
+  other writes are refused, and only read-only temporary files are removed; each removal checks the SHA-256 and
+  the file identity again.
+- `createscript install` and `createscript run` with packages refuse projects where another user can change the
+  project root, a directory above it (unless it is sticky and the next directory is yours) or a directory in
+  `.createscript`; the message names the directory and its permissions, and permissions are never changed.
+  Directories and files that `install` creates are `rwxr-xr-x` and `rw-r--r--`. ACLs are not checked, and file
+  systems without POSIX permissions are not supported for packages yet.
+- `createscript run [directory]` holds a shared lock on `.createscript/install.lock` while it checks the project
+  (released before compiling; the file is only opened for reading and never created): while an installation is
+  running it stops with exit code 75 instead of reporting an interrupted installation, which it reports (65) only
+  when no installation is running. Where the lock cannot be tried, a journal stops it with a message that says so.
+- `createscript-install`: downloading package archives from GitHub Releases with the JDK HTTP client (HTTPS to fixed
+  GitHub hosts only, checked redirects, the token only for `api.github.com`, size and time limits, retries and rate
+  limits), SHA-256 checks against the lock file and GitHub's asset digest, and a cache keyed by SHA-256 that is
+  checked on every use. The bundled Java runtime gains `java.net.http` and
+  `jdk.crypto.ec` (for TLS).
+- Core: `ast.Program` keeps the JVM signatures of v0.1.0-alpha (the constructor and `copy` with three lists, as
+  hidden members), so code compiled against v0.1.0-alpha still runs; a regression test runs such code.
+- `createscript run`: `--project-root <directory>` (default: the directory of the file). The interactive
+  mode reports `CS_MODULE_IMPORT_UNAVAILABLE` for `import`.
+- `createscript-project` (S8.3 Phase 1, no command uses it yet): the formats of the planned CreateScript-Registry
+  (`registry.json`, `reserved-names.json`, one file per package, `index.json`, `index.json.sig`) with strict checks
+  (names, versions, sources, GitHub IDs, SHA-256, dependencies, yanked and removed, safe text, limits, reserved
+  and similar names), `CanonicalJson` (RFC 8785 for integers) for the index, Ed25519 signature verification with
+  Java 21's own implementation (key IDs, domain separation, several signatures for key rotation), and the
+  comparison with an earlier index (no rollback, no changed SHA-256 or dependencies, nothing removed). New
+  diagnostics `CS_REG_…`. See [docs/registry.md](docs/registry.md). The manifest, lock file and archive formats
+  are unchanged.
+- `createscript-registry-tool` and `registry-template/` (S8.3 Phase 2, not in service): the template of the
+  future CreateScript-Registry repository (policy, governance with co-maintainers, contributing, signing and
+  security documents, `maintainers.json`, `keys/trusted-keys.json`, CODEOWNERS, rulesets, and `validate.yml` and
+  `publish.yml`, which do not run in this repository), and a tool that checks registry pull requests (strict
+  files, names, dependencies, GitHub numeric IDs, immutable releases, digests, canonical archives, authors and
+  owners, unchanged reviewed versions) and approvals (two maintainers other than the author and the package
+  owners), builds the next index, signs it locally (test keys only), and checks it before and after publishing.
+  `GitHubReleases.repositoryInfo` reads a repository's numeric IDs.
+- `createscript install <name>@<version>` (S8.3 Phase 3; **the official registry is not published and has no
+  production key yet, so the command refuses with exit code 69 without connecting**): installs a reviewed
+  package and its reviewed dependencies by name from the Ed25519-signed CreateScript-Registry index, with the
+  S8.2 installer and the reviewed SHA-256 values pinned, and checks the result after the installation. Exact
+  versions only. Yanked versions are refused, removed packages are refused, and an index that is unsigned,
+  wrongly signed, signed by an unknown key, expired, rolled back or reusing a serial is never used.
+- `createscript-install`: `RegistryTrust` (the built-in configuration; no production key yet, test keys are
+  refused for the official registry), `RegistryClient` (downloads `index.json` and `index.json.sig` from the
+  latest release with the `GitHubReleases` rules, `GitHubReleases.latestAsset`), `RegistryCache` (keeps the
+  accepted index bytes, the signature and the history, `trusted.json`, with atomic updates, a lock, and checks
+  against links, damage and other users) and the review checks. `Installer.install` has overloads that take the
+  registry lookup; `InstallResult` has `reviews` and `notes`. The manifest, lock file and archive formats are
+  unchanged.
+- `createscript install github:owner/repo@v…` and `createscript install` show the registry review status of each
+  package when an index is available (refusing removed packages, newly installed yanked versions and SHA-256
+  values that differ from the registry; warning about packages that are not reviewed), and otherwise warn that
+  the review status **could not be checked** (for direct installs; for restores only when the registry is
+  configured). With no production key, a direct install now prints that warning; nothing else changes.
+- S8.3 Phase 5 (fixes for the pre-launch audit, `docs/audits/S8.3-Phase5-Remediation.md`):
+  - `createscript install` no longer falls back to the saved registry index when the download fails online: a
+    registry install fails (69) and suggests `--offline`; direct installs and restores report that the review
+    status could not be checked. `--offline` still uses the saved index, with a note that later removals are not
+    known (P4-M2).
+  - Registry template: the required checks `registry/validate` and `registry/approvals` are reported by the
+    registry's own GitHub App from a job that never reads the pull request, and the ruleset requires them from that
+    App (P4-H1); every job refuses a run for an older head commit, reviews are read with the job's token, and the
+    publishing workflow checks the approvals of the merged pull request again (P4-M4); CODEOWNERS lists every
+    maintainer, so the lead's own pull requests can be merged with two other maintainers (P4-M1); the job with the
+    write token builds nothing, and the tool is built with a checked Gradle wrapper and strict dependency
+    verification without caches (P4-M3).
+  - `createscript-registry-tool`: `check-settings` (ruleset checks), `validate-pr --from-fork` (forks cannot change
+    `.github/`), CODEOWNERS must list exactly the maintainers, and `check-approvals` refuses everything before the
+    bootstrap (P4-L5).
+  - The build verifies all dependencies with `gradle/verification-metadata.xml` (SHA-256, strict).
+- S8.3 Phase 7 (`docs/audits/S8.3-Phase7-Remediation.md`), registry template only: the App's installation token is
+  revoked when the report step ends (P6-L1); the App needs only "Checks: read and write" (P6-L2); `publish` creates
+  the release as a draft, checks its assets and digests, then publishes it as the latest, never re-publishes a
+  serial, and records failures without deleting anything (P6-L3); the policy and limits for `index-*` tags are
+  documented (P6-L4); the approval base is rebuilt from the commit's raw blobs instead of `git archive` (P6-L5).
+  `createscript-registry-tool` gains `WorkflowHarnessTest`, which checks the workflows statically and runs their
+  scripts against fake `gh`/`curl` (skipped without python3/PyYAML, jq, openssl, git or bash).
+- S8.3 Phase 8 (`docs/audits/S8.3-Phase8-Security-Hardening.md`): `L5RaceTest`, the race test for L-5 (directories
+  replaced by symbolic links during an installation, now also the project directory itself), is kept as an opt-in
+  test (`CREATESCRIPT_L5_RACE=1`) that fails if an installation is wrongly reported as successful or an existing
+  file outside the project changes. L-5 itself is still unresolved; no installer code changed. A dedicated
+  publishing GitHub App that alone may create `index-*` tags is proposed in the registry template's documents (not
+  adopted).
+- S8.3 Phase 9 (documents only, `docs/audits/S8.3-Phase9-Integration-Preparation.md`): the design with two GitHub
+  Apps (Registry Checks App for the required checks, Registry Publisher App for publishing and the only creator of
+  `index-*` tags) is adopted in `docs/registry-github-architecture.md` but not implemented; the test plan on GitHub
+  (`docs/registry-github-integration-test.md`, IT-01 to IT-28) is written but not run.
+- S8.3 Phase 10A (`docs/audits/S8.3-Phase10A-Local-Implementation.md`), local only, nothing tried on GitHub:
+  - The registry template's `release` job publishes with the Registry Publisher App's installation token
+    (limited to `contents: write` on the repository, checked, masked, revoked at the end); its `GITHUB_TOKEN` is
+    read-only and there is no fallback to it (W1).
+  - The `index-*` tag ruleset is split into A (creation; the Publisher App is the only bypass actor) and B (update
+    and deletion; no bypass actor) (W2).
+  - `createscript-registry-tool check-settings` checks A and B and the two Apps' IDs; `check-live-rulesets`
+    compares the repository's live rulesets with them before publishing and fails when they cannot be verified
+    (GitHub returns `bypass_actors` only to users who can write the ruleset) (W3).
+  - Test-only builds, made only by `./gradlew :createscript-cli:testRegistryCli` and
+    `:createscript-registry-tool:testRegistryTool`, use a test registry and test keys; they are built from the
+    test sources and are not part of any release (W7).
+- S8.3 Phase 10B-2A (local implementation, not yet used by the workflows): `createscript-registry-tool record-ruleset-snapshot` records the
+  `index-*` tag rulesets as seen with the administrator's token, and `check-ruleset-snapshot` checks the rulesets a read-only token
+  sees (`updated_at`, `id`, `enforcement`, conditions, rules, `current_user_can_bypass`) against that snapshot, signed with a
+  settings key in `keys/settings-keys.json`; test keys are refused outside the test-only build. It relies on P-20, confirmed on a
+  test repository only for adding and removing a bypass actor. The registry template's `publish.yml` uses it in the
+  `check` job (`--actor workflow`, replacing `check-live-rulesets`, which a read-only token always fails), and the
+  `release` job re-checks with the publishing App's token, before the draft and just before publishing, that the tag
+  rulesets are unchanged since the check. There is no settings key yet, so the template still publishes nothing.
+- S8.3 U-1 (local, `docs/registry-settings-key.md`): ruleset snapshots are version 2 with `expires` (version 1 snapshots are
+  not accepted and must be recorded and signed again; the signature file format is unchanged) (at most 180 days;
+  expired, future-dated, too long or out-of-order snapshots fail). `sign-ruleset-snapshot` signs a snapshot after
+  checking it and printing a summary; production keys are refused until the settings key ceremony is approved. The
+  production tool trusts a settings key only if its fingerprint is pinned in the tool (`SettingsKeyPins`, empty for
+  now, so the production path stays closed).
+- S8.3 U-2 (local): ruleset snapshots are version 3. They also record the main branch ruleset (2 approvals, code
+  owners, required checks from the Checks App, no bypass actors, active) and the default branch (`main`);
+  `check-ruleset-snapshot` and the template's `publish.yml` (check and release jobs) compare them and stop on any
+  change, a changed default branch, or an extra branch ruleset that may apply to it. Whether GitHub changes a branch
+  ruleset's `updated_at` when only its bypass actors change has not been tried on GitHub.
+- Signed library integration test (local, `SignedLibraryIntegrationTest`): pack, signed index, install through the
+  test-only client, import and run, and refusal of tampered signatures, indexes and packages.
+
+### Fixed
+
+- Build: `gradle/verification-metadata.xml` lists `junit-bom-5.10.2.pom` (SHA-256 checked against Maven Central and
+  the Gradle Plugin Portal), so strict dependency verification also passes with an empty Gradle cache.
+- Install (L-5 helper, macOS): `stat` and `chmod` on `/dev/fd/3` can fail briefly with "Bad file descriptor" when many
+  processes run at once. The helper now reads again (at most five times) only when the read fails; values that do not
+  match still stop at once. A permission change that fails or cannot be confirmed (read back by name, without
+  following links, with the same inode) is now a failure instead of a success that leaves the file `0400`; a name
+  replaced before the change stops as L-5.
+- `createscript init` (Linux): the rollback told files apart by inode number, which Linux reuses at once, so a file
+  replaced with the same contents or a recreated empty directory could be removed. `init` now keeps what it created
+  open until the rollback has checked and removed it, so a replacement always has another inode number. Windows
+  (no file keys) is unchanged.
+
+## [0.1.0-alpha] - 2026-11-04 (pre-release)
 
 The first version of CreateScript as a project of its own.
 

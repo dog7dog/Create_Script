@@ -151,15 +151,24 @@ class ReplTest {
         assertEquals(listOf("1", "2"), repl("println(1)", "waitTicks(500)", "println(2)", "exit").results)
     }
 
-    // セッションの上限（ソース 4096 文字・変数 64 個など）に達すると、それ以上は加えられないが、それまでの状態は使える
+    // セッションの上限（ソース 1,000,000 文字: 第8.0.1段階。それまでは 4096 文字）に達すると、それ以上は加えられないが、それまでの状態は使える
     @Test
     fun sessionLimitIsReported() {
-        val inputs = (0 until 300).map { "println($it)" }
-        val session = repl(*(inputs + listOf("val kept = 1", "exit")).toTypedArray())
+        val inputs = (0 until 12).map { "println($it) //" + "x".repeat(99_980) }
+        val session = repl(*(inputs + listOf("exit")).toTypedArray())
         val accepted = session.results
         assertEquals(accepted.indices.map { "$it" }, accepted)
-        assertTrue(accepted.size in 100 until 300, "${accepted.size}")
+        assertTrue(accepted.size in 8 until 11, "${accepted.size}")
         assertTrue(session.err.contains("error CS_LEX_SOURCE_TOO_LONG") && session.err.contains("the session has reached a CreateScript limit"), session.err.take(300))
+    }
+
+    // VM の上限（変数 64 個など）は、独立版の対話モードでも変わらない。上限に達した入力は加えず、それまでの状態は使える
+    @Test
+    fun vmLimitsStayInTheSession() {
+        val inputs = (1..70).map { "val v$it = $it" }
+        val session = repl(*(inputs + listOf("v1 + v64", "exit")).toTypedArray())
+        assertEquals(listOf("65"), session.results)
+        assertTrue(session.err.contains("error CS_COMP_TOO_MANY_VARIABLES (64)"), session.err.take(300))
     }
 
     // 同じ名前の再宣言はエラーになり、前の宣言が残る
@@ -168,5 +177,17 @@ class ReplTest {
         val session = repl("val x = 1", "val x = 2", "x", "exit")
         assertEquals(listOf("1"), session.results)
         assertTrue(session.err.startsWith("<input>:1:5: error CS_SEM_"), session.err)
+    }
+
+    // 第8.0段階: 対話モードでは import を使えない（明確な診断を出し、入力をセッションに加えない）。最初の入力でも、後の入力でも同じ
+    @Test
+    fun rejectsImport() {
+        val session = repl("import geometry", "val x = 1", "import geometry", "x", "exit")
+        assertEquals(listOf("1"), session.results)
+        val expected = "<input>:1:8: error CS_MODULE_IMPORT_UNAVAILABLE (\"geometry\")\n" +
+            "(import works only in files: createscript run <file.cscr>; this input was not added to the session)\n"
+        assertEquals(expected + expected, session.err)
+        // 変数名としての import はこれまでどおり使える
+        assertEquals(listOf("4"), repl("val import = 2", "import * 2", "exit").results)
     }
 }

@@ -79,12 +79,15 @@ class CreateScriptCliTest {
         assertEquals("$file:1:14: error CS_SEM_TYPE_MISMATCH (\"Int\", \"String\")\n", result.err)
     }
 
-    // ソースの上限（4096 単位）は Core の字句解析が診断する
+    // ソースの上限は Core の字句解析が診断する。独立版のコマンドは CompileOptions.STANDALONE の 1,000,000 単位（第8.0.1段階。それまでは 4096）
     @Test
     fun sourceLimitIsReportedByCore() {
-        val result = cli("run", script("long.cscr", "//" + "a".repeat(5000)))
+        val fits = cli("run", script("long.cscr", "println(1)\n//" + "a".repeat(5000)))
+        assertEquals(ExitCode.OK, fits.code, fits.err)
+        assertEquals(listOf("1"), fits.lines)
+        val result = cli("run", script("longer.cscr", "//" + "a".repeat(CliLimits.MAX_SOURCE_LENGTH)))
         assertEquals(ExitCode.COMPILE_ERROR, result.code)
-        assertTrue(result.err.contains("error CS_LEX_SOURCE_TOO_LONG"), result.err)
+        assertTrue(result.err.contains("error CS_LEX_SOURCE_TOO_LONG (1000002, 1000000)"), result.err)
     }
 
     // ---- waitTicks と --max-ticks（論理 tick） ----
@@ -180,7 +183,6 @@ class CreateScriptCliTest {
         val cases = listOf(
             listOf("start", file),
             listOf("--verbose"),
-            listOf("run"),
             listOf("run", file, file),
             listOf("run", file, "--unknown", "1"),
             listOf("run", file, "--seed"),
@@ -194,6 +196,11 @@ class CreateScriptCliTest {
             listOf("run", file, "--max-ticks", "1000001"),
             listOf("--version", "extra"),
         )
+        // S8.2 Phase 4: ファイルを指定しない run は、今のディレクトリのプロジェクトを実行する（使い方の誤りではなくなった）。
+        // テストの作業ディレクトリには createscript.json が無いので、66
+        val project = cli("run")
+        assertEquals(ExitCode.NO_INPUT, project.code)
+        assertTrue(project.err.startsWith("createscript: createscript.json not found"), project.err)
         for (args in cases) {
             val result = cli(*args.toTypedArray())
             assertEquals(ExitCode.USAGE, result.code, "$args")

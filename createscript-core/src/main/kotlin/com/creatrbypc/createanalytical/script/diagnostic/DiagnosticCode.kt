@@ -75,6 +75,16 @@ enum class DiagnosticCode(val id: String) {
     // リスト（第3.10a段階）。添字の後の "]" が無い
     PARSE_EXPECTED_RIGHT_BRACKET("CS_PARSE_EXPECTED_RIGHT_BRACKET"),
 
+    // ローカル import（第8.0段階）。import の後がモジュール名（識別子 1 つ）でない・モジュール名の後に "." / as などが続く（位置はそのトークン）、
+    // ファイルの先頭以外（他の文・宣言の後、ブロックの中）の import（位置は import）、同じファイルの同じ import（警告。引数: モジュール名）、
+    // import したモジュールの名前と同じ名前の宣言（変数・引数・ループ変数・関数・クラス・メンバー。引数: 名前）、
+    // モジュール名.関数名(…) 以外の形で使ったモジュール名（値として使う・関数以外のメンバー。引数: モジュール名）
+    PARSE_INVALID_IMPORT("CS_PARSE_INVALID_IMPORT"),
+    PARSE_MISPLACED_IMPORT("CS_PARSE_MISPLACED_IMPORT"),
+    PARSE_DUPLICATE_IMPORT("CS_PARSE_DUPLICATE_IMPORT"),
+    PARSE_IMPORT_NAME_CONFLICT("CS_PARSE_IMPORT_NAME_CONFLICT"),
+    PARSE_INVALID_MODULE_REFERENCE("CS_PARSE_INVALID_MODULE_REFERENCE"),
+
     SEM_UNDECLARED_VARIABLE("CS_SEM_UNDECLARED_VARIABLE"),
     SEM_DUPLICATE_DECLARATION("CS_SEM_DUPLICATE_DECLARATION"),
     SEM_BUILTIN_REDECLARATION("CS_SEM_BUILTIN_REDECLARATION"),
@@ -215,4 +225,67 @@ enum class DiagnosticCode(val id: String) {
     RUN_RESTORE_COMPILE_FAILED("CS_RUN_RESTORE_COMPILE_FAILED"),
     RUN_RESTORE_PROGRAM_CHANGED("CS_RUN_RESTORE_PROGRAM_CHANGED"),
     RUN_RESTORE_INVALID_STATE("CS_RUN_RESTORE_INVALID_STATE"),
+
+    // モジュールの解決（第8.0段階。位置は import のモジュール名）。引数はモジュール名（循環は "a -> b -> a" の形の経路、読めないものは理由も）。
+    // 見つからない、名前が曖昧（大文字・小文字だけが違うファイルが複数ある）、プロジェクトのルートの外を指す（シンボリックリンクなど）、読めない、
+    // 循環する import、モジュールの数が ModuleLimits.MAX_MODULES を超える（引数: モジュール名、上限）、組み込み関数と同じモジュール名、
+    // モジュールを使えないコンパイル（モジュールの解決方法を渡さない CreateScript.compile(source)・対話モード）
+    MODULE_NOT_FOUND("CS_MODULE_NOT_FOUND"),
+    MODULE_AMBIGUOUS("CS_MODULE_AMBIGUOUS"),
+    MODULE_OUTSIDE_PROJECT("CS_MODULE_OUTSIDE_PROJECT"),
+    MODULE_UNREADABLE("CS_MODULE_UNREADABLE"),
+    MODULE_CYCLE("CS_MODULE_CYCLE"),
+    MODULE_TOO_MANY("CS_MODULE_TOO_MANY"),
+    MODULE_BUILTIN_NAME("CS_MODULE_BUILTIN_NAME"),
+    MODULE_IMPORT_UNAVAILABLE("CS_MODULE_IMPORT_UNAVAILABLE"),
+
+    // すべてのファイルの長さ・トークン数の合計が CompileOptions.maxTotalSourceLength・maxTotalTokens を超える
+    // （第8.0.1段階。位置は超えたモジュールの import。引数: モジュール名、"characters" か "tokens"、上限）
+    MODULE_PROGRAM_TOO_LARGE("CS_MODULE_PROGRAM_TOO_LARGE"),
+
+    // 型の注釈の無いプロパティの型を決めるための、別のプロパティの初期化式の解析の入れ子が CompileOptions.maxPropertyTypeChain を超える
+    // （第8.0.1段階。独立版だけ。位置はプロパティ名、引数: プロパティ名、上限。型の注釈を書けば解消する）
+    SEM_PROPERTY_TYPE_CHAIN_TOO_DEEP("CS_SEM_PROPERTY_TYPE_CHAIN_TOO_DEEP"),
+
+    // バイトコードの検証の処理回数が CompileOptions.maxVerificationSteps を超える（第8.0.1段階。独立版だけ。位置は 1 行 1 列、引数: 上限）
+    COMP_PROGRAM_TOO_COMPLEX("CS_COMP_PROGRAM_TOO_COMPLEX"),
+
+    // モジュールのファイルに書けないもの（第8.0段階。モジュールに書けるのは import と関数だけ）。トップレベルの文（位置は文の先頭）・クラス（位置は class）
+    MODULE_TOP_LEVEL_STATEMENT("CS_MODULE_TOP_LEVEL_STATEMENT"),
+    MODULE_CLASS_UNSUPPORTED("CS_MODULE_CLASS_UNSUPPORTED"),
+
+    // import できない範囲のモジュール（S8.2 Phase 4。ModuleAccess を渡すコンパイルだけ。位置は import のモジュール名、引数: モジュール名）。
+    // 例: 直接の依存ではないパッケージのモジュール、パッケージの公開しないモジュール。末尾に足す（既存の値の順序を変えない）
+    MODULE_NOT_VISIBLE("CS_MODULE_NOT_VISIBLE"),
+
+    // 第9.0〜9.3段階（リストの関数・ラムダ・パイプライン・エラーフォールバック・型推論）。末尾に足す（既存の値の順序を変えない）
+    // ラムダ・関数の参照・関数の値を書けない場所（ラムダは呼び出しの引数・val の初期化式・関数の値の呼び出しにだけ書ける）。引数は無い
+    SEM_LAMBDA_NOT_ALLOWED("CS_SEM_LAMBDA_NOT_ALLOWED"),
+
+    // ラムダの引数の数が、呼び出し先が渡す引数の数と違う（引数: 関数名、求められる数、ラムダの引数の数）
+    SEM_LAMBDA_PARAMETER_COUNT("CS_SEM_LAMBDA_PARAMETER_COUNT"),
+
+    // 文脈から型を推論できないラムダの引数（val f = { x -> … } など。引数: 引数名）
+    SEM_LAMBDA_PARAMETER_TYPE_REQUIRED("CS_SEM_LAMBDA_PARAMETER_TYPE_REQUIRED"),
+
+    // ラムダの中の return（ラムダはその場で展開するため、関数から戻る return と区別できない）
+    SEM_RETURN_IN_LAMBDA("CS_SEM_RETURN_IN_LAMBDA"),
+
+    // プロパティの初期化式の中のラムダ（初期化中のインスタンスの状態を保存データで確かめる規則を保つため）
+    SEM_LAMBDA_IN_INITIALIZER("CS_SEM_LAMBDA_IN_INITIALIZER"),
+
+    // 関数の値（ラムダ・関数の参照を入れた val）を、宣言した関数・メソッド（またはトップレベル）の外で使った（引数: 名前）
+    SEM_FUNCTION_VALUE_OUTSIDE_SCOPE("CS_SEM_FUNCTION_VALUE_OUTSIDE_SCOPE"),
+
+    // |> の右が 名前・名前(引数…)・名前 { ラムダ } のどれでもない
+    SEM_INVALID_PIPE_TARGET("CS_SEM_INVALID_PIPE_TARGET"),
+
+    // group のキーの型が Int・String・Boolean 以外（引数: 型）
+    SEM_GROUP_KEY_TYPE("CS_SEM_GROUP_KEY_TYPE"),
+
+    // 関数の型を書けない場所（val の型の注釈以外。関数の引数・戻り値・プロパティ・リストの要素など）
+    SEM_FUNCTION_TYPE_NOT_ALLOWED("CS_SEM_FUNCTION_TYPE_NOT_ALLOWED"),
+
+    // 関数の値の展開（インライン）が多すぎる・深すぎる（引数: 上限）
+    COMP_TOO_MANY_INLINE_EXPANSIONS("CS_COMP_TOO_MANY_INLINE_EXPANSIONS"),
 }

@@ -1,0 +1,474 @@
+# CreateScript-Registry: publish a signed index (S8.3 Phase 2; jobs split in Phase 5, see SIGNING.md and
+# docs/audits/S8.3-Phase5-Remediation.md in CreateScript).
+#
+# This file runs only from the root of the registry's own repository. In the CreateScript repository it is kept
+# under registry-template/, where GitHub never runs it.
+#
+# This workflow never signs and never sees a private key. A signer builds and signs the index on their own
+# machine and opens a publication pull request that changes only signed/index.json and signed/index.json.sig.
+# After that pull request is approved and merged:
+#   1. check (read-only token, no secrets): builds the tool (checked wrapper, strict dependency verification, no
+#      cache) and checks the signature with keys/trusted-keys.json, the serial (the one after the published
+#      index), that no reviewed SHA-256 or dependency changed, and that the index is exactly the one built from
+#      this commit. It then checks the approvals again (P4-M4): the pushed commit must come from exactly one merged
+#      pull request, whose head commit has the same tree, and whose reviews (read with the token) pass
+#      check-approvals against the commit before the push. It passes on the SHA-256 of the two files.
+#      It also checks the repository's index-* tag rulesets, the main branch ruleset and the default branch (snapshot
+#      version 3, S8.3 U-2) against the administrator's signed snapshot
+#      (github-settings/verified-rulesets.json and .sig, keys/settings-keys.json; S8.3 Phase 10B-2A, plan B'):
+#      GitHub returns a ruleset's bypass actors only to users who can write it, so this job's read-only token
+#      compares what it can see (id, enforcement, conditions, rules, created_at, updated_at, and
+#      current_user_can_bypass) with the snapshot. Any difference, anything missing, or an unsigned snapshot stops it.
+#      It relies on P-20 (a change of the bypass actors gives the ruleset a new updated_at), confirmed on a test
+#      repository only for adding and removing a bypass actor.
+#   2. release (environment "publish" with required reviewers; the only job that writes, through the registry's
+#      publishing GitHub App, with its own GITHUB_TOKEN read-only): runs no Gradle and no tool (P4-M3, W1). It checks that the files still have the SHA-256 from step 1,
+#      checks with the App's token, before creating the draft and again just before publishing it, that the tag
+#      rulesets are still exactly the ones the check job saw (same ids, enforcement, created_at and updated_at) and
+#      that the App can bypass only the creation ruleset, stops if any release
+#      for this serial already exists (draft or published), creates the release index-<serial> as a draft, checks
+#      the draft's two assets and GitHub's digests against the recorded SHA-256, and only then publishes it and
+#      makes it the latest; it then checks that GitHub reports it published and immutable (P6-L3). A failure
+#      leaves a draft (never published, never latest) or, after publishing, a recorded failure; nothing is
+#      deleted or replaced automatically.
+#   3. verify (read-only token): checks again with the tool that GitHub reports the release as immutable and that
+#      the asset digests are the SHA-256 of the signed files, and records a failure in the job summary.
+# An unsigned index, a test key, a closed registry (too few maintainers), missing approvals or any failed check
+# stops it before anything is published.
+name: publish
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - signed/index.json
+      - signed/index.json.sig
+
+permissions: {}
+
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+env:
+  TOOL_REPOSITORY: dog7dog/Create_Script
+  TOOL_COMMIT: "0000000000000000000000000000000000000000"
+  WRAPPER_JAR_SHA256: "cb0da6751c2b753a16ac168bb354870ebb1e162e9083f116729cec9c781156b8"
+  TOOL: tool/createscript-registry-tool/build/install/createscript-registry-tool/bin/createscript-registry-tool
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      serial: ${{ steps.files.outputs.serial }}
+      index_sha256: ${{ steps.files.outputs.index_sha256 }}
+      sig_sha256: ${{ steps.files.outputs.sig_sha256 }}
+      rulesets: ${{ steps.rulesets.outputs.rulesets }}
+      default_branch: ${{ steps.rulesets.outputs.default_branch }}
+    steps:
+      - name: Refuse to run before the bootstrap
+        run: |
+          if [ "$TOOL_COMMIT" = "0000000000000000000000000000000000000000" ]; then
+            echo "TOOL_COMMIT is not set yet (GOVERNANCE.md, Bootstrap)" >&2
+            exit 1
+          fi
+
+      - name: Check out main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: registry
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check out the tool at a fixed commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ env.TOOL_REPOSITORY }}
+          ref: ${{ env.TOOL_COMMIT }}
+          path: tool
+          persist-credentials: false
+
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Build the tool (checked wrapper, strict dependency verification, no cache)
+        working-directory: tool
+        run: |
+          echo "$WRAPPER_JAR_SHA256  gradle/wrapper/gradle-wrapper.jar" | sha256sum -c -
+          grep -q '^distributionSha256Sum=' gradle/wrapper/gradle-wrapper.properties
+          test -f gradle/verification-metadata.xml
+          ./gradlew --no-daemon --no-build-cache --quiet --dependency-verification strict :createscript-registry-tool:installDist
+
+      - name: Download the published index
+        env:
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          mkdir published
+          if curl -fsSL --max-time 60 -o published/index.json "https://github.com/$REPOSITORY/releases/latest/download/index.json"; then
+            curl -fsSL --max-time 60 -o published/index.json.sig "https://github.com/$REPOSITORY/releases/latest/download/index.json.sig"
+          else
+            rm -f published/index.json
+          fi
+
+      - name: Check before publishing
+        run: |
+          echo "::stop-commands::$(uuidgen)"
+          set --
+          if [ -f published/index.json ]; then set -- --previous-index published/index.json --previous-sig published/index.json.sig; fi
+          "$TOOL" publish-check --repo registry "$@"
+
+      - name: Check the repository's tag and main branch rulesets and default branch against the signed snapshot (fails when they cannot be verified)
+        id: rulesets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          CHECKS_APP_ID: ${{ vars.REGISTRY_CHECKS_APP_ID }}
+          PUBLISHER_APP_ID: ${{ vars.REGISTRY_PUBLISHER_APP_ID }}
+        run: |
+          set -euo pipefail
+          mkdir live-rulesets
+          gh api --paginate --slurp "repos/$REPOSITORY/rulesets?per_page=100" > live-rulesets/list.json
+          # the repository's default branch (snapshot version 3, S8.3 U-2): ~DEFAULT_BRANCH protects main only while it is the default
+          gh api "repos/$REPOSITORY" > live-rulesets/repository.json
+          for id in $(jq -r '.[][] | select(.target == "tag" or .target == "branch") | .id' live-rulesets/list.json); do
+            case "$id" in ''|*[!0-9]*) echo "unexpected ruleset id" >&2; exit 1 ;; esac
+            gh api "repos/$REPOSITORY/rulesets/$id" > "live-rulesets/ruleset-$id.json"
+          done
+          echo "::stop-commands::$(uuidgen)"
+          "$TOOL" check-ruleset-snapshot --repo registry --live live-rulesets --repository-info live-rulesets/repository.json \
+            --repository "$REPOSITORY" --actor workflow --checks-app-id "$CHECKS_APP_ID" --publisher-app-id "$PUBLISHER_APP_ID"
+          # What this job saw, for the release job's re-check just before publishing (no secret in it).
+          creation="$(jq -r .name registry/github-settings/index-tags-creation-ruleset.json)"
+          protection="$(jq -r .name registry/github-settings/index-tags-protection-ruleset.json)"
+          main="$(jq -r .name registry/github-settings/main-ruleset.json)"
+          seen="$(jq -c -s --arg creation "$creation" --arg protection "$protection" --arg main "$main" \
+            'map({id, name, target, enforcement, created_at, updated_at,
+                  role: (if .target == "tag" and .name == $creation then "creation" elif .target == "tag" and .name == $protection then "protection"
+                         elif .target == "branch" and .name == $main then "main" else "other" end)}) | sort_by(.id)' \
+            live-rulesets/ruleset-*.json)"
+          default_branch="$(jq -r .default_branch live-rulesets/repository.json)"
+          case "$default_branch" in main) ;; *) echo "unexpected default branch" >&2; exit 1 ;; esac
+          {
+            echo "rulesets=$seen"
+            echo "default_branch=$default_branch"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Find the merged pull request and read its reviews
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          COMMIT: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$REPOSITORY/commits/$COMMIT/pulls" > pulls.json
+          count="$(jq '[.[] | select(.merged_at != null and .base.ref == "main")] | length' pulls.json)"
+          if [ "$count" != 1 ]; then echo "the commit must come from exactly one merged pull request ($count found)" >&2; exit 1; fi
+          number="$(jq -r '[.[] | select(.merged_at != null and .base.ref == "main")][0].number' pulls.json)"
+          case "$number" in ''|*[!0-9]*) echo "unexpected pull request number" >&2; exit 1 ;; esac
+          gh api "repos/$REPOSITORY/pulls/$number" > pull.json
+          head="$(jq -r .head.sha pull.json)"
+          author="$(jq -r .user.login pull.json)"
+          author_id="$(jq -r .user.id pull.json)"
+          case "$head" in ''|*[!0-9a-f]*) echo "unexpected head commit" >&2; exit 1 ;; esac
+          [ "${#head}" = 40 ] || { echo "unexpected head commit" >&2; exit 1; }
+          case "$author_id" in ''|*[!0-9]*) echo "unexpected author" >&2; exit 1 ;; esac
+          case "$author" in ''|*[!A-Za-z0-9-]*) echo "unexpected author" >&2; exit 1 ;; esac
+          gh api --paginate --slurp "repos/$REPOSITORY/pulls/$number/reviews?per_page=100" > reviews.json
+          {
+            echo "number=$number"
+            echo "head=$head"
+            echo "author=$author"
+            echo "author_id=$author_id"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Check that the merged tree is the approved tree, and the approvals
+        env:
+          BEFORE: ${{ github.event.before }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          PR_HEAD: ${{ steps.pr.outputs.head }}
+          PR_AUTHOR: ${{ steps.pr.outputs.author }}
+          PR_AUTHOR_ID: ${{ steps.pr.outputs.author_id }}
+        run: |
+          set -euo pipefail
+          echo "::stop-commands::$(uuidgen)"
+          case "$BEFORE" in ''|*[!0-9a-f]*) echo "unexpected previous commit" >&2; exit 1 ;; esac
+          [ "${#BEFORE}" = 40 ] || { echo "unexpected previous commit" >&2; exit 1; }
+          git -C registry fetch --quiet --no-tags origin "$PR_HEAD"
+          if [ "$(git -C registry rev-parse "$PR_HEAD^{tree}")" != "$(git -C registry rev-parse "HEAD^{tree}")" ]; then
+            echo "the published commit is not the tree of the approved head commit $PR_HEAD" >&2
+            exit 1
+          fi
+          # The base of the approvals is the commit before the push (by its SHA from the push event); it must be an
+          # ancestor of the published commit. It is rebuilt from every tracked file of that commit, read as raw
+          # blobs: no .git, and no .gitattributes processing (export-ignore, eol, filters) can drop or change a file
+          # (P6-L5). Only regular files are allowed (no symbolic links, no submodules).
+          git -C registry merge-base --is-ancestor "$BEFORE" HEAD || { echo "the previous commit is not an ancestor of the published commit" >&2; exit 1; }
+          listing="$(mktemp)"
+          git -C registry ls-tree -r -z --full-tree "$BEFORE" > "$listing"
+          mkdir before
+          count=0
+          while IFS= read -r -d '' entry; do
+            meta="${entry%%$'\t'*}"
+            path="${entry#*$'\t'}"
+            mode="${meta%% *}"
+            blob="${meta##* }"
+            case "$mode" in 100644|100755) ;; *) echo "the previous commit has an entry that is not a regular file (mode $mode)" >&2; exit 1 ;; esac
+            case "/$path/" in */../*|*/./*|*//*|*/.git/*) echo "the previous commit has an unexpected path" >&2; exit 1 ;; esac
+            mkdir -p "before/$(dirname -- "$path")"
+            git -C registry cat-file blob "$blob" > "before/$path"
+            count=$((count + 1))
+          done < "$listing"
+          rm -f "$listing"
+          [ "$count" -gt 0 ] || { echo "the previous commit has no files" >&2; exit 1; }
+          "$TOOL" check-approvals --base before --head registry --pr "$PR_NUMBER" --author "$PR_AUTHOR" --author-id "$PR_AUTHOR_ID" --head-sha "$PR_HEAD" --reviews reviews.json
+
+      - name: Record the files to publish
+        id: files
+        run: |
+          set -euo pipefail
+          serial="$(jq -r .serial registry/signed/index.json)"
+          case "$serial" in ''|*[!0-9]*) echo "unexpected serial" >&2; exit 1 ;; esac
+          {
+            echo "serial=$serial"
+            echo "index_sha256=$(sha256sum registry/signed/index.json | cut -d' ' -f1)"
+            echo "sig_sha256=$(sha256sum registry/signed/index.json.sig | cut -d' ' -f1)"
+          } >> "$GITHUB_OUTPUT"
+
+  # The only job with a write token. It builds and runs nothing but sha256sum and gh.
+  # The only job that writes to the repository, through the registry's publishing GitHub App (S8.3 Phase 10A, W1).
+  # It builds and runs nothing but sha256sum, jq, openssl, curl, gh and an inline python3 comparison (no tool, no Gradle).
+  # Its own GITHUB_TOKEN is read-only; there is
+  # no fallback to it. The App's private key is a secret of the environment "publish", so it is available only
+  # after the environment's approval.
+  release:
+    needs: check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    # A protected environment with required reviewers (GOVERNANCE.md).
+    environment: publish
+    permissions:
+      contents: read
+    steps:
+      - name: Check out main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: registry
+          persist-credentials: false
+
+      - name: Publish the release as the registry's publishing GitHub App
+        env:
+          APP_ID: ${{ vars.REGISTRY_PUBLISHER_APP_ID }}
+          APP_KEY: ${{ secrets.REGISTRY_PUBLISHER_APP_KEY }}
+          REPOSITORY: ${{ github.repository }}
+          SERIAL: ${{ needs.check.outputs.serial }}
+          INDEX_SHA256: ${{ needs.check.outputs.index_sha256 }}
+          SIG_SHA256: ${{ needs.check.outputs.sig_sha256 }}
+          RULESETS: ${{ needs.check.outputs.rulesets }}
+          DEFAULT_BRANCH: ${{ needs.check.outputs.default_branch }}
+        run: |
+          set -euo pipefail
+          # One cleanup for every way out: remove the key file and revoke the App token. The token is never written
+          # to a file or printed; a failed revocation is reported without any secret (DELETE /installation/token,
+          # documented by GitHub as returning 204).
+          key=""
+          token=""
+          cleanup() {
+            status=$?
+            if [ -n "$key" ]; then rm -f "$key"; fi
+            if [ -n "$token" ] && [ "$token" != null ]; then
+              if ! curl -fsS --max-time 30 -X DELETE -o /dev/null -H "Authorization: Bearer $token" -H "Accept: application/vnd.github+json" \
+                  "https://api.github.com/installation/token" 2>/dev/null; then
+                echo "::warning::the Publisher App installation token could not be revoked; it expires by itself within an hour"
+              fi
+              token=""
+            fi
+            exit "$status"
+          }
+          trap cleanup EXIT
+          stop() {
+            echo "::error::$1"
+            if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then printf '### Publication of index-%s stopped\n\n%s\n\nNothing was deleted or replaced automatically (GOVERNANCE.md, "Failed publication").\n' "$SERIAL" "$1" >> "$GITHUB_STEP_SUMMARY"; fi
+            exit 1
+          }
+          case "$SERIAL" in ''|*[!0-9]*) echo "unexpected serial" >&2; exit 1 ;; esac
+          case "$APP_ID" in ''|*[!0-9]*) stop "REGISTRY_PUBLISHER_APP_ID is not set; nothing was published." ;; esac
+          for value in "$INDEX_SHA256" "$SIG_SHA256"; do
+            case "$value" in ''|*[!0-9a-f]*) echo "unexpected SHA-256" >&2; exit 1 ;; esac
+            [ "${#value}" = 64 ] || { echo "unexpected SHA-256" >&2; exit 1; }
+          done
+          echo "$INDEX_SHA256  registry/signed/index.json" | sha256sum -c -
+          echo "$SIG_SHA256  registry/signed/index.json.sig" | sha256sum -c -
+          # The App token, obtained just before its first use: limited to this repository and contents: write.
+          b64url() { openssl base64 -A | tr '+/' '-_' | tr -d '='; }
+          now="$(date +%s)"
+          header="$(printf '{"alg":"RS256","typ":"JWT"}' | b64url)"
+          payload="$(printf '{"iat":%d,"exp":%d,"iss":"%s"}' "$((now - 60))" "$((now + 540))" "$APP_ID" | b64url)"
+          key="$(mktemp)"
+          printf '%s\n' "$APP_KEY" > "$key"
+          signature="$(printf '%s.%s' "$header" "$payload" | openssl dgst -sha256 -sign "$key" | b64url)" ||
+            stop "the Publisher App key cannot be used; nothing was published."
+          rm -f "$key"
+          key=""
+          jwt="$header.$payload.$signature"
+          installation="$(curl -fsS --max-time 30 -H "Authorization: Bearer $jwt" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$REPOSITORY/installation" | jq -r .id)" ||
+            stop "the Publisher App could not be authenticated or is not installed on $REPOSITORY; nothing was published."
+          case "$installation" in ''|*[!0-9]*) stop "the Publisher App is not installed on $REPOSITORY; nothing was published." ;; esac
+          response="$(jq -n --arg repo "${REPOSITORY#*/}" '{repositories: [$repo], permissions: {contents: "write"}}' |
+            curl -fsS --max-time 30 -X POST -H "Authorization: Bearer $jwt" -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/app/installations/$installation/access_tokens" -d @-)" ||
+            stop "the Publisher App token could not be obtained (missing permission or authentication failure); nothing was published."
+          token="$(printf '%s' "$response" | jq -r '.token // empty')"
+          if [ -z "$token" ]; then response=""; stop "the Publisher App returned no token; nothing was published."; fi
+          echo "::add-mask::$token"
+          # Exactly contents: write (and metadata: read) on exactly this repository; anything else stops it.
+          printf '%s' "$response" | jq -e --arg repo "${REPOSITORY#*/}" \
+            '((.permissions // {}) | (.contents == "write") and (to_entries | all(.key == "contents" or (.key == "metadata" and .value == "read"))))
+              and .repository_selection == "selected" and ([.repositories[]?.name] == [$repo])' > /dev/null ||
+            { response=""; stop "the Publisher App token does not have exactly contents: write on $REPOSITORY; nothing was published."; }
+          response=""
+          export GH_TOKEN="$token"
+          tag="index-$SERIAL"
+          # The tag rulesets must still be exactly the ones the check job verified against the signed snapshot
+          # (same ids, enforcement, created_at and updated_at, compared as instants), with nothing added or removed,
+          # and this App may bypass only the creation ruleset (current_user_can_bypass). Anything missing or
+          # different stops it. Run before the draft and again just before publishing.
+          recheck() {
+            rm -rf rulesets-now
+            mkdir rulesets-now
+            gh api --paginate --slurp "repos/$REPOSITORY/rulesets?per_page=100" > rulesets-now/list.json ||
+              stop "the repository's rulesets could not be read $1; $2"
+            gh api "repos/$REPOSITORY" > rulesets-now/repository.json || stop "the repository could not be read $1; $2"
+            for rid in $(jq -r '.[][] | select(.target == "tag" or .target == "branch") | .id' rulesets-now/list.json); do
+              case "$rid" in ''|*[!0-9]*) stop "unexpected ruleset id $1; $2" ;; esac
+              gh api "repos/$REPOSITORY/rulesets/$rid" > "rulesets-now/ruleset-$rid.json" || stop "the ruleset $rid could not be read $1; $2"
+            done
+            python3 -I - rulesets-now <<'PY' || stop "the rulesets or the default branch differ from what the check job verified, or cannot be verified, $1; $2"
+          import json, os, pathlib, re, sys
+          from datetime import datetime
+          STAMP = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}(Z|[+-]\d{2}:\d{2})")
+          def instant(text):
+              if not isinstance(text, str) or not STAMP.fullmatch(text): raise ValueError("not a GitHub timestamp: %r" % (text,))
+              return datetime.fromisoformat(text.replace("Z", "+00:00"))
+          problems = []
+          try:
+              expected = json.loads(os.environ.get("RULESETS") or "null")
+              assert isinstance(expected, list) and expected, "the check job recorded no rulesets"
+              roles = sorted(r.get("role") for r in expected)
+              assert roles.count("creation") == 1 and roles.count("protection") == 1 and roles.count("main") == 1, "the check job did not record both tag rulesets and the main branch ruleset"
+              # the default branch: as the check job saw it (main), and still main now
+              repository = json.loads((pathlib.Path(sys.argv[1]) / "repository.json").read_text())
+              if os.environ.get("DEFAULT_BRANCH") != "main": problems.append("the check job recorded the default branch %r, not 'main'" % (os.environ.get("DEFAULT_BRANCH"),))
+              if not isinstance(repository, dict) or repository.get("default_branch") != "main": problems.append("the default branch is now %r, not 'main'" % (repository.get("default_branch") if isinstance(repository, dict) else None,))
+              now = {}
+              for f in sorted(pathlib.Path(sys.argv[1]).glob("ruleset-*.json")):
+                  r = json.loads(f.read_text()); now[r.get("id")] = r
+              if sorted(now) != sorted(r["id"] for r in expected): problems.append("tag or branch rulesets were added or removed: %s, expected %s" % (sorted(now), sorted(r["id"] for r in expected)))
+              for e in expected:
+                  r = now.get(e["id"])
+                  if r is None: continue
+                  for field in ("name", "target", "enforcement"):
+                      if r.get(field) != e.get(field): problems.append("ruleset %s: %s is %r, expected %r" % (e["id"], field, r.get(field), e.get(field)))
+                  for field in ("created_at", "updated_at"):
+                      try:
+                          if instant(r.get(field)) != instant(e.get(field)): problems.append("ruleset %s: %s changed since the check job" % (e["id"], field))
+                      except ValueError as error: problems.append("ruleset %s: %s: %s" % (e["id"], field, error))
+                  want = {"creation": "always", "protection": "never", "main": "never"}.get(e["role"])
+                  if want is not None and r.get("current_user_can_bypass") != want:
+                      problems.append("ruleset %s: current_user_can_bypass is %r for the Publisher App, expected %r" % (e["id"], r.get("current_user_can_bypass"), want))
+          except (AssertionError, ValueError, KeyError, TypeError, AttributeError) as error:
+              problems.append(str(error))
+          for p in problems: print("error: " + p, file=sys.stderr)
+          sys.exit(1 if problems else 0)
+          PY
+          }
+          recheck "before creating the draft" "nothing was published."
+          # A re-run never publishes the same serial again: any release for this tag, draft or published, stops it.
+          gh api --paginate --slurp "repos/$REPOSITORY/releases?per_page=100" > releases.json
+          if [ "$(jq --arg tag "$tag" '[.[][] | select(.tag_name == $tag)] | length' releases.json)" != 0 ]; then
+            stop "a release for $tag already exists (draft or published); nothing was published. Check it by hand."
+          fi
+          # Create it as a draft: not visible as the latest release, and not yet immutable.
+          gh release create "$tag" registry/signed/index.json registry/signed/index.json.sig \
+            --repo "$REPOSITORY" --target "$GITHUB_SHA" --title "Index $SERIAL" --notes "Signed index $SERIAL" --draft
+          gh api --paginate --slurp "repos/$REPOSITORY/releases?per_page=100" > releases.json
+          jq --arg tag "$tag" '[.[][] | select(.tag_name == $tag)]' releases.json > draft.json
+          [ "$(jq length draft.json)" = 1 ] || stop "the draft release $tag cannot be found exactly once; it was not published."
+          id="$(jq -r '.[0].id' draft.json)"
+          case "$id" in ''|*[!0-9]*) stop "the draft release $tag has no usable ID; it was not published." ;; esac
+          [ "$(jq -r '.[0].draft' draft.json)" = true ] || stop "the release $tag is not a draft; it was not changed."
+          # Exactly the two assets, uploaded, with GitHub's digests equal to the SHA-256 recorded by the check job.
+          assets="$(jq -r '.[0].assets | map(.name + " " + .state + " " + (.digest // "none")) | sort | join(",")' draft.json)"
+          expected="index.json uploaded sha256:$INDEX_SHA256,index.json.sig uploaded sha256:$SIG_SHA256"
+          [ "$assets" = "$expected" ] || stop "the draft release $tag does not have exactly the two signed files with the expected digests; it was left as a draft (not published, not the latest)."
+          recheck "just before publishing" "$tag was left as a draft (not published, not the latest)."
+          # Publish it and make it the latest, then check what GitHub reports.
+          gh api -X PATCH "repos/$REPOSITORY/releases/$id" -F draft=false -f make_latest=true > published.json
+          [ "$(jq -r .draft published.json)" = false ] && [ "$(jq -r .tag_name published.json)" = "$tag" ] ||
+            stop "GitHub did not report $tag as published; check the release by hand."
+          [ "$(jq -r .immutable published.json)" = true ] ||
+            stop "$tag was published, but GitHub does not report it as immutable. Its assets are signed, but they could be replaced; check the repository setting and the release by hand."
+
+  verify:
+    needs: [check, release]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Check out main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: registry
+          persist-credentials: false
+
+      - name: Check out the tool at a fixed commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ env.TOOL_REPOSITORY }}
+          ref: ${{ env.TOOL_COMMIT }}
+          path: tool
+          persist-credentials: false
+
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Build the tool (checked wrapper, strict dependency verification, no cache)
+        working-directory: tool
+        run: |
+          echo "$WRAPPER_JAR_SHA256  gradle/wrapper/gradle-wrapper.jar" | sha256sum -c -
+          grep -q '^distributionSha256Sum=' gradle/wrapper/gradle-wrapper.properties
+          test -f gradle/verification-metadata.xml
+          ./gradlew --no-daemon --no-build-cache --quiet --dependency-verification strict :createscript-registry-tool:installDist
+
+      - name: Check the published release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          SERIAL: ${{ needs.check.outputs.serial }}
+        run: |
+          set -euo pipefail
+          case "$SERIAL" in ''|*[!0-9]*) echo "unexpected serial" >&2; exit 1 ;; esac
+          gh api "repos/$REPOSITORY/releases/tags/index-$SERIAL" > release.json
+          echo "::stop-commands::$(uuidgen)"
+          "$TOOL" check-release --release release.json --index registry/signed/index.json --sig registry/signed/index.json.sig
+
+      - name: Record a failed verification
+        if: ${{ failure() }}
+        env:
+          SERIAL: ${{ needs.check.outputs.serial }}
+        run: |
+          printf '### index-%s: published, but the verification failed\n\nThe release was not changed automatically. Follow GOVERNANCE.md, "Failed publication".\n' "$SERIAL" >> "$GITHUB_STEP_SUMMARY"
+          echo "::error::index-$SERIAL was published but did not pass the verification; see the job summary"

@@ -267,10 +267,24 @@ object SnapshotVerifier {
     // 最初に決まった後に最大（大域変数 + ローカル変数の数）回しか変わらない。関数の RETURN の状態（exits）も同じく一方向に変わり、
     // 変わるたびにその関数を呼ぶ CALL を処理し直す。処理回数は maxSteps 以下で必ず終わる。
     // その上限（stepLimit。JUnit では打ち切りの確認のために小さくする）を超えたら、検証できないものとして打ち切る
-    fun framesOf(program: CompiledProgram, stepLimit: Long = maxSteps(program)): List<Frame?>? {
-        if (program.variableCount !in 0..VmLimits.MAX_VARIABLES || program.instructions.isEmpty()) return null
-        if (!hasValidClasses(program)) return null
-        val regions = regionsOf(program) ?: return null
+    fun framesOf(program: CompiledProgram, stepLimit: Long = maxSteps(program)): List<Frame?>? = (analyze(program, stepLimit) as? Analysis.Frames)?.frames
+
+    // framesOf の結果に、処理回数の上限（stepLimit）で打ち切ったことを区別して返すもの（第8.0.1段階。独立版のコンパイルの作業量の上限に使う）
+    internal sealed interface Analysis {
+        class Frames(val frames: List<Frame?>) : Analysis
+
+        data object Invalid : Analysis
+
+        data object StepLimitReached : Analysis
+    }
+
+    private class StepLimit : RuntimeException(null, null, false, false)
+
+    internal fun analyze(program: CompiledProgram, stepLimit: Long): Analysis {
+        if (program.variableCount !in 0..VmLimits.MAX_VARIABLES || program.instructions.isEmpty()) return Analysis.Invalid
+        if (!hasValidClasses(program)) return Analysis.Invalid
+        val regions = regionsOf(program) ?: return Analysis.Invalid
+        val handlerAt = handlersOf(program, regions) ?: return Analysis.Invalid
         val size = program.instructions.size
         val frames = arrayOfNulls<Frame>(size)
         frames[0] = Frame(emptyList(), List(program.variableCount) { VariableState.Uninitialized })
@@ -287,7 +301,7 @@ object SnapshotVerifier {
                 for (pc in frames.indices) {
                     if (!changed[pc]) continue
                     changed[pc] = false
-                    if (--remainingSteps < 0) throw Unverifiable()
+                    if (--remainingSteps < 0) throw StepLimit()
                     val instruction = program.instructions[pc]
                     val frame = frames[pc]!!
                     fun flowTo(next: Int, state: Frame) {
@@ -299,6 +313,8 @@ object SnapshotVerifier {
                             if (next <= pc) sweepAgain = true
                         }
                     }
+                    // エラーフォールバックの範囲の命令（第9.2段階）は、実行前の状態のスタックを切り詰めて受け手へも移りうる
+                    handlerAt[pc]?.forEach { handler -> flowTo(handler.handler, toHandler(frame, handler)) }
                     when (instruction.opcode) {
                         Opcode.CALL -> {
                             val function = program.functions.getOrNull(instruction.operand) ?: throw Unverifiable()
@@ -349,9 +365,171 @@ object SnapshotVerifier {
                 }
             }
         } catch (unverifiable: Unverifiable) {
-            return null
+            return Analysis.Invalid
+        } catch (limit: StepLimit) {
+            // 既定（maxSteps）の上限に達するのは、正しくないプログラムだけ（第8.0段階までと同じく検証できないものとする）。
+            // それより小さい上限で打ち切った場合だけを区別する
+            return if (stepLimit >= maxSteps(program)) Analysis.Invalid else Analysis.StepLimitReached
         }
-        return frames.toList()
+        return Analysis.Frames(frames.toList())
+    }
+
+    // ---- 大きなプログラムのための検証（第8.0.1段階） ----
+
+    // framesOf と同じ規則でバイトコードを検証し、到達するすべての命令位置のスタックの深さの最大を返す（検証できなければ Invalid）。
+    // framesOf は命令位置ごとに状態を持つため、メモリーが命令数 ×（変数の数 + スタックの深さ）に比例し、合流のたびに状態を作り直す。
+    // こちらは基本ブロック（分岐先・関数の先頭・CALL・分岐や RETURN・HALT の次の位置から始まり、途中に合流の無い命令の並び）の先頭の状態だけを持ち、
+    // ブロックの中は先頭の状態から命令を順に適用する（合流が無いため、framesOf の各位置の状態と同じになる）。
+    // 処理回数は命令 1 つの適用ごとに数える（framesOf の処理回数と同じ数え方で、上限 maxSteps も同じ）。
+    // 独立版のコンパイル（CompileOptions.maxVerificationSteps のあるとき）が使う。保存した状態の復元（check）は、これまでどおり framesOf を使う
+    internal sealed interface BlockAnalysis {
+        class Verified(val maxStackDepth: Int) : BlockAnalysis
+
+        data object Invalid : BlockAnalysis
+
+        data object StepLimitReached : BlockAnalysis
+    }
+
+    internal fun analyzeBlocks(program: CompiledProgram, stepLimit: Long): BlockAnalysis {
+        if (program.variableCount !in 0..VmLimits.MAX_VARIABLES || program.instructions.isEmpty()) return BlockAnalysis.Invalid
+        if (!hasValidClasses(program)) return BlockAnalysis.Invalid
+        val regions = regionsOf(program) ?: return BlockAnalysis.Invalid
+        val handlerAt = handlersOf(program, regions) ?: return BlockAnalysis.Invalid
+        val instructions = program.instructions
+        val size = instructions.size
+        // ブロックの先頭。CALL もブロックの先頭にする（関数の RETURN の状態が変わったときに、CALL だけを処理し直すため）
+        val leader = BooleanArray(size)
+        leader[0] = true
+        program.functions.forEach { if (it.entry in 0 until size) leader[it.entry] = true }
+        program.handlers.forEach { leader[it.handler] = true }
+        for ((pc, instruction) in instructions.withIndex()) {
+            when (instruction.opcode) {
+                Opcode.JUMP, Opcode.JUMP_IF_FALSE -> {
+                    if (instruction.operand in 0 until size) leader[instruction.operand] = true
+                    if (pc + 1 < size) leader[pc + 1] = true
+                }
+                Opcode.CALL -> {
+                    leader[pc] = true
+                    if (pc + 1 < size) leader[pc + 1] = true
+                }
+                Opcode.RETURN, Opcode.HALT -> if (pc + 1 < size) leader[pc + 1] = true
+                else -> {}
+            }
+        }
+        val entries = arrayOfNulls<Frame>(size)
+        entries[0] = Frame(emptyList(), List(program.variableCount) { VariableState.Uninitialized })
+        val changed = BooleanArray(size).also { it[0] = true }
+        val exits = arrayOfNulls<Exit>(program.functions.size)
+        val callSites = List(program.functions.size) { ArrayList<Int>() }
+        instructions.forEachIndexed { pc, instruction -> if (instruction.opcode == Opcode.CALL) callSites.getOrNull(instruction.operand)?.add(pc) }
+        var remainingSteps = stepLimit
+        var deepest = 0
+        try {
+            var sweepAgain = true
+            while (sweepAgain) {
+                sweepAgain = false
+                for (start in 0 until size) {
+                    if (!changed[start]) continue
+                    changed[start] = false
+                    var pc = start
+                    var frame = entries[start]!!
+                    fun flowTo(next: Int, state: Frame) {
+                        if (next !in 0 until size || !leader[next]) throw Unverifiable()
+                        val merged = entries[next]?.let { merge(it, state) ?: throw Unverifiable() } ?: state
+                        if (merged != entries[next]) {
+                            entries[next] = merged
+                            changed[next] = true
+                            if (next <= start) sweepAgain = true
+                        }
+                    }
+                    while (true) {
+                        if (--remainingSteps < 0) throw StepLimit()
+                        deepest = maxOf(deepest, frame.stack.size)
+                        handlerAt[pc]?.forEach { handler -> flowTo(handler.handler, toHandler(frame, handler)) }
+                        val instruction = instructions[pc]
+                        when (instruction.opcode) {
+                            Opcode.CALL -> {
+                                val function = program.functions.getOrNull(instruction.operand) ?: throw Unverifiable()
+                                if (frame.stack.size < function.parameterCount) throw Unverifiable()
+                                val arguments = frame.stack.takeLast(function.parameterCount)
+                                if (SlotType.UNIT in arguments) throw Unverifiable()
+                                val locals = arguments.map { VariableState.Initialized(it) } + List(function.localCount - function.parameterCount) { VariableState.Uninitialized }
+                                flowTo(function.entry, Frame(emptyList(), frame.variables, locals))
+                                val exit = exits[instruction.operand]
+                                if (exit != null) {
+                                    if (regions.getOrNull(pc + 1) != regions[pc]) throw Unverifiable()
+                                    flowTo(pc + 1, Frame(frame.stack.dropLast(function.parameterCount) + exit.result, afterCall(frame.variables, exit.variables), frame.locals))
+                                }
+                                break
+                            }
+                            Opcode.RETURN -> {
+                                val function = regions[pc]
+                                val result = when {
+                                    function == TOP_LEVEL -> throw Unverifiable()
+                                    instruction.operand == 0 && frame.stack.isEmpty() -> SlotType.UNIT
+                                    instruction.operand == 1 && frame.stack.size == 1 && frame.stack[0] != SlotType.UNIT -> frame.stack[0]
+                                    else -> throw Unverifiable()
+                                }
+                                val previous = exits[function]
+                                if (previous != null && previous.result != result) throw Unverifiable()
+                                val merged = Exit(previous?.let { mergeVariables(it.variables, frame.variables) ?: throw Unverifiable() } ?: frame.variables, result)
+                                if (merged != previous) {
+                                    exits[function] = merged
+                                    for (site in callSites[function]) {
+                                        if (entries[site] == null) continue
+                                        changed[site] = true
+                                        if (site <= start) sweepAgain = true
+                                    }
+                                }
+                                break
+                            }
+                            else -> {
+                                if (instruction.opcode == Opcode.HALT && regions[pc] != TOP_LEVEL) throw Unverifiable()
+                                val after = transfer(program, instruction, frame)
+                                val next = successors(pc, instruction)
+                                for (target in next) if (regions.getOrNull(target) != regions[pc]) throw Unverifiable()
+                                // 合流の無い次の命令へは、状態をそのまま渡して同じブロックの中で続ける
+                                if (next.size == 1 && next[0] == pc + 1 && !leader[pc + 1]) {
+                                    frame = after
+                                    pc++
+                                    continue
+                                }
+                                for (target in next) flowTo(target, after)
+                                break
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (unverifiable: Unverifiable) {
+            return BlockAnalysis.Invalid
+        } catch (limit: StepLimit) {
+            return if (stepLimit >= maxSteps(program)) BlockAnalysis.Invalid else BlockAnalysis.StepLimitReached
+        }
+        return BlockAnalysis.Verified(deepest)
+    }
+
+    // エラーフォールバックの範囲（第9.2段階）を命令位置ごとに引く表（範囲の外は null）。範囲は空でなく、範囲・受け手は同じ区間（手続き）にあり、
+    // 受け手は範囲の外で、スタックの深さは上限以内。形が正しくなければ null（検証できない）。範囲の無いプログラムでは何もしない
+    private fun handlersOf(program: CompiledProgram, regions: IntArray): Array<MutableList<ErrorHandler>?>? {
+        val size = program.instructions.size
+        val table = arrayOfNulls<MutableList<ErrorHandler>>(size)
+        for (handler in program.handlers) {
+            if (handler.start !in 0 until size || handler.end !in handler.start + 1..size || handler.handler !in 0 until size) return null
+            if (handler.handler in handler.start until handler.end || handler.stackDepth !in 0..VmLimits.MAX_STACK_DEPTH) return null
+            val region = regions[handler.handler]
+            for (pc in handler.start until handler.end) {
+                if (regions[pc] != region) return null
+                (table[pc] ?: ArrayList<ErrorHandler>().also { table[pc] = it }).add(handler)
+            }
+        }
+        return table
+    }
+
+    // 受け手へ移るときの状態: スタックは範囲の前の深さまで（それより深くなければ検証できない）、変数はそのまま
+    private fun toHandler(frame: Frame, handler: ErrorHandler): Frame {
+        if (frame.stack.size < handler.stackDepth) throw Unverifiable()
+        return Frame(frame.stack.subList(0, handler.stackDepth).toList(), frame.variables, frame.locals)
     }
 
     // 関数のすべての RETURN を合流した大域変数の状態と、結果の型（同じ関数の RETURN はすべて同じ型を返す）

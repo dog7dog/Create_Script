@@ -17,6 +17,10 @@ kotlin {
 
 dependencies {
     implementation project(':createscript-core')
+    // プロジェクトのファイル（createscript.json・createscript.lock）の読み取りと検査（S8.1。ファイルの読み書きは CLI が行う）
+    implementation project(':createscript-project')
+    // パッケージのダウンロードとキャッシュ（S8.2 Phase 2。コマンドからの利用は Phase 3）
+    implementation project(':createscript-install')
 
     // 対話モードの行編集（S5.3。BSD 3-Clause）。端末の操作は stty を使う exec の方式だけを使う。jline-native は
     // すべての OS・CPU 向けのネイティブライブラリを含むため、配布物に入れない（exec の方式では使わない）
@@ -59,4 +63,29 @@ tasks.named('test', Test) {
     dependsOn tasks.named('startScripts')
     systemProperty 'createscript.samples', file('samples').absolutePath
     systemProperty 'createscript.scripts', layout.buildDirectory.dir('scripts').get().asFile.absolutePath
+}
+
+// テスト専用のクライアント（S8.3 Phase 10A、W7。GitHub の実環境のテスト用）。`./gradlew :createscript-cli:testRegistryCli` と明示した
+// ときだけ build/test-registry-cli/ に作る（build・installDist・パッケージには含まれない）。テスト用のレジストリとテスト用の鍵を引数で受け取る
+def testRegistryCliJar = tasks.register('testRegistryCliJar', Jar) {
+    description = 'TEST ONLY: test classes for the test-only createscript client'
+    archiveFileName = 'createscript-TEST-REGISTRY-tests.jar'
+    destinationDirectory = layout.buildDirectory.dir('test-registry-cli-jar')
+    from sourceSets.test.output
+}
+def testRegistryCliScripts = tasks.register('testRegistryCliScripts', CreateStartScripts) {
+    description = 'TEST ONLY: launcher of the test-only createscript client'
+    mainClass = 'com.creatrbypc.createanalytical.cli.TestRegistryCliKt'
+    applicationName = 'createscript-TEST-REGISTRY'
+    outputDir = layout.buildDirectory.dir('test-registry-cli-scripts').get().asFile
+    classpath = files(testRegistryCliJar, tasks.named('jar')) + configurations.testRuntimeClasspath
+}
+tasks.register('testRegistryCli', Sync) {
+    group = 'test registry'
+    description = 'TEST ONLY: builds build/test-registry-cli (a client that trusts a test registry; never a release)'
+    into layout.buildDirectory.dir('test-registry-cli')
+    from(testRegistryCliScripts) { into 'bin' }
+    from(testRegistryCliJar) { into 'lib' }
+    from(tasks.named('jar')) { into 'lib' }
+    from(configurations.testRuntimeClasspath) { into 'lib' }
 }

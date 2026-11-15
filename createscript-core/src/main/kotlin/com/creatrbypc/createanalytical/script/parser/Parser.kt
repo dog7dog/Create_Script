@@ -12,11 +12,18 @@ import com.creatrbypc.createanalytical.script.ast.ContinueStatement
 import com.creatrbypc.createanalytical.script.ast.DoubleLiteral
 import com.creatrbypc.createanalytical.script.ast.Expression
 import com.creatrbypc.createanalytical.script.ast.ExpressionStatement
+import com.creatrbypc.createanalytical.script.ast.FUNCTION_TYPE_NAME
+import com.creatrbypc.createanalytical.script.ast.FallbackExpression
+import com.creatrbypc.createanalytical.script.ast.FunctionReference
+import com.creatrbypc.createanalytical.script.ast.LambdaExpression
+import com.creatrbypc.createanalytical.script.ast.LambdaParameter
+import com.creatrbypc.createanalytical.script.ast.PipeExpression
 import com.creatrbypc.createanalytical.script.ast.FloatLiteral
 import com.creatrbypc.createanalytical.script.ast.ForStatement
 import com.creatrbypc.createanalytical.script.ast.FunctionDeclaration
 import com.creatrbypc.createanalytical.script.ast.IfBranch
 import com.creatrbypc.createanalytical.script.ast.IfStatement
+import com.creatrbypc.createanalytical.script.ast.ImportDeclaration
 import com.creatrbypc.createanalytical.script.ast.IndexExpression
 import com.creatrbypc.createanalytical.script.ast.IntLiteral
 import com.creatrbypc.createanalytical.script.ast.LogicalExpression
@@ -43,10 +50,13 @@ import com.creatrbypc.createanalytical.script.diagnostic.DiagnosticPhase
 import com.creatrbypc.createanalytical.script.diagnostic.DiagnosticSeverity
 import com.creatrbypc.createanalytical.script.diagnostic.SourcePosition
 import com.creatrbypc.createanalytical.script.lexer.LexResult
+import com.creatrbypc.createanalytical.script.lexer.LexerLimits
 import com.creatrbypc.createanalytical.script.lexer.Token
 import com.creatrbypc.createanalytical.script.lexer.TokenType
 
 // 入れ子の深さと AST ノード数の上限（暫定値。第3.3段階の検証で確定する）。入れ子の深さはブロックの深さと式の深さの合計（11.9-9）
+// MAX_NODES は既定（埋め込み先）の値で、独立版（CompileOptions.STANDALONE: 第8.0.1段階）は parse の引数で広げる。
+// MAX_NESTING_DEPTH は再帰の深さ（Parser・意味解析・Compiler のスタック）を抑える言語の仕様で、どの設定でも同じ
 object ParserLimits {
     const val MAX_NESTING_DEPTH = 32
     const val MAX_NODES = 2048
@@ -61,7 +71,7 @@ data class ParseResult(
 )
 
 // CreateScript の構文解析器（再帰下降）。Minecraft に依存しない純粋な Kotlin で、1回の parse ごとに新しいインスタンスを使う
-class Parser private constructor(private val tokens: List<Token>, private val diagnostics: DiagnosticCollector) {
+class Parser private constructor(private val tokens: List<Token>, private val diagnostics: DiagnosticCollector, private val maxNodes: Int) {
     private var index = 0
 
     // 括弧の中にいる間は改行トークンを読み飛ばす（D18）
@@ -77,6 +87,11 @@ class Parser private constructor(private val tokens: List<Token>, private val di
     // トップレベルの関数定義（第3.8c段階）・クラス宣言（第3.9a段階）
     private val functions = ArrayList<FunctionDeclaration>()
     private val classes = ArrayList<ClassDeclaration>()
+
+    // ファイルの先頭の import（第8.0段階。宣言の順、重複は除く）と、その名前。importsAllowed は、まだ import 以外の文・宣言が無いか
+    private val imports = ArrayList<ImportDeclaration>()
+    private val importNames = HashSet<String>()
+    private var importsAllowed = true
 
     // 構文エラー。その文を読み飛ばして次の文から解析を続ける
     private class ParseFailure : RuntimeException(null, null, false, false)
@@ -98,15 +113,21 @@ class Parser private constructor(private val tokens: List<Token>, private val di
             TokenType.COLON, TokenType.SEMICOLON, TokenType.LEFT_BRACE, TokenType.RIGHT_BRACE,
             // リストの要素（第3.10a段階）
             TokenType.LEFT_BRACKET, TokenType.RIGHT_BRACKET,
+            // ラムダ・関数の型（第9.0・9.3段階）、関数の参照（第9.3段階）、パイプライン（第9.1段階）、エラーフォールバック（第9.2段階）
+            TokenType.ARROW, TokenType.DOUBLE_COLON, TokenType.PIPE_FORWARD, TokenType.FALLBACK,
         )
 
         private val STATEMENT_BOUNDARIES = setOf(TokenType.NEWLINE, TokenType.SEMICOLON, TokenType.EOF)
 
-        fun parse(lexResult: LexResult): ParseResult {
+        fun parse(lexResult: LexResult): ParseResult = parse(lexResult, ParserLimits.MAX_NODES)
+
+        // AST のノード数の上限を指定する（第8.0.1段階。CompileOptions から使う）
+        fun parse(lexResult: LexResult, maxNodes: Int): ParseResult {
+            require(maxNodes > 0) { "maxNodes must be positive: $maxNodes" }
             val diagnostics = DiagnosticCollector()
             diagnostics.merge(lexResult.diagnostics, lexResult.diagnosticsTruncated, lexResult.hasErrors)
             // 字句エラーがあるとトークン列が欠けており、誤った構文エラーを出しうるため構文解析しない（A8）
-            val program = if (lexResult.hasErrors) null else Parser(lexResult.tokens, diagnostics).parseProgram()
+            val program = if (lexResult.hasErrors) null else Parser(lexResult.tokens, diagnostics, maxNodes).parseProgram()
             return ParseResult(
                 program.takeUnless { diagnostics.hasErrors },
                 diagnostics.diagnostics,
@@ -123,7 +144,7 @@ class Parser private constructor(private val tokens: List<Token>, private val di
         } catch (abort: ParseAbort) {
             // 上限超過は報告済み。これ以上は解析しない
         }
-        return Program(statements, functions.toList(), classes.toList())
+        return Program(statements, functions.toList(), classes.toList(), imports.toList())
     }
 
     // 文の並び。ブロックの中（blockDepth > 0）では、ブロックを閉じる "}" の手前で止まる。EOF でも止まる（閉じていないブロックは parseBlock が報告する）
@@ -146,6 +167,12 @@ class Parser private constructor(private val tokens: List<Token>, private val di
                 continue
             }
             try {
+                if (isImport(token)) {
+                    parseImport()
+                    parseStatementEnd()
+                    continue
+                }
+                importsAllowed = false
                 when {
                     token.type == TokenType.KEYWORD && token.lexeme == "fun" -> functions.add(parseFunction())
                     token.type == TokenType.KEYWORD && token.lexeme == "class" -> classes.add(parseClass())
@@ -156,6 +183,54 @@ class Parser private constructor(private val tokens: List<Token>, private val di
                 synchronize()
             }
         }
+    }
+
+    // ---- import（第8.0段階） ----
+
+    // 文の先頭の識別子 import の後に、同じ行で識別子か文字列が続くもの。import は予約語ではないため、変数名などとしての import
+    // （import + 1 など）はこれまでどおり式になる。この形はこれまで構文エラー（CS_PARSE_EXPECTED_STATEMENT_END）だったため、動くプログラムは変わらない
+    private fun isImport(token: Token): Boolean {
+        if (token.type != TokenType.IDENTIFIER || token.lexeme != "import") return false
+        val next = tokens[index + 1].type
+        return next == TokenType.IDENTIFIER || next == TokenType.STRING_LITERAL
+    }
+
+    // import モジュール名。ファイルの先頭（他の文・宣言より前のトップレベル）にだけ書ける。モジュール名は識別子 1 つで、
+    // 後に "." / as / "*" などが続くもの（import a.b・import a as b・import a.*）と文字列のパス（import "../a"）は未対応。
+    // 同じファイルでの同じ import は警告にして 1 つにまとめる
+    private fun parseImport() {
+        val keyword = advance()
+        if (blockDepth > 0 || !importsAllowed) fail(DiagnosticCode.PARSE_MISPLACED_IMPORT, keyword.position)
+        val name = advance()
+        if (name.type != TokenType.IDENTIFIER) fail(DiagnosticCode.PARSE_INVALID_IMPORT, name.position)
+        val next = peek()
+        if (next.type !in STATEMENT_BOUNDARIES) fail(DiagnosticCode.PARSE_INVALID_IMPORT, next.position)
+        if (!importNames.add(name.lexeme)) {
+            report(DiagnosticCode.PARSE_DUPLICATE_IMPORT, name.position, DiagnosticArgument.StringArgument.truncated(name.lexeme), severity = DiagnosticSeverity.WARNING)
+            return
+        }
+        imports.add(countNode(ImportDeclaration(name.lexeme, name.position, keyword.position)))
+    }
+
+    // import したモジュールと同じ名前は、このファイルの中で宣言できない（モジュール名.関数名(…) と区別できなくなるため）。解析は続ける
+    private fun checkNotImported(name: Token) {
+        if (name.type == TokenType.IDENTIFIER && name.lexeme in importNames) {
+            report(DiagnosticCode.PARSE_IMPORT_NAME_CONFLICT, name.position, DiagnosticArgument.StringArgument.truncated(name.lexeme))
+        }
+    }
+
+    // モジュール名.関数名(…)（第8.0段階）。呼び出し先を "モジュール名.関数名" という名前の NameReference にする（"." を含む名前はソースには書けないため、
+    // このファイルの宣言・他のモジュールの関数と重ならない）。位置はモジュール名の位置。"." の前の改行は可（D18）。
+    // モジュール名を値として使う・関数以外のメンバー（geometry.PI）・型引数（geometry.f<Int>()）は未対応
+    private fun parseModuleCall(module: NameReference): Parsed {
+        if (nextNonNewline().type != TokenType.DOT) fail(DiagnosticCode.PARSE_INVALID_MODULE_REFERENCE, module.position, DiagnosticArgument.StringArgument.truncated(module.name))
+        skipNewlines()
+        advance()
+        skipNewlines()
+        val member = advance()
+        if (member.type != TokenType.IDENTIFIER) fail(DiagnosticCode.PARSE_EXPECTED_MEMBER_NAME, member.position)
+        if (peek().type != TokenType.LEFT_PAREN) fail(DiagnosticCode.PARSE_INVALID_MODULE_REFERENCE, module.position, DiagnosticArgument.StringArgument.truncated(module.name))
+        return parseCall(build(NameReference("${module.name}.${member.lexeme}", module.position), 1), emptyList())
     }
 
     // 文の終わりは改行・";"・EOF のいずれか。ブロックの中では、ブロックを閉じる "}" の直前でもよい（"}" は読み進めない）
@@ -212,6 +287,8 @@ class Parser private constructor(private val tokens: List<Token>, private val di
         }
         // 対応する if の無い else（"} ; else" を含む: 11.9-8）
         if (token.type == TokenType.KEYWORD && token.lexeme == "else") fail(DiagnosticCode.PARSE_UNEXPECTED_ELSE, token.position)
+        // 文の先頭の "{"（単独のブロック・使われないラムダ）は未対応のまま（第9.0段階でもラムダは式の中にだけ書ける）
+        if (token.type == TokenType.LEFT_BRACE) fail(DiagnosticCode.PARSE_LAMBDA_UNSUPPORTED, token.position)
         val target = parseExpression()
         if (peek().type != TokenType.ASSIGN) return countNode(ExpressionStatement(target.expression, target.expression.position))
         advance()
@@ -228,6 +305,7 @@ class Parser private constructor(private val tokens: List<Token>, private val di
         val keyword = advance()
         val name = advance()
         if (name.type != TokenType.IDENTIFIER) fail(DiagnosticCode.PARSE_EXPECTED_IDENTIFIER, name.position)
+        checkNotImported(name)
         val type = if (peek().type == TokenType.COLON) parseTypeAnnotation() else null
         // 宣言時の初期化は必須（D19）
         val assign = peek()
@@ -284,6 +362,7 @@ class Parser private constructor(private val tokens: List<Token>, private val di
         parenDepth++
         val variable = advance()
         if (variable.type != TokenType.IDENTIFIER) fail(DiagnosticCode.PARSE_EXPECTED_LOOP_VARIABLE, variable.position)
+        checkNotImported(variable)
         val inKeyword = peek()
         if (inKeyword.type != TokenType.KEYWORD || inKeyword.lexeme != "in") fail(DiagnosticCode.PARSE_EXPECTED_IN, inKeyword.position)
         advance()
@@ -316,6 +395,7 @@ class Parser private constructor(private val tokens: List<Token>, private val di
         if (blockDepth > (if (method) 1 else 0)) fail(DiagnosticCode.PARSE_NESTED_FUNCTION_UNSUPPORTED, keyword.position)
         val name = advance()
         if (name.type != TokenType.IDENTIFIER) fail(DiagnosticCode.PARSE_EXPECTED_IDENTIFIER, name.position)
+        checkNotImported(name)
         val open = peek()
         if (open.type != TokenType.LEFT_PAREN) fail(DiagnosticCode.PARSE_EXPECTED_LEFT_PAREN, open.position)
         advance()
@@ -325,6 +405,7 @@ class Parser private constructor(private val tokens: List<Token>, private val di
             while (true) {
                 val parameter = advance()
                 if (parameter.type != TokenType.IDENTIFIER) fail(DiagnosticCode.PARSE_EXPECTED_IDENTIFIER, parameter.position)
+                checkNotImported(parameter)
                 parameters.add(countNode(Parameter(parameter.lexeme, parseTypeAnnotation(), parameter.position)))
                 if (peek().type != TokenType.COMMA) break
                 advance()
@@ -346,6 +427,7 @@ class Parser private constructor(private val tokens: List<Token>, private val di
         if (blockDepth > 0) fail(DiagnosticCode.PARSE_NESTED_CLASS_UNSUPPORTED, keyword.position)
         val name = advance()
         if (name.type != TokenType.IDENTIFIER) fail(DiagnosticCode.PARSE_EXPECTED_IDENTIFIER, name.position)
+        checkNotImported(name)
         val header = peek()
         if (header.type == TokenType.LEFT_PAREN || header.type == TokenType.COLON || header.type == TokenType.LESS) fail(DiagnosticCode.PARSE_CLASS_HEADER_UNSUPPORTED, header.position)
         val properties = ArrayList<VariableDeclaration>()
@@ -401,7 +483,29 @@ class Parser private constructor(private val tokens: List<Token>, private val di
         val colon = peek()
         if (colon.type != TokenType.COLON) fail(DiagnosticCode.PARSE_EXPECTED_TYPE, colon.position)
         advance()
+        if (peek().type == TokenType.LEFT_PAREN) return parseFunctionType()
         return parseType()
+    }
+
+    // 関数の型 "(" [ 型 { "," 型 } ] ")" "->" 型（第9.3段階）。型の注釈の最上位にだけ書ける（引数・結果に関数の型は書けない）。
+    // 使える場所（ラムダを入れる val）かどうかは Semantic 段階で判定する
+    private fun parseFunctionType(): TypeReference {
+        val open = advance()
+        parenDepth++
+        val arguments = ArrayList<TypeReference>()
+        if (peek().type != TokenType.RIGHT_PAREN) {
+            while (true) {
+                arguments.add(parseType())
+                if (peek().type != TokenType.COMMA) break
+                advance()
+            }
+        }
+        expectRightParen()
+        val arrow = peek()
+        if (arrow.type != TokenType.ARROW) failUnexpected(arrow, DiagnosticCode.PARSE_EXPECTED_TYPE)
+        advance()
+        arguments.add(parseType())
+        return countNode(TypeReference(FUNCTION_TYPE_NAME, open.position, arguments))
     }
 
     // 型の名前 [ "<" 型 { "," 型 } ">" ]（型引数は第3.10a段階）。使える型・型引数の数は Semantic 段階で判定する。
@@ -435,14 +539,18 @@ class Parser private constructor(private val tokens: List<Token>, private val di
         }
     }
 
-    // 名前の直後の "<" が型引数の始まり（"<" 型の名前 … ">" "("）か。トークンを読み進めずに確かめる（a < b のような比較と区別する）
+    // 名前の直後の "<" が型引数の始まり（"<" 型の名前 … ">" "("）か。トークンを読み進めずに確かめる（a < b のような比較と区別する）。
+    // 先読みは LexerLimits.MAX_TOKENS 個までで打ち切り、型引数ではないとする（第8.0.1段階。a < b, c < d, … の並びで "<" ごとに末尾まで読むと
+    // トークン数の 2 乗の手間になるため。既定のトークン数の上限のファイルでは、先読みがこの長さに達することはなく、結果は変わらない）
     private fun typeArgumentsAhead(): Boolean {
         var i = index
         if (tokens[i].type != TokenType.LESS) return false
+        val end = index + LexerLimits.MAX_TOKENS
         i++
         var depth = 1
         var expectName = true
         while (true) {
+            if (i >= end) return false
             val token = tokens[i]
             if (expectName) {
                 if (token.type != TokenType.IDENTIFIER) return false
@@ -498,7 +606,41 @@ class Parser private constructor(private val tokens: List<Token>, private val di
 
     // ---- 式（優先順位の低い順: || < && < == != < < <= > >= < 加減算 < 乗除算・剰余 < 単項 < 後置（呼び出し・メンバーアクセス）） ----
 
-    private fun parseExpression(): Parsed = parseDisjunction()
+    // 第9.1・9.2段階: 最も弱いのが ?!（右結合）、次が |>（左結合）で、どちらも || より弱い
+    private fun parseExpression(): Parsed = parseFallback()
+
+    // 左 ?! 右（第9.2段階）。次の行の先頭の ?! は前の式を継続する。右結合の再帰は式の深さに数える
+    private fun parseFallback(): Parsed {
+        val left = parsePipeline()
+        if (!continuesWith(TokenType.FALLBACK)) return left
+        val operator = advance()
+        skipNewlines()
+        enterNesting(operator.position)
+        try {
+            val right = parseFallback()
+            return build(FallbackExpression(left.expression, right.expression, operator.position), maxOf(left.depth, right.depth) + 1)
+        } finally {
+            nestingDepth--
+        }
+    }
+
+    // 左 |> 右（第9.1段階）。右は後置の式（名前・呼び出し・後置ラムダ付きの呼び出し）で、形は Semantic 段階で確かめる。
+    // 次の行の先頭の |> は前の式を継続する
+    private fun parsePipeline(): Parsed {
+        var left = parseDisjunction()
+        while (continuesWith(TokenType.PIPE_FORWARD)) {
+            val operator = advance()
+            skipNewlines()
+            enterNesting(operator.position)
+            val right = try {
+                parsePostfix()
+            } finally {
+                nestingDepth--
+            }
+            left = build(PipeExpression(left.expression, right.expression, operator.position), maxOf(left.depth, right.depth) + 1)
+        }
+        return left
+    }
 
     private fun parseDisjunction(): Parsed {
         var left = parseConjunction()
@@ -612,6 +754,9 @@ class Parser private constructor(private val tokens: List<Token>, private val di
 
     private fun parsePostfix(): Parsed {
         var current = parsePrimary()
+        // import したモジュールの関数の呼び出し（第8.0段階）
+        val primary = current.expression
+        if (primary is NameReference && primary.name in importNames) current = parseModuleCall(primary)
         while (true) {
             val token = peek()
             current = when {
@@ -620,6 +765,9 @@ class Parser private constructor(private val tokens: List<Token>, private val di
                 token.type == TokenType.LESS && current.expression is NameReference && typeArgumentsAhead() -> parseCall(current, parseTypeArguments())
                 token.type == TokenType.DOT -> parseMemberAccess(current)
                 token.type == TokenType.LEFT_BRACKET -> parseIndex(current)
+                // 後置ラムダ（第9.0段階）: 呼び出し・メンバー名・名前の直後（同じ行）の "{"。f(a) { … } は f(a, { … })、xs.map { … } は xs.map({ … })
+                token.type == TokenType.LEFT_BRACE && current.expression.let { it is CallExpression || it is MemberAccessExpression || it is NameReference } ->
+                    parseTrailingLambda(current)
                 // 次の行の先頭が "." なら前の式を継続する（D18）
                 token.type == TokenType.NEWLINE && nextNonNewline().type == TokenType.DOT -> {
                     skipNewlines()
@@ -672,6 +820,96 @@ class Parser private constructor(private val tokens: List<Token>, private val di
         return build(CallExpression(callee.expression, arguments, callee.expression.position, typeArguments), depth + 1)
     }
 
+    private fun parseTrailingLambda(callee: Parsed): Parsed {
+        val lambda = parseLambda()
+        val call = callee.expression
+        val depth = maxOf(callee.depth, lambda.depth) + 1
+        return if (call is CallExpression) {
+            build(CallExpression(call.callee, call.arguments + lambda.expression, call.position, call.typeArguments), depth)
+        } else {
+            build(CallExpression(call, listOf(lambda.expression), call.position), depth)
+        }
+    }
+
+    // ラムダ（第9.0段階）。本体は 1 つのブロックとして数え、ラムダを含む式の深さも本体の深さに加える（ラムダの入れ子でも、
+    // 意味解析・Compiler の再帰の深さが MAX_NESTING_DEPTH で抑えられる）。本体の中は括弧の外と同じく改行で文を区切る
+    private fun parseLambda(): Parsed {
+        val open = advance()
+        val savedParenDepth = parenDepth
+        val savedNestingDepth = nestingDepth
+        val savedBlockDepth = blockDepth
+        parenDepth = 0
+        blockDepth += nestingDepth + 1
+        nestingDepth = 0
+        val lambda = try {
+            if (blockDepth >= ParserLimits.MAX_NESTING_DEPTH) abort(DiagnosticCode.PARSE_NESTING_TOO_DEEP, open.position, ParserLimits.MAX_NESTING_DEPTH)
+            skipNewlines()
+            val parameters = ArrayList<LambdaParameter>()
+            val hasArrow = lambdaParametersAhead()
+            if (hasArrow) {
+                while (peek().type != TokenType.ARROW) {
+                    val name = advance()
+                    if (name.type != TokenType.IDENTIFIER) fail(DiagnosticCode.PARSE_EXPECTED_IDENTIFIER, name.position)
+                    checkNotImported(name)
+                    val type = if (peek().type == TokenType.COLON) {
+                        advance()
+                        parseType()
+                    } else {
+                        null
+                    }
+                    parameters.add(countNode(LambdaParameter(name.lexeme, type, name.position)))
+                    if (peek().type == TokenType.COMMA) advance()
+                }
+                advance()
+            }
+            val statements = ArrayList<Statement>()
+            parseStatements(statements)
+            val close = peek()
+            if (close.type != TokenType.RIGHT_BRACE) fail(DiagnosticCode.PARSE_EXPECTED_RIGHT_BRACE, close.position)
+            advance()
+            LambdaExpression(parameters, hasArrow, statements, open.position)
+        } finally {
+            parenDepth = savedParenDepth
+            nestingDepth = savedNestingDepth
+            blockDepth = savedBlockDepth
+        }
+        return build(lambda, 1)
+    }
+
+    // "{" の後が 引数の並び "->" か（"->" だけ = 引数なし、名前 [":" 型] { "," 名前 [":" 型] } "->"）。トークンを読み進めずに確かめる。
+    // 先読みは引数の並びの長さまで（並びに合わないトークンで止まる）
+    private fun lambdaParametersAhead(): Boolean {
+        var i = index
+        if (tokens[i].type == TokenType.ARROW) return true
+        while (true) {
+            if (tokens[i].type != TokenType.IDENTIFIER) return false
+            i++
+            if (tokens[i].type == TokenType.COLON) {
+                i++
+                if (tokens[i].type != TokenType.IDENTIFIER) return false
+                i++
+                if (tokens[i].type == TokenType.LESS) {
+                    var depth = 1
+                    i++
+                    while (depth > 0) {
+                        when (tokens[i].type) {
+                            TokenType.IDENTIFIER, TokenType.COMMA -> Unit
+                            TokenType.LESS -> depth++
+                            TokenType.GREATER -> depth--
+                            else -> return false
+                        }
+                        i++
+                    }
+                }
+            }
+            when (tokens[i].type) {
+                TokenType.COMMA -> i++
+                TokenType.ARROW -> return true
+                else -> return false
+            }
+        }
+    }
+
     private fun parseMemberAccess(receiver: Parsed): Parsed {
         advance()
         skipNewlines()
@@ -712,6 +950,15 @@ class Parser private constructor(private val tokens: List<Token>, private val di
                 advance()
                 build(NameReference(token.lexeme, token.position), 1)
             }
+            // ラムダ（第9.0段階）
+            TokenType.LEFT_BRACE -> parseLambda()
+            // 関数の参照 ::名前（第9.3段階）
+            TokenType.DOUBLE_COLON -> {
+                advance()
+                val name = advance()
+                if (name.type != TokenType.IDENTIFIER) fail(DiagnosticCode.PARSE_EXPECTED_IDENTIFIER, name.position)
+                build(FunctionReference(name.lexeme, name.position, token.position), 1)
+            }
             // 括弧は優先順位を変えるだけで、AST ノードは作らない
             TokenType.LEFT_PAREN -> {
                 advance()
@@ -743,7 +990,7 @@ class Parser private constructor(private val tokens: List<Token>, private val di
 
     private fun <T> countNode(node: T): T {
         nodeCount++
-        if (nodeCount > ParserLimits.MAX_NODES) abort(DiagnosticCode.PARSE_TOO_MANY_NODES, peek().position, ParserLimits.MAX_NODES)
+        if (nodeCount > maxNodes) abort(DiagnosticCode.PARSE_TOO_MANY_NODES, peek().position, maxNodes)
         return node
     }
 
@@ -798,7 +1045,7 @@ class Parser private constructor(private val tokens: List<Token>, private val di
         throw ParseAbort()
     }
 
-    private fun report(code: DiagnosticCode, position: SourcePosition, vararg arguments: DiagnosticArgument) {
-        diagnostics.report(Diagnostic(code, DiagnosticSeverity.ERROR, DiagnosticPhase.PARSER, position, arguments.toList()))
+    private fun report(code: DiagnosticCode, position: SourcePosition, vararg arguments: DiagnosticArgument, severity: DiagnosticSeverity = DiagnosticSeverity.ERROR) {
+        diagnostics.report(Diagnostic(code, severity, DiagnosticPhase.PARSER, position, arguments.toList()))
     }
 }

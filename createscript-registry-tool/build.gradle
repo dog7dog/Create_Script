@@ -1,0 +1,59 @@
+// CreateScript-Registry の運営の道具（S8.3 Phase 2。docs/registry.md・registry-template/）: PR の検証・承認の確認・index の生成・署名・公開前の確認。
+// レジストリのリポジトリのワークフローと、署名する人の手元で使う。createscript の配布物（CLI のパッケージ）には含めない
+plugins {
+    id 'application'
+    id 'org.jetbrains.kotlin.jvm'
+}
+
+repositories {
+    mavenCentral()
+}
+
+java.toolchain.languageVersion = JavaLanguageVersion.of(21)
+
+kotlin {
+    jvmToolchain(21)
+}
+
+dependencies {
+    implementation project(':createscript-project')
+    implementation project(':createscript-install')
+
+    testImplementation(platform("org.junit:junit-bom:5.10.2"))
+    testImplementation("org.junit.jupiter:junit-jupiter")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+}
+
+application {
+    mainClass = 'com.creatrbypc.createanalytical.registrytool.MainKt'
+    applicationName = 'createscript-registry-tool'
+}
+
+tasks.named('test', Test) {
+    useJUnitPlatform()
+}
+
+// テスト専用のビルド（S8.3 Phase 10A、W7。GitHub の実環境のテスト用）。`./gradlew :createscript-registry-tool:testRegistryTool` と明示した
+// ときだけ build/test-registry-tool/ に作る（build・installDist には含まれない）。publish-check がテスト用の鍵（test-only-）を受け入れる
+def testRegistryToolJar = tasks.register('testRegistryToolJar', Jar) {
+    description = 'TEST ONLY: test classes for the test-only registry tool'
+    archiveFileName = 'createscript-registry-tool-TEST-ONLY-tests.jar'
+    destinationDirectory = layout.buildDirectory.dir('test-registry-tool-jar')
+    from sourceSets.test.output
+}
+def testRegistryToolScripts = tasks.register('testRegistryToolScripts', CreateStartScripts) {
+    description = 'TEST ONLY: launcher of the test-only registry tool'
+    mainClass = 'com.creatrbypc.createanalytical.registrytool.TestRegistryToolKt'
+    applicationName = 'createscript-registry-tool-TEST-ONLY'
+    outputDir = layout.buildDirectory.dir('test-registry-tool-scripts').get().asFile
+    classpath = files(testRegistryToolJar, tasks.named('jar')) + configurations.testRuntimeClasspath
+}
+tasks.register('testRegistryTool', Sync) {
+    group = 'test registry'
+    description = 'TEST ONLY: builds build/test-registry-tool (accepts test-only- keys; never for the official registry)'
+    into layout.buildDirectory.dir('test-registry-tool')
+    from(testRegistryToolScripts) { into 'bin' }
+    from(testRegistryToolJar) { into 'lib' }
+    from(tasks.named('jar')) { into 'lib' }
+    from(configurations.testRuntimeClasspath) { into 'lib' }
+}

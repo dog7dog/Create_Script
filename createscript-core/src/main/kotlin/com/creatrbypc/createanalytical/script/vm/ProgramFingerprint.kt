@@ -11,6 +11,34 @@ object ProgramFingerprint {
     // ソース（UTF-8）のハッシュ。カードのコードが変わっていないかを確かめる
     fun ofSource(source: String): ByteArray = sha256(source.toByteArray(Charsets.UTF_8))
 
+    // エントリーのファイルと import したモジュールのソース全体のハッシュ（第8.0.1段階。32 バイトで ofSource と同じ大きさ）。
+    // modules はモジュール名 → ソース。モジュールが無ければ ofSource(entry) と同じ値（単一ファイルのプログラムのハッシュは変えない）。
+    // モジュールがあれば、先頭の印・エントリー・モジュール名の順に並べた（名前・ソースは長さ付きの UTF-8）ものの SHA-256。
+    // 名前の順に並べるため、import の順・解決の順には依存しない。どれか 1 つのファイルの 1 文字が変わっても値が変わる
+    fun ofModules(entry: String, modules: Map<String, String>): ByteArray {
+        if (modules.isEmpty()) return ofSource(entry)
+        val bytes = ByteArrayOutputStream()
+        DataOutputStream(bytes).use { out ->
+            out.write(MODULES_MAGIC)
+            writeText(out, entry)
+            out.writeInt(modules.size)
+            for (name in modules.keys.sorted()) {
+                writeText(out, name)
+                writeText(out, modules.getValue(name))
+            }
+        }
+        return sha256(bytes.toByteArray())
+    }
+
+    // "CSMOD" と 0 と版 1。0 を含むため、単一のソース（NUL を含むソースはコンパイルできない）の ofSource とは前置きが重ならない
+    private val MODULES_MAGIC = byteArrayOf(0x43, 0x53, 0x4D, 0x4F, 0x44, 0x00, 0x01)
+
+    private fun writeText(out: DataOutputStream, text: String) {
+        val utf8 = text.toByteArray(Charsets.UTF_8)
+        out.writeInt(utf8.size)
+        out.write(utf8)
+    }
+
     // コンパイル結果を決まった形に並べたもののハッシュ。同じソースでも Compiler の変更で命令が変われば値が変わる
     fun ofProgram(program: CompiledProgram): ByteArray {
         val bytes = ByteArrayOutputStream()
@@ -84,6 +112,17 @@ object ProgramFingerprint {
                     out.writeInt(shape.size)
                 }
             }
+            // エラーフォールバックの範囲（第9.2段階）があるときだけ、印（負の数。リストの形の数とは重ならない）の後に加える（それ以前のプログラムのハッシュは変えない）
+            if (program.handlers.isNotEmpty()) {
+                out.writeInt(HANDLERS_MARK)
+                out.writeInt(program.handlers.size)
+                for (handler in program.handlers) {
+                    out.writeInt(handler.start)
+                    out.writeInt(handler.end)
+                    out.writeInt(handler.handler)
+                    out.writeInt(handler.stackDepth)
+                }
+            }
         }
         return sha256(bytes.toByteArray())
     }
@@ -111,6 +150,8 @@ object ProgramFingerprint {
             is SnapshotVerifier.SlotType.LIST -> error("unreachable")
         }
     }
+
+    private const val HANDLERS_MARK = -0x3f21
 
     private fun sha256(bytes: ByteArray): ByteArray = MessageDigest.getInstance("SHA-256").digest(bytes)
 }

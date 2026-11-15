@@ -14,5 +14,14 @@ rootProject.name = 'createscript'
 // The CreateScript language implementation: lexer, parser, semantic analyzer, compiler and VM (a library)
 include 'createscript-core'
 
+// Project files (createscript.json and createscript.lock): JSON, validation and canonical form, without file access (a library)
+include 'createscript-project'
+
+// Downloading packages from GitHub Releases and the archive cache (S8.2 Phase 2; a library)
+include 'createscript-install'
+
 // The createscript command: runs .cscr files and the interactive mode (REPL)
 include 'createscript-cli'
+
+// CreateScript-Registry の運営の道具（S8.3 Phase 2）。CLI の配布物には含めない
+include 'createscript-registry-tool'

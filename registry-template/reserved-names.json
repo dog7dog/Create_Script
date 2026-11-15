@@ -1,0 +1,15 @@
+{
+  "registryVersion": 1,
+  "names": {
+    "admin": "looks like an official role",
+    "core": "the CreateScript core",
+    "createscript": "the CreateScript project",
+    "example": "kept for documentation",
+    "official": "looks like an official package",
+    "registry": "the registry itself",
+    "security": "looks like an official notice",
+    "std": "kept for a future standard library",
+    "stdlib": "kept for a future standard library",
+    "test": "kept for tests"
+  }
+}

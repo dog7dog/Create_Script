@@ -1,0 +1,57 @@
+package compat.s82phase3
+
+import com.creatrbypc.createanalytical.script.api.CreateScript
+import com.creatrbypc.createanalytical.script.api.RunOptions
+import com.creatrbypc.createanalytical.script.compiler.CompileOptions
+import com.creatrbypc.createanalytical.script.module.ModuleLookup
+import com.creatrbypc.createanalytical.script.module.ModuleResolver
+
+// S8.2 Phase 3 の時点（コミット 9f938b4）の createscript-core.jar に対してコンパイルした、ModuleResolver の実装と呼び出し
+// （S8.2 Phase 4 の ModuleAccess を足した Core で、既存のモジュールの API の意味と JVM の形が変わっていないことを確かめる）
+class OldResolver(private val modules: Map<String, String>) : ModuleResolver {
+    val asked = ArrayList<String>()
+
+    override fun resolve(name: String): ModuleLookup {
+        asked.add(name)
+        modules[name]?.let { return ModuleLookup.Found(it) }
+        return when (name) {
+            "ambiguous" -> ModuleLookup.Ambiguous
+            "outside" -> ModuleLookup.OutsideProject
+            "unreadable" -> ModuleLookup.Unreadable("test")
+            else -> ModuleLookup.NotFound
+        }
+    }
+}
+
+object OldModuleUser {
+    private const val GEOMETRY = "fun square(x: Int): Int {\n    return x * x\n}\n"
+
+    @JvmStatic
+    fun run(): List<String> {
+        val results = ArrayList<String>()
+        val resolver = OldResolver(mapOf("geometry" to GEOMETRY))
+        val source = "import geometry\nprintln(geometry.square(5))\n"
+        val defaults = CreateScript.compile(source, resolver)
+        if (defaults.program != null && defaults.modules == listOf("geometry") && resolver.asked == listOf("geometry")) results.add("compile with defaults")
+        val standalone = CreateScript.compile(source, resolver, "main", CompileOptions.STANDALONE)
+        if (standalone.program != null && !standalone.hasErrors) results.add("compile with options")
+        val lambda = CreateScript.compile(source, ModuleResolver { name -> if (name == "geometry") ModuleLookup.Found(GEOMETRY) else ModuleLookup.NotFound })
+        if (lambda.program != null) results.add("lambda resolver")
+        if (defaults.sourceFingerprint.contentEquals(standalone.sourceFingerprint)) results.add("source fingerprint")
+        val failed = CreateScript.compile("import ambiguous\nimport outside\nimport unreadable\nimport missing\n", resolver)
+        val codes = failed.diagnostics.map { it.diagnostic.code.id }
+        if (codes == listOf("CS_MODULE_AMBIGUOUS", "CS_MODULE_OUTSIDE_PROJECT", "CS_MODULE_UNREADABLE", "CS_MODULE_NOT_FOUND") && failed.program == null) results.add("lookup results")
+        val broken = CreateScript.compile("import geometry\nprintln(1)\n", OldResolver(mapOf("geometry" to "fun f(): Int {\n    return true\n}\n")))
+        val located = broken.diagnostics.firstOrNull()
+        if (located != null && located.module == "geometry" && located.diagnostic.position.line == 2) results.add("locate")
+        val printed = ArrayList<String>()
+        val run = CreateScript.start(standalone.program!!, RunOptions(1, 0L)) { printed.add(it) }
+        run.tick()
+        val snapshot = run.snapshot()
+        val resumed = if (snapshot != null) CreateScript.resume(standalone.program!!, snapshot, RunOptions(128, 0L)) { printed.add(it) } else null
+        val finishing = resumed ?: run
+        while (!finishing.isFinished) finishing.tick()
+        if (printed == listOf("25")) results.add("run and resume")
+        return results
+    }
+}

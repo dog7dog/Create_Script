@@ -9,7 +9,8 @@ object DiagnosticLimits {
 enum class DiagnosticSeverity { ERROR, WARNING }
 
 // 診断を出した処理の段階。後続の段階を実装するときに追加する
-enum class DiagnosticPhase { LEXER, PARSER, SEMANTIC, COMPILER, RUNTIME }
+// MODULE はモジュールの解決（第8.0段階。末尾に追加）
+enum class DiagnosticPhase { LEXER, PARSER, SEMANTIC, COMPILER, RUNTIME, MODULE }
 
 // 診断の引数は Int と String のみ（表示文言はクライアント側で翻訳キーから組み立てる）
 sealed interface DiagnosticArgument {
