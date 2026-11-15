@@ -1,23 +1,39 @@
 package com.creatrbypc.createanalytical.project
 
-// ロックファイルの root（このプロジェクト自身。マニフェストの name・version と同じ）
+/**
+ * The project itself in a lock file.
+ *
+ * @property name the same as the name in the manifest.
+ * @property version the same as the version in the manifest.
+ */
 public data class LockRoot(val name: String, val version: String)
 
-// 固定したパッケージ（S8.1）。パッケージの識別の規則は docs/packages.md の「パッケージの識別」:
-// - 1 つのロックファイルの中で、パッケージは name で識別する（同じ name は 1 つだけ。同じ名前の別の版・別の取得元を同時には使わない）
-// - version・source は、その name をどこのどの版から取るか、sha256 は取ったパッケージのアーカイブのバイト列そのもの（正式なパッケージアーカイブ。
-//   GitHub が自動で作るソースの ZIP・tar.gz は対象にしない）
-// - dependencies は、このパッケージが直接使うパッケージの name（名前の順・重複なし。どれもこのロックファイルにある）
+/**
+ * A package pinned in a lock file. In one lock file a package is identified by [name] (see "Package identity" in
+ * `docs/packages.md`).
+ *
+ * @property name the package name.
+ * @property version the exact version.
+ * @property source where it comes from (`github:owner/repository`).
+ * @property sha256 the SHA-256 (lowercase hex) of the package archive itself (`createscript-package.zip`, not
+ *   the source archives that GitHub makes).
+ * @property dependencies the names of the packages it uses directly; all of them are in the same lock file.
+ */
 public data class LockedPackage(val name: String, val version: String, val source: String, val sha256: String, val dependencies: List<String> = emptyList())
 
-// createscript.lock（lockVersion 1）。packages は名前の順に並べたもの（of で作る）
+/** The contents of `createscript.lock` (lock version 1). Made with [of]; [packages] are sorted by name. */
 public class Lockfile private constructor(public val root: LockRoot, public val packages: List<LockedPackage>) {
     override fun equals(other: Any?): Boolean = other is Lockfile && other.root == root && other.packages == packages
 
     override fun hashCode(): Int = root.hashCode() * 31 + packages.hashCode()
 
     public companion object {
-        // 並べ替えて作る（入力の順に関係なく同じ内容になる）。値の形・重複・参照・循環が正しくなければ IllegalArgumentException
+        /**
+         * A lock file with [packages] sorted by name (and their dependencies sorted), whatever their order.
+         *
+         * @throws IllegalArgumentException if a value is invalid, a name is duplicated or is the project's, a
+         *   dependency is not in [packages], there is a cycle, or there are more than [Lockfiles.MAX_PACKAGES].
+         */
         public fun of(root: LockRoot, packages: List<LockedPackage>): Lockfile {
             require(ProjectRules.isValidName(root.name) && ProjectRules.isValidVersion(root.version)) { "invalid root: $root" }
             require(packages.size <= Lockfiles.MAX_PACKAGES) { "too many packages" }
@@ -36,7 +52,15 @@ public class Lockfile private constructor(public val root: LockRoot, public val 
     }
 }
 
-// lockfile はエラーが無いときだけ。packagePositions はパッケージの name の値の位置
+/**
+ * The result of [Lockfiles.parse].
+ *
+ * @property lockfile the lock file, or `null` when there is an error.
+ * @property diagnostics the problems found (empty when [lockfile] is not `null`).
+ * @property truncated `true` when more diagnostics were dropped.
+ * @property rootPosition where `root` is.
+ * @property packagePositions where the `name` of each package is.
+ */
 public class LockfileResult(
     public val lockfile: Lockfile?,
     public val diagnostics: List<ProjectDiagnostic>,
@@ -45,20 +69,31 @@ public class LockfileResult(
     public val packagePositions: Map<String, FilePosition> = emptyMap(),
 )
 
-// createscript.lock の読み取り・検査・書き出し（S8.1。ファイルの読み書きはしない）
+/** Reads, checks and writes `createscript.lock`. It reads no files. Safe to use from several threads. */
 public object Lockfiles {
+    /** The file name. */
     public const val FILE_NAME: String = "createscript.lock"
+
+    /** The only lock version. */
     public const val LOCK_VERSION: Long = 1L
+
+    /** The largest file, in bytes. */
     public const val MAX_BYTES: Int = 1024 * 1024
+
+    /** The most packages. */
     public const val MAX_PACKAGES: Int = 4096
+
+    /** The most direct dependencies of one package. */
     public const val MAX_PACKAGE_DEPENDENCIES: Int = 1024
 
     private val FIELDS = setOf("lockVersion", "root", "packages")
     private val ROOT_FIELDS = setOf("name", "version")
     private val PACKAGE_FIELDS = setOf("name", "version", "source", "sha256", "dependencies")
 
-    // 決まった形の書き出し。lockVersion・root（name・version）・packages（名前の順。各パッケージは name・version・source・sha256・dependencies の順）。
-    // 同じ内容なら、必ず同じ文字列（UTF-8 にして同じバイト列）になる
+    /**
+     * The canonical text of [lockfile]: `lockVersion`, `root` and `packages` by name, each with `name`, `version`,
+     * `source`, `sha256` and `dependencies`. The same lock file always gives the same text (and UTF-8 bytes).
+     */
     public fun write(lockfile: Lockfile): String = JsonWriter.write(
         JsonWriter.obj(
             "lockVersion" to JsonWriter.integer(LOCK_VERSION),
@@ -77,7 +112,10 @@ public object Lockfiles {
         ),
     )
 
-    // 読み取りと、ロックファイルの中だけで決まる検査（値の形・重複・参照・循環）。正規形・マニフェストとの整合は check で確かめる
+    /**
+     * Reads [bytes] (UTF-8 JSON) and checks what the lock file alone decides: the values, duplicates, references
+     * and cycles. Problems are diagnostics, not exceptions. Use [check] for the canonical form and the manifest.
+     */
     public fun parse(bytes: ByteArray): LockfileResult {
         val json = JsonParser.parse(bytes, MAX_BYTES)
         val root = json.value ?: return LockfileResult(null, json.diagnostics, false)
@@ -155,8 +193,11 @@ public object Lockfiles {
         return LockfileResult(Lockfile.of(lockRoot!!, packages), emptyList(), false, rootPosition, positions)
     }
 
-    // 正規形（write の出力）と同じバイト列か、マニフェストと整合するか。どちらも parse が成功したロックファイルについて確かめる。
-    // 正規形でなければ、最初に違う行を報告する
+    /**
+     * Checks a lock file that [parse] read: that [bytes] are exactly the canonical form ([write]; otherwise the
+     * first different line is reported) and that it matches [manifest] (root, every dependency, no unused
+     * packages). Returns [LockfileResult.diagnostics] when [result] has no lock file.
+     */
     public fun check(bytes: ByteArray, result: LockfileResult, manifest: Manifest): List<ProjectDiagnostic> {
         val lockfile = result.lockfile ?: return result.diagnostics
         val diagnostics = ProjectDiagnostics()

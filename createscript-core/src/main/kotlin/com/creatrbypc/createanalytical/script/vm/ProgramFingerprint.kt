@@ -4,17 +4,23 @@ import java.io.ByteArrayOutputStream
 import java.io.DataOutputStream
 import java.security.MessageDigest
 
-// 保存した実行状態が、どのプログラムのものかを確かめるためのハッシュ（D14。SHA-256、32 バイト）
+/**
+ * SHA-256 hashes that tell whether a saved run ([VmSnapshot]) belongs to a program. `CreateScript.resume` checks
+ * only the shape of a saved state, so a host that saves runs stores these next to it and resumes only when they
+ * are the same. Each function returns a new array of [SIZE] bytes.
+ */
 public object ProgramFingerprint {
+    /** The size of every fingerprint in bytes (32). */
     public const val SIZE: Int = 32
 
-    // ソース（UTF-8）のハッシュ。カードのコードが変わっていないかを確かめる
+    /** The hash of [source] as UTF-8: changes when the source text changes. */
     public fun ofSource(source: String): ByteArray = sha256(source.toByteArray(Charsets.UTF_8))
 
-    // エントリーのファイルと import したモジュールのソース全体のハッシュ（第8.0.1段階。32 バイトで ofSource と同じ大きさ）。
-    // modules はモジュール名 → ソース。モジュールが無ければ ofSource(entry) と同じ値（単一ファイルのプログラムのハッシュは変えない）。
-    // モジュールがあれば、先頭の印・エントリー・モジュール名の順に並べた（名前・ソースは長さ付きの UTF-8）ものの SHA-256。
-    // 名前の順に並べるため、import の順・解決の順には依存しない。どれか 1 つのファイルの 1 文字が変わっても値が変わる
+    /**
+     * The hash of the entry source and its modules ([modules] maps module name or id to source). Without modules it
+     * equals [ofSource]`(entry)`. It does not depend on the order of `import`s, and changes when any file changes.
+     * `ModuleCompileResult.sourceFingerprint` is this value for a compilation.
+     */
     public fun ofModules(entry: String, modules: Map<String, String>): ByteArray {
         if (modules.isEmpty()) return ofSource(entry)
         val bytes = ByteArrayOutputStream()
@@ -39,7 +45,10 @@ public object ProgramFingerprint {
         out.write(utf8)
     }
 
-    // コンパイル結果を決まった形に並べたもののハッシュ。同じソースでも Compiler の変更で命令が変われば値が変わる
+    /**
+     * The hash of the compiled program. It can change for the same source when a new release of the compiler
+     * produces different instructions, so compare it as well as the source fingerprint.
+     */
     public fun ofProgram(program: CompiledProgram): ByteArray {
         val bytes = ByteArrayOutputStream()
         DataOutputStream(bytes).use { out ->

@@ -9,28 +9,79 @@ public object DiagnosticLimits {
     public const val MAX_STRING_ARGUMENT_LENGTH: Int = 64
 }
 
-public enum class DiagnosticSeverity { ERROR, WARNING }
+/** How serious a [Diagnostic] is. */
+public enum class DiagnosticSeverity {
+    /** The program cannot be compiled, or the run stopped. */
+    ERROR,
 
-// 診断を出した処理の段階。後続の段階を実装するときに追加する
-// MODULE はモジュールの解決（第8.0段階。末尾に追加）
-public enum class DiagnosticPhase { LEXER, PARSER, SEMANTIC, COMPILER, RUNTIME, MODULE }
+    /** A remark; the program is still compiled. */
+    WARNING,
+}
 
-// 診断の引数は Int と String のみ（表示文言はクライアント側で翻訳キーから組み立てる）
+/**
+ * The step that reported a [Diagnostic]. New phases can be added in later releases (as [MODULE] was), so a `when`
+ * over this type needs an `else` branch.
+ */
+public enum class DiagnosticPhase {
+    /** Reading characters into tokens. */
+    LEXER,
+
+    /** Reading tokens into a syntax tree. */
+    PARSER,
+
+    /** Checking names and types. */
+    SEMANTIC,
+
+    /** Making and checking bytecode. */
+    COMPILER,
+
+    /** Running the program. */
+    RUNTIME,
+
+    /** Finding and checking imported modules. */
+    MODULE,
+}
+
+/**
+ * A value inserted in the message of a [Diagnostic]. Only numbers and short strings: the host builds the text from
+ * [DiagnosticCode.id] (for example as a translation key) and these arguments.
+ */
 public sealed interface DiagnosticArgument {
+    /**
+     * A number.
+     *
+     * @property value the number.
+     */
     public data class IntArgument(val value: Int) : DiagnosticArgument
 
+    /**
+     * A string of at most 64 UTF-16 code units.
+     *
+     * @property value the string.
+     * @throws IllegalArgumentException if [value] is longer; use [truncated] to cut a longer string.
+     */
     public data class StringArgument(val value: String) : DiagnosticArgument {
         init {
             require(value.length <= DiagnosticLimits.MAX_STRING_ARGUMENT_LENGTH) { "String argument too long: ${value.length}" }
         }
 
         public companion object {
-            // 上限を超える文字列は、サロゲートペアを分断せずに短縮してから引数にする
+            /** An argument from [value], cut to 64 UTF-16 code units without splitting a surrogate pair. */
             public fun truncated(value: String): StringArgument = StringArgument(truncateUtf16(value, DiagnosticLimits.MAX_STRING_ARGUMENT_LENGTH))
         }
     }
 }
 
+/**
+ * A problem found while compiling or running a program.
+ *
+ * @property code what the problem is; [DiagnosticCode.id] is the stable identifier.
+ * @property severity error or warning.
+ * @property phase the step that found it.
+ * @property position where in the source it is (for a program with `import`, see `ModuleCompileResult.locate`).
+ * @property arguments values for the message, at most 4.
+ * @throws IllegalArgumentException if there are more than 4 arguments.
+ */
 public data class Diagnostic(
     val code: DiagnosticCode,
     val severity: DiagnosticSeverity,

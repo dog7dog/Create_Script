@@ -34,47 +34,87 @@ import kotlin.math.sqrt
 import kotlin.math.tan
 import kotlin.math.tanh
 
-// VM の値（型タグ付き: D14）。String は定数プールの番号で持つ（Stage 3.5 の String はリテラルだけのため）
+/**
+ * A value in a saved state ([VmSnapshot]): on the stack, in a variable, in an object field or in a list. Hosts that
+ * save runs store and rebuild these. New kinds of values can be added in later releases.
+ */
 public sealed interface Value {
+    /**
+     * An `Int`.
+     *
+     * @property value the number.
+     */
     public data class IntValue(val value: Int) : Value
+
+    /**
+     * A `Boolean`.
+     *
+     * @property value the value.
+     */
     public data class BoolValue(val value: Boolean) : Value
+
+    /**
+     * A `String` of the program.
+     *
+     * @property constantIndex the index of the string among the constants of the program.
+     */
     public data class StringValue(val constantIndex: Int) : Value
+
+    /** `Unit`. */
     public data object UnitValue : Value
 
-    // 浮動小数点数（第3.11a段階）。値はビット列（Float.toRawBits / Double.toRawBits）のまま持つ。equals はビットの一致（NaN のビットの違いも区別し、
-    // 0.0 と -0.0 は別）で、保存・復元が値を正確に戻したかの確認だけに使う。スクリプトの == は CsVm の IEEE 754 の比較（ieeeEquals）で行い、equals は使わない
+    /**
+     * A `Float`, kept as its bits ([Float.toRawBits]) so that saving and restoring gives exactly the same value.
+     * [equals] compares bits (NaNs with different bits differ, `0.0f` and `-0.0f` differ); the script's `==` uses
+     * IEEE 754 comparison instead.
+     *
+     * @property bits the bits of the value.
+     */
     public data class FloatValue(val bits: Int) : Value {
+        /** The value of [bits]. */
         val value: Float get() = Float.fromBits(bits)
 
         public companion object {
+            /** The value with the bits of [value]. */
             public fun of(value: Float): FloatValue = FloatValue(value.toRawBits())
         }
     }
 
+    /**
+     * A `Double`, kept as its bits ([Double.toRawBits]); compared like [FloatValue].
+     *
+     * @property bits the bits of the value.
+     */
     public data class DoubleValue(val bits: Long) : Value {
+        /** The value of [bits]. */
         val value: Double get() = Double.fromBits(bits)
 
         public companion object {
+            /** The value with the bits of [value]. */
             public fun of(value: Double): DoubleValue = DoubleValue(value.toRawBits())
         }
     }
 
-    // オブジェクトの参照（第3.9a段階）。id はその CS_VM のヒープの中でだけ意味を持つ（別の VM の id とは関係が無い）
+    /**
+     * A reference to an object (an instance, list, vector or matrix).
+     *
+     * @property id the [ObjectSnapshot.id] of the object in the same saved state; it means nothing in another state.
+     */
     public data class ObjectRef(val id: Int) : Value
 }
 
-// プログラムの実行状態（動力による一時停止は Scheduler 側で別に管理する）
+/** The state of a run. */
 public enum class VmState {
-    // 実行できる
+    /** Can run instructions. */
     RUNNING,
 
-    // waitTicks の待機中
+    /** Waiting in `waitTicks`. */
     WAITING,
 
-    // 最後まで実行して終了した（自動では再実行しない）
+    /** Ran to the end. A finished program is not started again by itself. */
     HALTED,
 
-    // 実行時エラーで停止した
+    /** Stopped by a runtime error. */
     ERROR,
 }
 

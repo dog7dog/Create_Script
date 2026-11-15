@@ -1,9 +1,9 @@
 # API surface of `createscript-core` and `createscript-project`
 
-Status: **applied in code and checked (stage A3)**. This document classifies every public top-level declaration
+Status: **applied, checked and documented (stage A4)**. This document classifies every public top-level declaration
 of the two library modules. Stage A1 made the classification; stage A2 applied it with Kotlin's explicit API mode
 and two opt-in annotations (see "Applied in A2"); stage A3 checks it with a committed API listing (see "API
-listing"). Stage A4 will add KDoc to the Stable part.
+listing"); stage A4 documented the Stable part with KDoc (see "KDoc (A4)").
 
 Inventory taken on `main` at `b80f73d` (2026-11-15). 172 public top-level declarations were found
 (core 122, project 50); members are classified with their declaration unless a row says otherwise.
@@ -198,3 +198,36 @@ What the listing does not show:
 - Default values of parameters and other facts kept only in the Kotlin metadata.
 - `copy` and `componentN` of `CompiledProgram` are not marked `opt-in` in the listing (the compiler adds no marker to
   them), although using them needs opt-in because their types do.
+
+## KDoc (A4)
+
+Every Stable declaration has English KDoc: 285 declarations, counting each public class, function, property and
+enum entry and each property of a primary constructor (`@property`), except the entries of `DiagnosticCode` and
+`ProjectDiagnosticCode`, which are documented at the type (how ids are kept, and that a `when` over them needs an
+`else`). The Japanese comments that described these declarations were replaced by the KDoc; comments about the
+implementation, about Internal API and about groups of diagnostic codes were kept.
+
+The KDoc states only what the code does, checked in the code: purpose, exceptions (`IllegalArgumentException` from
+constructors that check their values, `IllegalStateException` from a re-entrant `ScriptRun.tick`, exceptions of host
+callbacks passed on), limits (the defaults and `CompileOptions.STANDALONE`, the console's 32 lines of 64 UTF-16 code
+units, the limits of project files) and threads: the Core keeps no shared mutable state (no object or companion
+object has a mutable member, and each compilation makes its own lexer, parser and compiler), so compilations and
+different runs can use different threads at once, while one `ScriptRun` is not thread-safe.
+
+`CreateScript.resume` and `ScriptRun.snapshot` state the limits of saved states:
+
+- A saved state is between two instructions. An instruction that takes several ticks (the vector and matrix
+  operations) is saved as not yet started, so it starts again after resuming, with the same result. Saving and
+  resuming after every tick with very few instructions per tick can repeat it without end.
+- A garbage collection in progress is not saved; the resumed run starts it again.
+- `resume` checks the shape of a state, not which program it came from; hosts compare
+  `ProgramFingerprint.ofProgram` and the source fingerprint.
+- The random state and the console history come from the saved state; `onPrint` gets only later lines.
+
+`CreateScriptTest.resumeStartsAMultiTickInstructionAgain` checks the first point with a bounded number of ticks: a
+state saved one step into `vector(3.0, 4.0)` needs one more tick than the original run to finish that instruction,
+saving and resuming after each of 50 ticks stays on it, and both runs print what a run without saving prints.
+
+Checks: the one code example (in the KDoc of `CreateScript`) was compiled and run in a temporary module without
+opt-in (no warnings; it prints `42`); the API listings did not change; the compiled bytecode of both modules is the
+same as before A4 apart from line numbers (`javap -c -p`); the cited `CS_...` ids exist.

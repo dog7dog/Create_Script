@@ -35,25 +35,47 @@ public enum class SnapshotProblem {
 // The object and its members are Internal API (each member is marked), except SlotType, which the Stable
 // ListSnapshot uses (docs/api/api-surface.md, Q5). Marking the object would require opt-in for SlotType too.
 public object SnapshotVerifier {
-    // スタック・変数の値の型。OBJECT はクラスごとに別の型（classId は CompiledProgram.classes の番号: 第3.9a段階）。
-    // LIST は要素の型ごとに別の型（第3.10a段階。読み取り専用かどうかは型に含めず、変更できないリストは VM が実行時に拒否する）
+    /**
+     * The type of the elements of a list in a saved state ([ListSnapshot.element]). Part of the supported saved-state
+     * API although [SnapshotVerifier] itself is internal. New types can be added in later releases.
+     */
     public sealed interface SlotType {
+        /** `Int`. */
         public data object INT : SlotType
+
+        /** `Boolean`. */
         public data object BOOLEAN : SlotType
+
+        /** `String`. */
         public data object STRING : SlotType
+
+        /** `Unit`. */
         public data object UNIT : SlotType
 
-        // 浮動小数点数（第3.11a段階）
+        /** `Float`. */
         public data object FLOAT : SlotType
+
+        /** `Double`. */
         public data object DOUBLE : SlotType
+
+        /**
+         * Instances of one class of the program.
+         *
+         * @property classId the class (an index into the classes of the program).
+         */
         public data class OBJECT(val classId: Int) : SlotType
 
-        // Vector（第3.11e段階）。実体は変更できない Double のリスト（ヒープの classId は VECTOR_CLASS）。List<Double> とは別の型
+        /** `Vector` (not the same type as a list of `Double`). */
         public data object VECTOR : SlotType
 
-        // Matrix（第3.11e段階）。実体は変更できない、行の Vector のリスト（ヒープの classId は MATRIX_CLASS。行の長さはそろっている）
+        /** `Matrix`: a list of vectors (rows) of the same length. */
         public data object MATRIX : SlotType
         // 入れ子（第3.10b段階）が深くても再帰しないよう、等価は外側から順にたどって判定し、ハッシュは作るときに 1 回だけ（内側の値から）計算する
+        /**
+         * A list; mutable and read-only lists have the same type.
+         *
+         * @property element the type of the elements.
+         */
         public class LIST(public val element: SlotType) : SlotType {
             private val hash = element.hashCode() * 31 + 5
 

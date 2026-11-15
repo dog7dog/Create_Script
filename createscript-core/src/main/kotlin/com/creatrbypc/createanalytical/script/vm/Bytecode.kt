@@ -327,8 +327,14 @@ public data class ClassInfo(val name: String, val fields: List<FieldInfo> = empt
 @InternalCreateScriptApi
 public data class FieldInfo(val name: String, val type: SnapshotVerifier.SlotType)
 
-// コンパイル結果。Minecraft に依存しない。命令はトップレベルの文（HALT で終わる）の後に、関数を定義の順に並べる
-// The type is Stable; its constructor, properties and copy are Internal API (docs/api/api-surface.md)
+/**
+ * A compiled program, from `CreateScript.compile`, to pass to `CreateScript.start` and `CreateScript.resume`.
+ *
+ * Hosts use it as a handle: the type is supported, but its constructor, properties and `copy` are Internal API
+ * (`@InternalCreateScriptApi`, see `docs/api/api-surface.md`) and change with the language. Running a program
+ * does not change it, so one program can be run by several [com.creatrbypc.createanalytical.script.api.ScriptRun]s.
+ * [ProgramFingerprint.ofProgram] identifies it for saved runs.
+ */
 public data class CompiledProgram @InternalCreateScriptApi constructor(
     @property:InternalCreateScriptApi val instructions: List<Instruction>,
     @property:InternalCreateScriptApi val constants: List<Constant>,

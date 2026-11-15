@@ -286,6 +286,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Tests (stage A3): `api/createscript-core.api` and `api/createscript-project.api` list the public API on the JVM;
   `ApiListingTest` fails when the compiled API differs from them. They are rewritten only with
   `CREATESCRIPT_API_UPDATE=1` (see `docs/api/api-surface.md`).
+- API documentation (stage A4): English KDoc on the whole Stable API of `createscript-core` and `createscript-project`,
+  replacing the Japanese comments there. `CreateScript.resume` and `ScriptRun.snapshot` describe the limits of saved
+  states (an instruction that takes several ticks, such as `vector(...)`, starts again after resuming; a garbage
+  collection in progress is not saved). A test checks the first one. No code changed.
 
 ### Fixed
 

@@ -1,22 +1,49 @@
 package com.creatrbypc.createanalytical.project
 
-// 依存（S8.1）。version は厳密な版（範囲の指定は未対応）、source は取得元（github:持ち主/リポジトリ）。S8.1 では形を確かめるだけで、取得・解決はしない
+/**
+ * A dependency in `createscript.json`.
+ *
+ * @property name the package name ([ProjectRules.isValidName]).
+ * @property version the exact version (SemVer; ranges are not supported).
+ * @property source where the package comes from: `github:owner/repository` ([ProjectRules.isValidSource]).
+ */
 public data class Dependency(val name: String, val version: String, val source: String)
 
-// プロジェクトの種類（schemaVersion 2: S8.2 Phase 1）。application は entry を実行するプログラム、library は modules を公開するパッケージ
+/**
+ * The kind of a project (`kind` in schema version 2).
+ *
+ * @property id the value in the file.
+ */
 public enum class PackageKind(public val id: String) {
+    /** A program that runs its `entry`. */
     APPLICATION("application"),
+
+    /** A package that offers its `modules` for `import`. */
     LIBRARY("library"),
     ;
 
     public companion object {
+        /** The kind with this [id], or `null`. */
         public fun of(id: String): PackageKind? = entries.firstOrNull { it.id == id }
     }
 }
 
-// createscript.json（schemaVersion 1・2）。dependencies は名前の順、modules（library が公開する import のモジュール名）は名前の順。
-// schemaVersion 1 は application だけで、entry が必須（S8.1 と同じ）。schemaVersion 2 の application は entry が必須で modules は書けない。
-// library は modules が 1 つ以上必須で、entry は任意
+/**
+ * The contents of `createscript.json` (schema version 1 or 2). Every value is checked when the object is made.
+ *
+ * Schema version 1 has only applications. An application needs [entry] and has no [modules]; a library (schema
+ * version 2) needs at least one module, and [entry] is optional.
+ *
+ * @property name the package name ([ProjectRules.isValidName]).
+ * @property version the version (SemVer, [ProjectRules.isValidVersion]).
+ * @property entry the path of the file to run, relative to the project ([ProjectRules.pathProblem]), or `null`.
+ * @property license an SPDX license expression, or `null`.
+ * @property dependencies sorted by name, without duplicates, at most [Manifests.MAX_DEPENDENCIES].
+ * @property schemaVersion 1 or 2.
+ * @property kind application or library.
+ * @property modules the module names a library offers, sorted, without duplicates, at most [Manifests.MAX_MODULES].
+ * @throws IllegalArgumentException if a value breaks these rules.
+ */
 public data class Manifest(
     val name: String,
     val version: String,
@@ -48,9 +75,16 @@ public data class Manifest(
     }
 }
 
-// manifest はエラーが無いときだけ。entryPosition はエントリーのパスの値の位置（CLI がファイルの有無を報告するときに使う）、
-// dependencyPositions は依存の名前（キー）の位置
-// modulePositions は modules の各名前の位置（S8.2 Phase 1）
+/**
+ * The result of [Manifests.parse].
+ *
+ * @property manifest the manifest, or `null` when there is an error.
+ * @property diagnostics the problems found (empty when [manifest] is not `null`).
+ * @property truncated `true` when more diagnostics were dropped.
+ * @property entryPosition where the value of `entry` is, to report a missing file there.
+ * @property dependencyPositions where the name of each dependency is.
+ * @property modulePositions where each name in `modules` is.
+ */
 public class ManifestResult(
     public val manifest: Manifest?,
     public val diagnostics: List<ProjectDiagnostic>,
@@ -60,22 +94,41 @@ public class ManifestResult(
     public val modulePositions: Map<String, FilePosition> = emptyMap(),
 )
 
-// createscript.json の読み取り・検査・書き出し（S8.1。ファイルの読み書きはしない。バイト列・文字列だけを扱う）
+/**
+ * Reads, checks and writes `createscript.json`. It works on bytes and strings only; it reads no files. Safe to use
+ * from several threads.
+ */
 public object Manifests {
+    /** The file name. */
     public const val FILE_NAME: String = "createscript.json"
-    // 読み書きできる schemaVersion（1: S8.1、2: S8.2 Phase 1）。SCHEMA_VERSION は init が書く版（1 のまま）
+
+    /** The schema version that a new project gets (`createscript init`). */
     public const val SCHEMA_VERSION: Long = 1L
+
+    /** The newest schema version that can be read and written. */
     public const val LATEST_SCHEMA_VERSION: Long = 2L
+
+    /** The schema versions that can be read and written. */
     public val SCHEMA_VERSIONS: Set<Long> = setOf(1L, 2L)
+
+    /** The largest file, in bytes. */
     public const val MAX_BYTES: Int = 64 * 1024
+
+    /** The most dependencies. */
     public const val MAX_DEPENDENCIES: Int = 1024
+
+    /** The most modules of a library. */
     public const val MAX_MODULES: Int = 1024
 
     private val FIELDS = setOf("schemaVersion", "name", "version", "entry", "license", "dependencies")
     private val FIELDS_2 = FIELDS + setOf("kind", "modules")
     private val DEPENDENCY_FIELDS = setOf("version", "source")
 
-    // schemaVersion を最初に確かめ、対応していない版なら他の項目は確かめない（項目の意味が版で変わりうるため）
+    /**
+     * Reads and checks [bytes] (UTF-8 JSON). Strict: unknown or duplicate keys, wrong types and values that break
+     * the rules are diagnostics, not exceptions. `schemaVersion` is checked first; for an unsupported version
+     * nothing else is checked. Files over [MAX_BYTES] are refused.
+     */
     public fun parse(bytes: ByteArray): ManifestResult {
         val json = JsonParser.parse(bytes, MAX_BYTES)
         val root = json.value ?: return ManifestResult(null, json.diagnostics, false)
@@ -158,8 +211,11 @@ public object Manifests {
         return ManifestResult(manifest, emptyList(), false, entryPosition, dependencyPositions, modulePositions)
     }
 
-    // 決まった形の書き出し。項目は schemaVersion・kind（2 のとき）・name・version・entry（あれば）・license（あれば）・modules（library のとき）・dependencies の順。
-    // 依存は名前の順で、各依存は version・source の順。schemaVersion 1 の出力は S8.1 と同じ
+    /**
+     * The canonical text of [manifest]: `schemaVersion`, `kind` (version 2), `name`, `version`, `entry` and
+     * `license` (when set), `modules` (libraries) and `dependencies` (by name, each with `version` and `source`).
+     * The same manifest always gives the same text.
+     */
     public fun write(manifest: Manifest): String {
         val members = ArrayList<Pair<String, JsonValue>>()
         members += "schemaVersion" to JsonWriter.integer(manifest.schemaVersion.toLong())

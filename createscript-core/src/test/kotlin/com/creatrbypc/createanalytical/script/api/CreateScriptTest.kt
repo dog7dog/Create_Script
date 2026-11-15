@@ -6,6 +6,8 @@ import com.creatrbypc.createanalytical.script.scheduler.PowerLevel
 import com.creatrbypc.createanalytical.script.scheduler.Scheduler
 import com.creatrbypc.createanalytical.script.vm.CompiledProgram
 import com.creatrbypc.createanalytical.script.vm.CsVm
+import com.creatrbypc.createanalytical.script.vm.Opcode
+import com.creatrbypc.createanalytical.script.vm.VmSnapshot
 import com.creatrbypc.createanalytical.script.vm.VmState
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -13,6 +15,7 @@ import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Assertions.fail
 import org.junit.jupiter.api.Test
 
 // 第3.12段階 S4: Minecraft 以外のアプリケーションから使う API（CreateScript・ScriptRun）。各テストは利用例を兼ねる
@@ -237,6 +240,59 @@ class CreateScriptTest {
         assertNull(CreateScript.resume(compile("println(\"other\")"), snapshot, options))
         finish(run)
         assertNull(run.snapshot())
+    }
+
+    // A4: 複数 tick にまたがる命令（vector(...) などの LINALG）の途中経過は保存しない。保存した状態はその命令の実行前のままで、
+    // 再開するとその命令を最初からやり直す（CreateScript.resume の KDoc に書いた既存の挙動）。毎 tick 保存・再開すると先へ進まない。
+    // どのループも上限の tick 数で終わる
+    @Test
+    fun resumeStartsAMultiTickInstructionAgain() {
+        val program = compile("val v = vector(3.0, 4.0)\nprintln(length(v))\nprintln(\"end\")")
+        val options = RunOptions(instructionsPerTick = 1, randomSeed = 0L)
+        val expected = CreateScript.start(program, options).also { finish(it) }.console
+        fun opcodeAt(snapshot: VmSnapshot) = program.instructions[snapshot.pc].opcode
+
+        // LINALG の 1 歩目を終えた（PC がまだその命令にある）ところまで進める
+        val run = CreateScript.start(program, options)
+        var saved: VmSnapshot? = null
+        for (tick in 1..100) {
+            val before = run.snapshot() ?: break
+            run.tick()
+            val after = run.snapshot() ?: break
+            if (opcodeAt(before) == Opcode.LINALG && after.pc == before.pc) {
+                saved = after
+                break
+            }
+        }
+        val inProgress = saved ?: fail("no instruction spanned two ticks")
+
+        // 元の実行と、その状態から再開した実行が、その命令を終えるまでの tick 数。再開した方は、済んだ 1 歩をもう一度行う
+        fun ticksToLeave(target: ScriptRun): Int {
+            for (tick in 1..100) {
+                target.tick()
+                if (target.snapshot()?.pc != inProgress.pc) return tick
+            }
+            return fail("the instruction did not end")
+        }
+        val original = ticksToLeave(run)
+        val resumed = CreateScript.resume(program, inProgress, options) ?: fail("not resumed")
+        assertEquals(original + 1, ticksToLeave(resumed))
+        finish(run)
+        finish(resumed)
+        assertEquals(expected, run.console)
+        assertEquals(expected, resumed.console)
+
+        // 毎 tick 保存して再開すると、50 tick たっても同じ命令から先へ進まない（上限で打ち切る）
+        var current = CreateScript.resume(program, inProgress, options) ?: fail("not resumed")
+        repeat(50) {
+            current.tick()
+            val state = current.snapshot() ?: fail("finished")
+            assertEquals(inProgress.pc, state.pc)
+            current = CreateScript.resume(program, state, options) ?: fail("not resumed")
+        }
+        // 保存・再開をやめれば終わり、出力は同じ
+        finish(current)
+        assertEquals(expected, current.console)
     }
 
     // 不正な設定は作れない

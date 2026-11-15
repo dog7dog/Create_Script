@@ -1,6 +1,12 @@
 package com.creatrbypc.createanalytical.script.diagnostic
 
-// 診断コード。id は通信・翻訳キーに使う安定した識別子なので、一度決めたら変更・再利用しない
+/**
+ * The kinds of diagnostics. [id] (`CS_...`) is the stable identifier for hosts, logs and translation keys: an id is
+ * never changed or reused for another meaning. New codes are added in later releases, so a `when` over this type
+ * needs an `else` branch. `docs/language.md` and `docs/cli.md` explain some of them.
+ *
+ * @property id the stable identifier, for example `CS_SEM_UNDECLARED_VARIABLE`.
+ */
 public enum class DiagnosticCode(public val id: String) {
     LEX_SOURCE_TOO_LONG("CS_LEX_SOURCE_TOO_LONG"),
     LEX_INVALID_SURROGATE("CS_LEX_INVALID_SURROGATE"),

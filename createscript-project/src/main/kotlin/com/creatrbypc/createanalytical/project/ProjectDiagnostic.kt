@@ -1,7 +1,12 @@
 package com.creatrbypc.createanalytical.project
 
-// プロジェクトのファイル（createscript.json・createscript.lock）の診断（S8.1）。id は表示・翻訳に使う安定した識別子なので、一度決めたら変更・再利用しない。
-// 位置は行・列（1 始まり。UTF-16 単位）で、ファイル全体の問題は 1 行 1 列
+/**
+ * The kinds of problems in project files and packages. [id] (`CS_PKG_...`, `CS_REG_...`) is the stable identifier
+ * for messages and translation: an id is never changed or reused for another meaning. New codes are added in later
+ * releases, so a `when` over this type needs an `else` branch.
+ *
+ * @property id the stable identifier, for example `CS_PKG_INVALID_NAME`.
+ */
 public enum class ProjectDiagnosticCode(public val id: String) {
     // ファイル（引数: 上限のバイト数）・文字コード
     FILE_TOO_LARGE("CS_PKG_FILE_TOO_LARGE"),
@@ -165,8 +170,20 @@ public enum class ProjectDiagnosticCode(public val id: String) {
     REPOSITORY_CHANGED("CS_REG_REPOSITORY_CHANGED"),
 }
 
+/**
+ * A problem in a project file.
+ *
+ * @property code what the problem is.
+ * @property line the line, starting at 1 (1 for a problem of the whole file).
+ * @property column the column in UTF-16 code units, starting at 1.
+ * @property arguments values for the message; they come from the file and are not trusted.
+ */
 public data class ProjectDiagnostic(val code: ProjectDiagnosticCode, val line: Int, val column: Int, val arguments: List<String> = emptyList()) {
-    // file:line:column: error CODE ("引数", …)（createscript run のコンパイルの診断と同じ形）
+    /**
+     * `file:line:column: error CODE ("argument", ...)`, the form the CLI uses. Arguments are quoted; control,
+     * format and line separator characters and lone surrogates are written as `\uXXXX`, and each argument is cut to
+     * [MAX_ARGUMENT_LENGTH] UTF-16 code units, so the text is safe to show on a terminal.
+     */
     public fun format(file: String): String =
         "$file:$line:$column: error ${code.id}" + if (arguments.isEmpty()) "" else arguments.joinToString(", ", " (", ")") { "\"${escape(it)}\"" }
 
@@ -204,7 +221,7 @@ public data class ProjectDiagnostic(val code: ProjectDiagnosticCode, val line: I
     }
 
     public companion object {
-        // 表示する引数の長さ（それを超える分は「…」で省く）
+        /** The longest argument that [format] shows; longer ones are cut and end with `…`. */
         public const val MAX_ARGUMENT_LENGTH: Int = 80
     }
 }

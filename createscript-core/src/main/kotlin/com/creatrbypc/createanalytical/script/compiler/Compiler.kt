@@ -80,7 +80,14 @@ import com.creatrbypc.createanalytical.script.vm.SnapshotVerifier
 import com.creatrbypc.createanalytical.script.vm.VmLimits
 import java.util.IdentityHashMap
 
-// program はエラーが無いときだけ返す。診断は前の段階の分を含めて最大16件
+/**
+ * The result of [com.creatrbypc.createanalytical.script.api.CreateScript.compile] for a program without `import`.
+ *
+ * @property program the compiled program, or `null` when there is an error.
+ * @property diagnostics errors and warnings from all phases, at most 16.
+ * @property diagnosticsTruncated `true` when there were more than 16 diagnostics and the rest were dropped.
+ * @property hasErrors `true` when there was an error, also one that was dropped.
+ */
 public data class CompileResult(
     val program: CompiledProgram?,
     val diagnostics: List<Diagnostic>,
@@ -88,19 +95,35 @@ public data class CompileResult(
     val hasErrors: Boolean,
 )
 
-// コンパイルの設定（第8.0.1段階）。maxInstructions はコンパイルしたプログラムの大きさ（バイトコードの命令の数）の上限で、null なら上限なし。
-// これはコンパイル時の上限で、VM は実行中に確かめない。実行時の予算（1 tick の命令数: RunOptions.instructionsPerTick）・スタック・呼び出しの深さ・
-// オブジェクト・リストなどの上限とは別で、どの設定でもそれらは変わらない。定数・変数・引数・プロパティの数の上限も、VM と検証の前提のため変わらない。
-// 設定はプログラムを受け付けるかどうかだけを決め、受け付けたプログラムの命令・ハッシュ（ProgramFingerprint）は設定によらず同じ。
-//
-// null（上限なし）でも、コンパイルが際限なく資源を使ってよいという意味ではない。プログラムの大きさは、入力の上限（1 つのソースの文字数・トークン数・
-// AST のノード数: LexerLimits・ParserLimits、モジュールの数: ModuleLimits）で抑えられている。コンパイルのたびに行う検証（SnapshotVerifier.framesOf）の
-// 時間とメモリーは命令数にほぼ比例する（開発機の計測で、検証に不利な形の 65,535 命令で約 2.4 秒・約 180 MiB）。
-// 入力の上限を広げるときは、コンパイルの時間とメモリーの上限を設計し直すこと
-//
-// 入力の上限（第8.0.1段階）: maxSourceLength・maxTokens・maxNodes は 1 つのファイルごと、maxModules はエントリーを除くモジュールの数、
-// maxTotalSourceLength はエントリーとすべてのモジュールの長さの合計。既定（DEFAULT・EMBEDDED）はこれまでの値（合計はファイルごとの上限 × ファイルの数で、
-// これまでと同じく実質的な制限にならない）
+/**
+ * Compile-time limits: which programs the compiler accepts. They do not change the instructions or the
+ * [com.creatrbypc.createanalytical.script.vm.ProgramFingerprint] of an accepted program, and they do not change
+ * the runtime limits (instructions per tick, stack, call depth, objects, lists), which are the same for every
+ * option. The limits on constants, variables, parameters and properties are fixed too.
+ *
+ * Without an instruction limit the size of a program is still bounded by the input limits. Checking the bytecode
+ * at the end of each compilation takes time and memory about in proportion to the instructions (measured on a
+ * development machine: about 2.4 seconds and 180 MiB for 65,535 instructions of a shape that is slow to check).
+ *
+ * @property maxInstructions the most bytecode instructions of the whole program, or `null` for no limit
+ *   (default 4096).
+ * @property maxSourceLength the most UTF-16 code units of one source file (default 4096).
+ * @property maxTokens the most tokens of one source file (default 2048).
+ * @property maxNodes the most syntax tree nodes of one source file (default 2048).
+ * @property maxModules the most modules besides the entry file (default 16).
+ * @property maxTotalSourceLength the most UTF-16 code units of the entry file and all modules together (default
+ *   4096 × 17, which does not limit beyond the per-file limit).
+ * @property maxPropertyTypeChain the longest chain of property types inferred from other properties (a property
+ *   without a type annotation whose initializer uses a property of another class, and so on), or `null` for no
+ *   limit (default).
+ * @property maxTotalTokens the most tokens of all files together (default 2048 × 17). Memory during compilation
+ *   grows about in proportion to tokens (measured: at most about 330 bytes per token).
+ * @property maxVerificationSteps the most steps of the final bytecode check, or `null` (default) for the bound
+ *   derived from the program, which a correct program never reaches. With a limit, a program that needs more steps
+ *   gets `CS_COMP_PROGRAM_TOO_COMPLEX`.
+ * @throws IllegalArgumentException if a limit is not positive, [maxTotalTokens] is less than [maxTokens], or
+ *   [maxTotalSourceLength] together with the module count does not fit in an `Int`.
+ */
 public data class CompileOptions(
     val maxInstructions: Int? = VmLimits.MAX_INSTRUCTIONS,
     val maxSourceLength: Int = LexerLimits.MAX_SOURCE_LENGTH,
@@ -108,12 +131,8 @@ public data class CompileOptions(
     val maxNodes: Int = ParserLimits.MAX_NODES,
     val maxModules: Int = ModuleLimits.MAX_MODULES,
     val maxTotalSourceLength: Int = LexerLimits.MAX_SOURCE_LENGTH * (ModuleLimits.MAX_MODULES + 1),
-    // 型の注釈の無いプロパティの型の連鎖（C1 の初期化式が C2 のプロパティの型を使い、C2 が C3 の…）の上限。null なら上限なし（既定。ノード数 2048 で連鎖は短い）
     val maxPropertyTypeChain: Int? = null,
-    // エントリーとすべてのモジュールのトークン数の合計の上限。コンパイル中に保持する AST などのメモリーはトークン数にほぼ比例する（開発機の計測で 1 トークンあたり最大約 330 バイト）
     val maxTotalTokens: Int = LexerLimits.MAX_TOKENS * (ModuleLimits.MAX_MODULES + 1),
-    // コンパイルの最後に行うバイトコードの検証（SnapshotVerifier）の処理回数の上限。null なら理論上の上限（SnapshotVerifier.maxSteps。既定）。
-    // 正しいプログラムの処理回数は、ふつう命令数の数倍で済むが、変数の初期化の状態が少しずつ伝わる形では命令数 ×（変数の数 + 1）まで増える
     val maxVerificationSteps: Long? = null,
 ) {
     init {
@@ -127,13 +146,17 @@ public data class CompileOptions(
     }
 
     public companion object {
-        // CreateScript.compile(source)・Compiler.compileSource(source) の既定（これまでと同じ 4096 命令）
+        /** The default of `CreateScript.compile(source)`: all limits at their defaults (4096 instructions). */
         public val DEFAULT: CompileOptions = CompileOptions()
 
-        // 埋め込み先（Create: Analytical などのホスト）向け。4096 命令を明示して指定する
+        /** For hosts that embed the Core (such as the game): the defaults, with the 4096-instruction limit stated. */
         public val EMBEDDED: CompileOptions = CompileOptions(VmLimits.MAX_INSTRUCTIONS)
 
-        // 独立版の createscript コマンド向け。命令数の上限なし（入力の上限・実行時の上限はそのまま）
+        /**
+         * For the standalone `createscript` command: no instruction limit; 1,000,000 UTF-16 code units, 250,000 tokens
+         * and 250,000 nodes per file; 1024 modules; 8,000,000 code units and 1,000,000 tokens in all files; property
+         * type chains up to 128; bytecode checks up to 100,000,000 steps. The runtime limits are unchanged.
+         */
         public val STANDALONE: CompileOptions = CompileOptions(
             maxInstructions = null,
             maxSourceLength = 1_000_000,

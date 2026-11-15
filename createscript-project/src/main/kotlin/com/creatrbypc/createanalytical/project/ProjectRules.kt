@@ -1,10 +1,20 @@
 package com.creatrbypc.createanalytical.project
 
-// プロジェクトのファイルの値の規則（S8.1。docs/packages.md に記載）。どれも ASCII だけを受け付ける（見た目の似た文字による取り違えを防ぐ）
+/**
+ * The rules for values in project files (described in `docs/packages.md`). Every rule accepts ASCII only, so that
+ * look-alike characters cannot be confused. Safe to use from several threads.
+ */
 public object ProjectRules {
+    /** The longest package name. */
     public const val MAX_NAME_LENGTH: Int = 64
+
+    /** The longest version. */
     public const val MAX_VERSION_LENGTH: Int = 128
+
+    /** The longest path (entry or module file). */
     public const val MAX_PATH_LENGTH: Int = 256
+
+    /** The longest license expression. */
     public const val MAX_LICENSE_LENGTH: Int = 64
 
     // パッケージ名: 英小文字で始まり、英小文字・数字と、間に 1 つずつのハイフン（例: vector-math）。import のモジュール名とは別の概念で、自動では変換しない
@@ -32,33 +42,46 @@ public object ProjectRules {
     // Windows の予約名（S8.2 L-7）: CON・PRN・AUX・NUL・COM0〜COM9・LPT0〜LPT9（COM0・LPT0 は Windows の版によって予約名なので、含める）
     private val WINDOWS_RESERVED = setOf("con", "prn", "aux", "nul") + (0..9).flatMap { listOf("com$it", "lpt$it") }
 
-    // Windows の予約名か（S8.2 L-7）。大文字・小文字を区別せず、拡張子が付いても（con.txt・NUL.tar.gz）予約名。Windows はパスの要素の末尾の
-    // . と空白を取り除いて扱うので、取り除いてから比べる（"con."・"con " も予約名。. と空白は、ほかの規則も拒否する）。
-    // パッケージ名・モジュール名・エントリーのパス・アーカイブの中のパス・プロジェクトのローカルの import に使う（どの OS でも拒否する: 同じプロジェクトを Windows でも使えるように）
+    /**
+     * Whether [name] is reserved on Windows: `CON`, `PRN`, `AUX`, `NUL`, `COM0`-`COM9` or `LPT0`-`LPT9`, in any case,
+     * also with an extension (`con.txt`) or trailing dots and spaces. Such names are refused on every system, so
+     * that a project also works on Windows.
+     */
     public fun isWindowsReserved(name: String): Boolean =
         name.trimEnd('.', ' ').substringBefore('.').trimEnd(' ').lowercase() in WINDOWS_RESERVED
 
-    // 利用者に示す説明
+    /** The message that explains why [name] cannot be used. */
     public fun reservedNameReason(name: String): String = "'$name' is a reserved name on Windows (CON, PRN, AUX, NUL, COM0-COM9 and LPT0-LPT9, in any case and with any extension)"
 
+    /**
+     * Whether [name] is a valid package name: up to [MAX_NAME_LENGTH] characters, a lowercase letter first, then
+     * lowercase letters and digits, with single hyphens between them (`vector-math`), and not reserved on Windows.
+     */
     public fun isValidName(name: String): Boolean = name.length <= MAX_NAME_LENGTH && NAME.matches(name) && !isWindowsReserved(name)
 
     // ---- モジュール名（S8.2 Phase 1） ----
 
-    // import のモジュール名の長さ（Core の LexerLimits.MAX_IDENTIFIER_LENGTH と同じ。一致は CLI のテストで確かめる）
+    /** The longest module name (the same as the longest identifier of the language). */
     public const val MAX_MODULE_NAME_LENGTH: Int = 32
 
     // Core の識別子（英字・_ で始まり、英数字・_。_ だけのものは不可）で、Kotlin のハードキーワードでも、import できない組み込み関数の名前でもないもの。
     // createscript-project は Core に依存しないため、キーワード・組み込み関数の一覧をここにも持つ（Core の HARD_KEYWORDS・BuiltinFunctions.NAMES との一致は CLI のテストで確かめる）。
     // パッケージ名（ハイフンを使える）とは別の概念で、自動では変換しない
     private val MODULE_NAME = Regex("[A-Za-z_][A-Za-z0-9_]*")
+    /** Words that cannot be module names because they are keywords of the language. */
     public val HARD_KEYWORDS: Set<String> = setOf(
         "as", "break", "class", "continue", "do", "else", "false", "for", "fun", "if", "in",
         "interface", "is", "null", "object", "package", "return", "super", "this", "throw",
         "true", "try", "typealias", "typeof", "val", "var", "when", "while",
     )
+    /** Built-in function names that cannot be module names. */
     public val BUILTIN_FUNCTIONS: Set<String> = setOf("println", "waitTicks", "listOf", "mutableListOf")
 
+    /**
+     * Whether [name] can be a module name: an identifier (a letter or `_` first, then letters, digits and `_`; not
+     * only `_`) up to [MAX_MODULE_NAME_LENGTH], not in [HARD_KEYWORDS] or [BUILTIN_FUNCTIONS], and not reserved on
+     * Windows. Module names are not package names; one is never turned into the other.
+     */
     public fun isValidModuleName(name: String): Boolean = name.length <= MAX_MODULE_NAME_LENGTH && MODULE_NAME.matches(name) && !name.all { it == '_' } &&
         name !in HARD_KEYWORDS && name !in BUILTIN_FUNCTIONS && !isWindowsReserved(name)
 
@@ -71,26 +94,41 @@ public object ProjectRules {
 
     // ---- ソースファイルの大きさ（S8.2 Phase 1） ----
 
-    // .cscr 1 ファイルの上限（UTF-16 単位）と、それを UTF-8 にしたときの最大のバイト数（1 単位あたり最大 3 バイト。BMP の外の文字は 4 バイトで 2 単位）。
-    // Core の CompileOptions.STANDALONE.maxSourceLength・CLI の CliLimits.MAX_SOURCE_BYTES と同じ値（一致は CLI のテストで確かめる）
+    /** The longest `.cscr` file in UTF-16 code units (the same as `CompileOptions.STANDALONE.maxSourceLength`). */
     public const val MAX_SOURCE_LENGTH: Int = 1_000_000
+
+    /** The most UTF-8 bytes of a `.cscr` file: at most 3 bytes per UTF-16 code unit. */
     public const val MAX_SOURCE_BYTES: Int = MAX_SOURCE_LENGTH * 3
 
+    /** Whether [version] is a Semantic Versioning 2.0.0 version, up to [MAX_VERSION_LENGTH] characters. */
     public fun isValidVersion(version: String): Boolean = version.length <= MAX_VERSION_LENGTH && VERSION.matches(version)
 
+    /**
+     * Whether [license] is made of the characters of an SPDX license expression (`MIT`, `MIT OR Apache-2.0`), up to
+     * [MAX_LICENSE_LENGTH]. It is not compared with the SPDX license list.
+     */
     public fun isValidLicense(license: String): Boolean = license.length <= MAX_LICENSE_LENGTH && LICENSE.matches(license)
 
+    /**
+     * Whether [source] is `github:owner/repository` with names that GitHub allows (owner: letters, digits and
+     * single hyphens, up to 39; repository: letters, digits, `.`, `_` and `-`, up to 100, not `.` or `..`).
+     */
     public fun isValidSource(source: String): Boolean {
         val match = GITHUB.matchEntire(source) ?: return false
         val repository = match.groupValues[2]
         return repository != "." && repository != ".."
     }
 
+    /** Whether [sha256] is 64 lowercase hexadecimal digits (uppercase is not the canonical form). */
     public fun isValidSha256(sha256: String): Boolean = SHA256.matches(sha256)
 
-    // プロジェクトのルートからの相対パス（区切りは /）として正しくなければ、その理由。正しければ null。
-    // 絶対パス・\・:（Windows のドライブ）・空の区切り・. と ..・使えない文字・Windows の予約名・末尾の . を拒否し、.cscr で終わることを求める。
-    // これは字面だけの検査で、シンボリックリンクがルートの外を指さないことは、ファイルを読む側（CLI）が確かめる
+    /**
+     * Why [path] is not a valid path of a `.cscr` file relative to the project root, or `null` when it is valid.
+     * Paths use `/`; absolute paths, `\`, `:`, empty names, `.` and `..`, other characters than letters, digits,
+     * `.`, `_` and `-`, names ending in `.`, Windows reserved names and paths longer than [MAX_PATH_LENGTH] are
+     * refused, and the path must end in `.cscr`. This checks the text only: whether a link points outside the
+     * project is for the code that reads the file to check.
+     */
     public fun pathProblem(path: String): String? = when {
         path.isEmpty() -> "the path is empty"
         path.length > MAX_PATH_LENGTH -> "the path is longer than $MAX_PATH_LENGTH characters"
