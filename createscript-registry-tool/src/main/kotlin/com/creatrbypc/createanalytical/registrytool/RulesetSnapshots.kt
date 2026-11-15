@@ -42,7 +42,13 @@ object RulesetSnapshots {
     const val FILE = "github-settings/verified-rulesets.json"
     const val SIGNATURE_FILE = "github-settings/verified-rulesets.json.sig"
     const val KEYS_FILE = "keys/settings-keys.json"
-    const val SNAPSHOT_VERSION = 2L
+    const val SNAPSHOT_VERSION = 3L
+
+    // 版 3（S8.3 U-2）: main ブランチの ruleset と、リポジトリの既定のブランチも記録して照合する。
+    // ワークフロー（validate.yml・publish.yml）は main への push・PR で動くので、既定のブランチは main でなければならない
+    const val EXPECTED_DEFAULT_BRANCH = "main"
+    const val MAIN_FILE = "github-settings/main-ruleset.json"
+    const val DEFAULT_BRANCH_CONDITION = "~DEFAULT_BRANCH"
     const val MAX_BYTES = 64 * 1024
 
     // 記録の有効期間の上限（U-1 で決定）と、記録の時刻が未来にあるとみなすまでの時計のずれの許容
@@ -57,7 +63,7 @@ object RulesetSnapshots {
 
     // 記録する項目（GitHub の「Get a repository ruleset」の応答の項目）
     val RULESET_FIELDS = listOf("id", "name", "target", "source_type", "source", "enforcement", "conditions", "rules", "bypass_actors", "created_at", "updated_at")
-    private val TOP_FIELDS = setOf("snapshotVersion", "repository", "recordedAt", "expires", "recordedBy", "rulesets")
+    private val TOP_FIELDS = setOf("snapshotVersion", "repository", "recordedAt", "expires", "recordedBy", "defaultBranch", "rulesets")
     // recordedAt・expires は秒までの UTC（record-ruleset-snapshot が書く形）
     private val SECONDS = Regex("\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z")
     private const val INDEX_PREFIX = "index-"
@@ -68,9 +74,11 @@ object RulesetSnapshots {
     private val TIMESTAMP = Regex("\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}(?:Z|[+-]\\d{2}:\\d{2})")
 
     // 公開の前の確認を行う主体。current_user_can_bypass の期待値が違う（P-21、実測は Publisher App・Checks App・所有者。GITHUB_TOKEN は未検証）
-    enum class Actor(val creation: String, val protection: String) {
-        WORKFLOW("never", "never"),
-        PUBLISHER("always", "never"),
+    // main の ruleset は、どちらの主体も回避できない（never）こと。GITHUB_TOKEN・Publisher App でのブランチの ruleset の値は、
+    // GitHub では未確認（タグの ruleset でだけ実測）。違えば失敗する
+    enum class Actor(val creation: String, val protection: String, val main: String) {
+        WORKFLOW("never", "never", "never"),
+        PUBLISHER("always", "never", "never"),
     }
 
     fun seconds(text: String?): Instant? {
@@ -137,11 +145,60 @@ object RulesetSnapshots {
         }
     }
 
+    // ブランチの ruleset が、既定のブランチ（main）に当たり得ないことが文字列だけで言えるか（~DEFAULT_BRANCH・~ALL・refs/heads/m* などは当たり得る）
+    fun cannotMatchDefaultBranch(obj: JsonObject): Boolean {
+        val include = ((obj.members["conditions"] as? JsonObject)?.members?.get("ref_name") as? JsonObject)?.members?.get("include") as? JsonArray ?: return false
+        if (include.elements.isEmpty()) return false
+        return include.elements.all { element ->
+            val pattern = (element as? JsonString)?.value ?: return false
+            if (!pattern.startsWith("refs/heads/")) return false
+            val literal = pattern.removePrefix("refs/heads/").takeWhile { it !in "*?[]{}\\!" }
+            !(EXPECTED_DEFAULT_BRANCH.startsWith(literal) || literal.startsWith(EXPECTED_DEFAULT_BRANCH))
+        }
+    }
+
+    // main の ruleset の方針（記録の中身に対して）: 雛形と同じ名前の、ブランチの ruleset で、既定のブランチだけを対象にし、
+    // GitHubSettings.rulesetProblems（回避者なし・有効・削除と強制 push の禁止・直線的な履歴・2 人以上の承認と 3 つの条件・2 つの必須チェック）
+    // に通り、必須チェックの App が Registry Checks App であること
+    fun mainProblems(expectedMain: ByteArray, recorded: JsonObject?, checksAppId: Long): List<String> {
+        val what = "the main branch ruleset"
+        val name = TagRulesets.parse(expectedMain)?.let { string(it, "name") } ?: return listOf("$MAIN_FILE is missing or has no name")
+        recorded ?: return listOf("$what (\"$name\") is missing")
+        val problems = ArrayList<String>()
+        if (string(recorded, "name") != name) problems += "$what must be named \"$name\" as in $MAIN_FILE"
+        if (string(recorded, "target") != "branch") problems += "$what: target must be branch"
+        val refName = (recorded.members["conditions"] as? JsonObject)?.members?.get("ref_name") as? JsonObject
+        val include = (refName?.members?.get("include") as? JsonArray)?.elements?.map { (it as? JsonString)?.value }
+        val exclude = refName?.members?.get("exclude")
+        if (include != listOf(DEFAULT_BRANCH_CONDITION)) problems += "$what: conditions.ref_name.include must be exactly [\"$DEFAULT_BRANCH_CONDITION\"]"
+        if (exclude != null && (exclude as? JsonArray)?.elements?.isEmpty() != true) problems += "$what: conditions.ref_name.exclude must be empty"
+        problems += GitHubSettings.rulesetProblems(CanonicalJson.write(recorded)).map { "$what: $it" }
+        for (check in GitHubSettings.requiredChecks(recorded)) {
+            if (check.integrationId != checksAppId) problems += "$what: the required check ${check.context} comes from App ${check.integrationId}, not the Registry Checks App ($checksAppId)"
+        }
+        return problems
+    }
+
+    // GET /repos/{owner}/{repo} の応答（既定のブランチ・名前）。読めなければ確かめられないので失敗
+    fun repositoryProblems(info: JsonObject?, repository: String, expectedBranch: String = EXPECTED_DEFAULT_BRANCH): List<String> {
+        info ?: return listOf("the repository information (GET /repos/{owner}/{repo}) is missing, so the default branch cannot be verified")
+        val problems = ArrayList<String>()
+        if (!string(info, "full_name").equals(repository, ignoreCase = true)) problems += "the repository information is for ${string(info, "full_name")}, not $repository"
+        when (val branch = string(info, "default_branch")) {
+            null -> problems += "the repository information has no default_branch"
+            expectedBranch -> {}
+            else -> problems += "the default branch is $branch, not $expectedBranch: ~DEFAULT_BRANCH no longer protects $expectedBranch, where the workflows run"
+        }
+        return problems
+    }
+
     // 管理者の権限で取得した応答（bypass_actors を含む）から、スナップショットを作る。雛形の A・B と App の ID の検査に通るものだけ
     fun record(
         expectedCreation: ByteArray,
         expectedProtection: ByteArray,
+        expectedMain: ByteArray,
         live: List<JsonObject>,
+        repositoryInfo: JsonObject?,
         repository: String,
         recordedBy: String,
         recordedAt: Instant,
@@ -154,8 +211,13 @@ object RulesetSnapshots {
         if (!REPOSITORY.matches(repository)) problems += "the repository must be owner/name"
         if (!LOGIN.matches(recordedBy)) problems += "--recorded-by must be a GitHub login"
         problems += TagRulesets.liveProblems(expectedCreation, expectedProtection, live, publisherAppId, checksAppId)
+        problems += repositoryProblems(repositoryInfo, repository)
+        val mainName = TagRulesets.parse(expectedMain)?.let { string(it, "name") }
+        val mainLive = live.filter { mainName != null && string(it, "name") == mainName && string(it, "target") == "branch" }
+        if (mainLive.size != 1) problems += "the repository must have exactly one branch ruleset named \"$mainName\" (it has ${mainLive.size})"
+        problems += mainProblems(expectedMain, mainLive.singleOrNull(), checksAppId)
         val names = listOfNotNull(TagRulesets.parse(expectedCreation)?.let { string(it, "name") }, TagRulesets.parse(expectedProtection)?.let { string(it, "name") })
-        val chosen = names.mapNotNull { name -> live.singleOrNull { string(it, "name") == name } }
+        val chosen = names.mapNotNull { name -> live.singleOrNull { string(it, "name") == name } } + listOfNotNull(mainLive.singleOrNull())
         for (ruleset in chosen) {
             val what = "the ruleset \"${string(ruleset, "name")}\""
             for (field in RULESET_FIELDS) if (ruleset.members[field] == null) problems += "$what: $field is missing (record the ruleset with the administrator's own token, which can see bypass_actors)"
@@ -165,7 +227,10 @@ object RulesetSnapshots {
         }
         val livePublic = live.filter { obj -> chosen.none { it === obj } && string(obj, "target") == "tag" && !cannotMatchIndexTags(obj) }
         for (other in livePublic) problems += "the tag ruleset \"${string(other, "name")}\" (${id(other)}) may apply to index-* tags; it must be removed or added to the templates before recording"
-        if (problems.isNotEmpty() || chosen.size != 2) return Parsed(null, problems.ifEmpty { listOf("the two tag rulesets were not found") })
+        for (other in live.filter { obj -> chosen.none { it === obj } && string(obj, "target") == "branch" && !cannotMatchDefaultBranch(obj) }) {
+            problems += "the branch ruleset \"${string(other, "name")}\" (${id(other)}) may apply to the default branch; it must be removed or added to the templates before recording"
+        }
+        if (problems.isNotEmpty() || chosen.size != 3) return Parsed(null, problems.ifEmpty { listOf("the two tag rulesets and the main branch ruleset were not found") })
         val rulesets = chosen.sortedBy { string(it, "name") }.map { ruleset ->
             JsonWriter.obj(*RULESET_FIELDS.map { field -> field to ruleset.members.getValue(field) }.toTypedArray())
         }
@@ -176,6 +241,7 @@ object RulesetSnapshots {
             "recordedAt" to JsonWriter.string(at.toString()),
             "expires" to JsonWriter.string(at.plus(Duration.ofDays(validDays)).toString()),
             "recordedBy" to JsonWriter.string(recordedBy),
+            "defaultBranch" to JsonWriter.string(EXPECTED_DEFAULT_BRANCH),
             "rulesets" to JsonWriter.array(rulesets),
         )
         return Parsed(CanonicalJson.write(snapshot), emptyList())
@@ -264,7 +330,7 @@ object RulesetSnapshots {
         val obj = TagRulesets.parse(snapshot) ?: return listOf("the snapshot cannot be read")
         val lines = ArrayList<String>()
         lines += "snapshot sha256 ${GitHubReleases.sha256Hex(snapshot)}, version ${(obj.members["snapshotVersion"] as? JsonInteger)?.value}"
-        lines += "repository ${string(obj, "repository")}, recorded by ${string(obj, "recordedBy")} at ${string(obj, "recordedAt")}, expires ${string(obj, "expires")}"
+        lines += "repository ${string(obj, "repository")} (default branch ${string(obj, "defaultBranch")}), recorded by ${string(obj, "recordedBy")} at ${string(obj, "recordedAt")}, expires ${string(obj, "expires")}"
         for (ruleset in (obj.members["rulesets"] as? JsonArray)?.elements.orEmpty().mapNotNull { it as? JsonObject }) {
             lines += "ruleset ${id(ruleset)} \"${string(ruleset, "name")}\": target ${string(ruleset, "target")}, enforcement ${string(ruleset, "enforcement")}, " +
                 "conditions ${conditions(ruleset.members["conditions"])}, rules ${unordered(ruleset.members["rules"])}, bypass_actors ${unordered(ruleset.members["bypass_actors"])}, updated_at ${string(ruleset, "updated_at")}"
@@ -294,6 +360,7 @@ object RulesetSnapshots {
     fun snapshotProblems(
         expectedCreation: ByteArray,
         expectedProtection: ByteArray,
+        expectedMain: ByteArray,
         snapshotBytes: ByteArray,
         repository: String,
         publisherAppId: Long,
@@ -320,12 +387,17 @@ object RulesetSnapshots {
             }
         }
         if (string(snapshot, "recordedBy")?.let(LOGIN::matches) != true) problems += "$FILE: recordedBy is not a GitHub login"
+        if (string(snapshot, "defaultBranch") != EXPECTED_DEFAULT_BRANCH) problems += "$FILE: defaultBranch must be $EXPECTED_DEFAULT_BRANCH"
         val recorded = (snapshot.members["rulesets"] as? JsonArray)?.elements?.map { it as? JsonObject }
-        if (recorded == null || recorded.size != 2 || recorded.any { it == null }) return (problems + "$FILE must record exactly the two tag rulesets") to null
+        if (recorded == null || recorded.size != 3 || recorded.any { it == null }) return (problems + "$FILE must record exactly the two tag rulesets and the main branch ruleset") to null
         val rulesets = recorded.filterNotNull()
         for (ruleset in rulesets) if (ruleset.members.keys != RULESET_FIELDS.toSet()) problems += "$FILE: a recorded ruleset must have exactly the fields ${RULESET_FIELDS.joinToString(", ")}"
         // 記録そのものが、雛形の A・B と App の ID の方針に合うこと（回避者を含む。記録には bypass_actors がある）
-        problems += TagRulesets.liveProblems(expectedCreation, expectedProtection, rulesets, publisherAppId, checksAppId).map { "snapshot: $it" }
+        val tags = rulesets.filter { string(it, "target") == "tag" }
+        problems += TagRulesets.liveProblems(expectedCreation, expectedProtection, tags, publisherAppId, checksAppId).map { "snapshot: $it" }
+        val mains = rulesets.filter { string(it, "target") == "branch" }
+        if (tags.size != 2 || mains.size != 1) problems += "$FILE must record two tag rulesets and one branch ruleset"
+        problems += mainProblems(expectedMain, mains.singleOrNull(), checksAppId).map { "snapshot: $it" }
         return problems to rulesets
     }
 
@@ -333,16 +405,20 @@ object RulesetSnapshots {
     fun checkProblems(
         expectedCreation: ByteArray,
         expectedProtection: ByteArray,
+        expectedMain: ByteArray,
         snapshotBytes: ByteArray,
         live: List<JsonObject>,
+        repositoryInfo: JsonObject?,
         repository: String,
         publisherAppId: Long,
         checksAppId: Long,
         actor: Actor,
         now: Instant,
     ): List<String> {
-        val (staticProblems, recorded) = snapshotProblems(expectedCreation, expectedProtection, snapshotBytes, repository, publisherAppId, checksAppId, now)
+        val (staticProblems, recorded) = snapshotProblems(expectedCreation, expectedProtection, expectedMain, snapshotBytes, repository, publisherAppId, checksAppId, now)
         val problems = ArrayList(staticProblems)
+        // 既定のブランチ: 変えられると ~DEFAULT_BRANCH の ruleset は main を守らなくなるが、ruleset の updated_at は変わらない
+        problems += repositoryProblems(repositoryInfo, repository)
         val rulesets = recorded ?: return problems
         val creationName = TagRulesets.parse(expectedCreation)?.let { string(it, "name") }
         for (ruleset in rulesets) {
@@ -374,7 +450,11 @@ object RulesetSnapshots {
             current.members["bypass_actors"]?.let { visible ->
                 if (unordered(visible) == null || unordered(visible) != unordered(ruleset.members["bypass_actors"])) problems += "$what: bypass_actors differ from the snapshot"
             }
-            val expected = if (name == creationName) actor.creation else actor.protection
+            val expected = when {
+                string(ruleset, "target") == "branch" -> actor.main
+                name == creationName -> actor.creation
+                else -> actor.protection
+            }
             when (val canBypass = string(current, "current_user_can_bypass")) {
                 null -> problems += "$what: current_user_can_bypass is missing"
                 expected -> {}
@@ -389,6 +469,15 @@ object RulesetSnapshots {
                 problems += "the tag ruleset ${id(other)} has no visible conditions, so it cannot be shown to leave index-* tags alone"
             } else if (!cannotMatchIndexTags(other)) {
                 problems += "the tag ruleset \"${string(other, "name")}\" (${id(other)}) is not in the snapshot and may apply to index-* tags"
+            }
+        }
+        // 記録に無いブランチの ruleset で、既定のブランチに当たり得るもの（重ねても制限が強まるだけだが、記録と違う構成は止める）
+        for (other in live) {
+            if (string(other, "target") != "branch" || id(other) in recordedIds) continue
+            if (other.members["conditions"] == null) {
+                problems += "the branch ruleset ${id(other)} has no visible conditions, so it cannot be shown to leave the default branch alone"
+            } else if (!cannotMatchDefaultBranch(other)) {
+                problems += "the branch ruleset \"${string(other, "name")}\" (${id(other)}) is not in the snapshot and may apply to the default branch"
             }
         }
         return problems

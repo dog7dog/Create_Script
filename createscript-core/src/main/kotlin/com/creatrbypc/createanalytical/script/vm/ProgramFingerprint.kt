@@ -112,6 +112,17 @@ object ProgramFingerprint {
                     out.writeInt(shape.size)
                 }
             }
+            // エラーフォールバックの範囲（第9.2段階）があるときだけ、印（負の数。リストの形の数とは重ならない）の後に加える（それ以前のプログラムのハッシュは変えない）
+            if (program.handlers.isNotEmpty()) {
+                out.writeInt(HANDLERS_MARK)
+                out.writeInt(program.handlers.size)
+                for (handler in program.handlers) {
+                    out.writeInt(handler.start)
+                    out.writeInt(handler.end)
+                    out.writeInt(handler.handler)
+                    out.writeInt(handler.stackDepth)
+                }
+            }
         }
         return sha256(bytes.toByteArray())
     }
@@ -139,6 +150,8 @@ object ProgramFingerprint {
             is SnapshotVerifier.SlotType.LIST -> error("unreachable")
         }
     }
+
+    private const val HANDLERS_MARK = -0x3f21
 
     private fun sha256(bytes: ByteArray): ByteArray = MessageDigest.getInstance("SHA-256").digest(bytes)
 }

@@ -257,4 +257,35 @@ enum class DiagnosticCode(val id: String) {
     // import できない範囲のモジュール（S8.2 Phase 4。ModuleAccess を渡すコンパイルだけ。位置は import のモジュール名、引数: モジュール名）。
     // 例: 直接の依存ではないパッケージのモジュール、パッケージの公開しないモジュール。末尾に足す（既存の値の順序を変えない）
     MODULE_NOT_VISIBLE("CS_MODULE_NOT_VISIBLE"),
+
+    // 第9.0〜9.3段階（リストの関数・ラムダ・パイプライン・エラーフォールバック・型推論）。末尾に足す（既存の値の順序を変えない）
+    // ラムダ・関数の参照・関数の値を書けない場所（ラムダは呼び出しの引数・val の初期化式・関数の値の呼び出しにだけ書ける）。引数は無い
+    SEM_LAMBDA_NOT_ALLOWED("CS_SEM_LAMBDA_NOT_ALLOWED"),
+
+    // ラムダの引数の数が、呼び出し先が渡す引数の数と違う（引数: 関数名、求められる数、ラムダの引数の数）
+    SEM_LAMBDA_PARAMETER_COUNT("CS_SEM_LAMBDA_PARAMETER_COUNT"),
+
+    // 文脈から型を推論できないラムダの引数（val f = { x -> … } など。引数: 引数名）
+    SEM_LAMBDA_PARAMETER_TYPE_REQUIRED("CS_SEM_LAMBDA_PARAMETER_TYPE_REQUIRED"),
+
+    // ラムダの中の return（ラムダはその場で展開するため、関数から戻る return と区別できない）
+    SEM_RETURN_IN_LAMBDA("CS_SEM_RETURN_IN_LAMBDA"),
+
+    // プロパティの初期化式の中のラムダ（初期化中のインスタンスの状態を保存データで確かめる規則を保つため）
+    SEM_LAMBDA_IN_INITIALIZER("CS_SEM_LAMBDA_IN_INITIALIZER"),
+
+    // 関数の値（ラムダ・関数の参照を入れた val）を、宣言した関数・メソッド（またはトップレベル）の外で使った（引数: 名前）
+    SEM_FUNCTION_VALUE_OUTSIDE_SCOPE("CS_SEM_FUNCTION_VALUE_OUTSIDE_SCOPE"),
+
+    // |> の右が 名前・名前(引数…)・名前 { ラムダ } のどれでもない
+    SEM_INVALID_PIPE_TARGET("CS_SEM_INVALID_PIPE_TARGET"),
+
+    // group のキーの型が Int・String・Boolean 以外（引数: 型）
+    SEM_GROUP_KEY_TYPE("CS_SEM_GROUP_KEY_TYPE"),
+
+    // 関数の型を書けない場所（val の型の注釈以外。関数の引数・戻り値・プロパティ・リストの要素など）
+    SEM_FUNCTION_TYPE_NOT_ALLOWED("CS_SEM_FUNCTION_TYPE_NOT_ALLOWED"),
+
+    // 関数の値の展開（インライン）が多すぎる・深すぎる（引数: 上限）
+    COMP_TOO_MANY_INLINE_EXPANSIONS("CS_COMP_TOO_MANY_INLINE_EXPANSIONS"),
 }

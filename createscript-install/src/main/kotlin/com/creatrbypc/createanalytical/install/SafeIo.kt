@@ -4,7 +4,9 @@ import java.io.IOException
 import java.nio.ByteBuffer
 import java.nio.channels.FileChannel
 import java.nio.file.DirectoryNotEmptyException
+import java.nio.file.AccessDeniedException
 import java.nio.file.FileAlreadyExistsException
+import java.nio.file.FileSystemException
 import java.nio.file.Files
 import java.nio.file.LinkOption
 import java.nio.file.NoSuchFileException
@@ -113,6 +115,26 @@ internal class Owner private constructor(private val user: UserPrincipal?, priva
         // 今のユーザー: ディレクトリに新しいファイルを作り、その所有者を読む（ユーザー名の環境変数・プロパティを信用しない）
         fun probe(directory: Path): Owner {
             val probe = directory.resolve(".owner-${UUID.randomUUID()}")
+            SafeIo.anchorFor(probe)?.let { fs ->
+                val id = try {
+                    fs.write(probe, ByteArray(0), replace = false)
+                } catch (error: IOException) {
+                    throw InstallFailure(InstallFailure.Kind.UNSAFE, "cannot write to $directory")
+                }
+                return try {
+                    Owner(Files.getOwner(probe, LinkOption.NOFOLLOW_LINKS))
+                } catch (error: UnsupportedOperationException) {
+                    Owner(null)
+                } catch (error: IOException) {
+                    throw InstallFailure(InstallFailure.Kind.UNSAFE, "cannot read the owner of $probe")
+                } finally {
+                    try {
+                        fs.remove(probe, id)
+                    } catch (error: IOException) {
+                        // 空のファイルが残るだけ
+                    }
+                }
+            }
             return try {
                 Files.newByteChannel(probe, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS).close()
                 Owner(Files.getOwner(probe, LinkOption.NOFOLLOW_LINKS))
@@ -158,6 +180,88 @@ internal class InstallFileSystem(
 // インストールのファイルの操作（S8.2 Phase 3）。どれもシンボリックリンクをたどらない
 internal object SafeIo {
     fun sha256Hex(bytes: ByteArray): String = GitHubReleases.sha256Hex(bytes)
+
+    // ---- S8.3 L-5: 作業ディレクトリを固定した子プロセス（AnchoredFs） ----
+    // インストールの間（Installer が withAnchor で設定する）、プロジェクトの中のファイルを変える操作は、すべて AnchoredFs で行う。
+    // 設定されていない（Windows・テストの直接の呼び出し）ときは、これまでの処理
+    private val anchor = ThreadLocal<AnchoredFs?>()
+
+    fun <T> withAnchor(fs: AnchoredFs?, body: () -> T): T {
+        val previous = anchor.get()
+        anchor.set(fs)
+        try {
+            return body()
+        } finally {
+            anchor.set(previous)
+        }
+    }
+
+    // path を変える操作に使う AnchoredFs（プロジェクトの中のときだけ）
+    fun anchorFor(path: Path): AnchoredFs? = anchor.get()?.takeIf { it.owns(path) }
+
+    fun anchored(path: Path): Boolean = anchorFor(path) != null
+
+    // unix:dev・unix:ino など（リンクをたどらない）。取れなければ null
+    fun unixLong(path: Path, attribute: String): Long? = try {
+        (Files.getAttribute(path, "unix:$attribute", LinkOption.NOFOLLOW_LINKS) as Number).toLong()
+    } catch (error: UnsupportedOperationException) {
+        null
+    } catch (error: IllegalArgumentException) {
+        null
+    } catch (error: IOException) {
+        null
+    }
+
+    // ファイル・ディレクトリの識別子（デバイス番号:i-node。AnchoredFs の識別子と同じ形）。取れなければ null
+    fun fileId(path: Path): String? {
+        val device = unixLong(path, "dev") ?: return null
+        val inode = unixLong(path, "ino") ?: return null
+        return AnchoredFs.idOf(device, inode)
+    }
+
+    // 今の識別子（固定したディレクトリから見たもの。AnchoredFs が無ければパスで読む）
+    fun currentId(path: Path): String? = anchorFor(path)?.stat(path)?.id ?: if (anchored(path)) null else fileId(path)
+
+    // 書き終えたファイルをディスクに書き出す（パスで読み取りのために開いて force。差し替えられていても、ほかのファイルを変えない）
+    private fun force(path: Path) {
+        try {
+            FileChannel.open(path, StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS).use { it.force(true) }
+        } catch (error: IOException) {
+            // 書き出せなくても、中身は書いてある（電源が切れたときの保証が弱くなるだけ）
+        }
+    }
+
+    // 内容を、名前 target で新しく公開する（既にあれば FileAlreadyExistsException）。AnchoredFs のときだけ使う
+    fun publishContent(target: Path, bytes: ByteArray, mode: Int = 0b110_100_100): String {
+        val fs = anchorFor(target) ?: unsafe("internal error: $target is not handled by the file helper")
+        return fs.write(target, bytes, replace = false, mode = mode, durable = ::force)
+    }
+
+    // 内容で target を置き換える（同じディレクトリの中で書いてから付け替える。target のリンクの先へは入らない）。AnchoredFs のときだけ使う
+    fun replaceContent(target: Path, bytes: ByteArray, mode: Int): String {
+        val fs = anchorFor(target) ?: unsafe("internal error: $target is not handled by the file helper")
+        return fs.write(target, bytes, replace = true, mode = mode, durable = ::force)
+    }
+
+    // POSIX の権限（数値）。読めなければ 0644
+    fun modeOf(path: Path): Int = try {
+        Files.getPosixFilePermissions(path, LinkOption.NOFOLLOW_LINKS).sumOf { permission ->
+            when (permission) {
+                java.nio.file.attribute.PosixFilePermission.OWNER_READ -> 256
+                java.nio.file.attribute.PosixFilePermission.OWNER_WRITE -> 128
+                java.nio.file.attribute.PosixFilePermission.OWNER_EXECUTE -> 64
+                java.nio.file.attribute.PosixFilePermission.GROUP_READ -> 32
+                java.nio.file.attribute.PosixFilePermission.GROUP_WRITE -> 16
+                java.nio.file.attribute.PosixFilePermission.GROUP_EXECUTE -> 8
+                java.nio.file.attribute.PosixFilePermission.OTHERS_READ -> 4
+                java.nio.file.attribute.PosixFilePermission.OTHERS_WRITE -> 2
+                java.nio.file.attribute.PosixFilePermission.OTHERS_EXECUTE -> 1
+                null -> 0
+            }.toInt()
+        }
+    } catch (error: Exception) {
+        0b110_100_100
+    }
 
     fun attributes(path: Path): BasicFileAttributes? = try {
         Files.readAttributes(path, BasicFileAttributes::class.java, LinkOption.NOFOLLOW_LINKS)
@@ -254,6 +358,10 @@ internal object SafeIo {
 
     // 新しいディレクトリ（既にあれば FileAlreadyExistsException）
     fun createDirectory(path: Path) {
+        anchorFor(path)?.let {
+            it.mkdir(path)
+            return
+        }
         try {
             Files.createDirectory(path, DIRECTORY_PERMISSIONS)
         } catch (error: UnsupportedOperationException) {
@@ -316,46 +424,146 @@ internal object SafeIo {
     // 最終の名前に変えた直後に止まったものは、0400 のままの書き終えたファイル（最終の名前のファイルは、記録の SHA-256 と照合して扱うので安全。所有者は読める）。
     // 0644 にしてから名前を変える順では、その間に止まると「0400 でない書きかけ」が残り、片付けられなくなるため、この順にする。
     // POSIX でないファイルシステム（inode・権限が無い）では、createFile と同じく最終の名前に直接書く
-    fun writeNew(path: Path, bytes: ByteArray, onWrite: (String) -> Unit = {}): Identity {
+    // S8.3 L-5（Java 21 でできる対策）: owned には、このインストールが作ったファイル・ディレクトリの fileKey を加える（作った直後に、一意の名前 .part-<UUID> で読む。
+    // その名前のものは、どこにあっても自分が作ったもの）。中身は、作ったファイルが意図した場所にあること（isExactly）を確かめてからだけ書く
+    // （途中のディレクトリが差し替えられて外に作られたなら、空のまま止まる。外に残りうるのは、空の 0400 の .part-<UUID> だけ）。
+    // 名前の付け替えは、置き換えないハードリンク（renameNoReplace）で行う
+    fun writeNew(path: Path, bytes: ByteArray, onWrite: (String) -> Unit = {}, owned: MutableSet<String>? = null): Identity {
+        anchorFor(path)?.let { fs ->
+            val id = fs.write(path, bytes, replace = false, onStep = onWrite, durable = ::force)
+            owned?.add(id)
+            return Identity(attributes(path)?.fileKey(), bytes.size.toLong(), sha256Hex(bytes))
+        }
         val directory = path.parent
-        if ("posix" !in directory.fileSystem.supportedFileAttributeViews()) return createFile(path, bytes)
+        if ("posix" !in directory.fileSystem.supportedFileAttributeViews()) return createFile(path, bytes, owned)
         val creating = directory.resolve("$PART_PREFIX${UUID.randomUUID()}")
         lateinit var tagged: Path
+        val key: Any?
         FileChannel.open(creating, setOf(StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS), PART_PERMISSIONS).use { channel ->
             onWrite("creating")
+            // 作った直後の実際のパス（途中のリンクを解決したもの）。一意の名前なので、そこにあるものは自分が作ったもの（どこにあっても）
+            val real = try {
+                creating.toRealPath()
+            } catch (error: IOException) {
+                null
+            }
+            key = attributes(real ?: creating)?.fileKey()
+            val id = fileId(real ?: creating)
+            // 意図した場所に無ければ、中身を書かずに止まる。外に作った空のファイルは、解決した実際のパスで、自分のもの（fileKey が同じ）と確かめてから片付ける
+            if (real != creating) {
+                channel.close()
+                removeEscaped(real ?: creating, key)
+                escapedBeforeWriting(creating)
+            }
             val inode = inode(creating)
             if (inode == null) {
                 channel.close()
                 Files.delete(creating)
-                return createFile(path, bytes)
+                return createFile(path, bytes, owned)
             }
+            id?.let { owned?.add(it) }
             tagged = directory.resolve("$PART_PREFIX$inode-${bytes.size}-${path.fileName}")
             // 開いたまま名前を変える（記述子は同じファイルを指したまま）
-            moveNew(creating, tagged)
+            renameNoReplace(creating, tagged)
             onWrite("writing:${path.fileName}")
             val buffer = ByteBuffer.wrap(bytes)
             while (buffer.hasRemaining()) channel.write(buffer)
             channel.force(true)
         }
         onWrite("written:${path.fileName}")
-        moveNew(tagged, path)
+        renameNoReplace(tagged, path)
         onWrite("renamed:${path.fileName}")
         try {
             Files.setPosixFilePermissions(path, FINAL_PERMISSIONS)
         } catch (error: IOException) {
             // 0400 のまま（所有者は読めるので、使うのに支障は無い）
         }
-        return Identity(attributes(path)?.fileKey(), bytes.size.toLong(), sha256Hex(bytes))
+        return Identity(key ?: attributes(path)?.fileKey(), bytes.size.toLong(), sha256Hex(bytes))
+    }
+
+    // path が、リンクを含まず、そのとおりの場所にあるか（S8.3 L-5）。path はプロジェクトの実パスから決まった名前で組み立てたもの。
+    // 作った直後に確かめると: 外に作られたなら、今もリンクを通る（実パスが違う）か、リンクが戻されて元の場所には無い（一意の名前なので）。どちらも false
+    fun isExactly(path: Path): Boolean = try {
+        path.toRealPath() == path
+    } catch (error: IOException) {
+        false
+    }
+
+    // 外に作った一意の名前の空のファイルを片付ける（作った直後に読んだ fileKey と同じときだけ。違う・無ければ何もしない）
+    private fun removeEscaped(creating: Path, key: Any?) {
+        if (key == null) return
+        try {
+            deleteVerified(creating) { aside -> attributes(aside)?.let { it.fileKey() == key && it.isRegularFile && it.size() == 0L } == true }
+        } catch (error: Exception) {
+            // 残るのは空の読み取り専用のファイルだけ
+        }
+    }
+
+    private fun escapedBeforeWriting(path: Path): Nothing = unsafe(
+        "${path.parent} was replaced by another program while createscript install created a file in it (L-5); nothing was written to the new file, and createscript install stopped. " +
+            "If it could not be removed, an empty, read-only file named ${path.fileName} remains where the replaced directory pointed",
+    )
+
+    // 置き換えない名前の付け替え（S8.3 L-5）。target にハードリンクを作り（link は、既にある名前を置き換えずに失敗する）、source の名前を消す。
+    // source と target は同じディレクトリなので、途中のディレクトリが差し替えられても、差し替え先に source が無ければ失敗する（何も置き換えない）。
+    // ハードリンクを扱えないファイルシステム（FAT など。シンボリックリンクも作れない）だけ、これまでの移動にする
+    fun renameNoReplace(source: Path, target: Path) {
+        anchorFor(source)?.let { fs ->
+            val id = fs.stat(source)?.id ?: throw NoSuchFileException(source.toString())
+            fs.link(source, target, id)
+            fs.remove(source, id)
+            return
+        }
+        try {
+            Files.createLink(target, source)
+        } catch (error: UnsupportedOperationException) {
+            moveNew(source, target)
+            return
+        } catch (error: FileSystemException) {
+            if (error is FileAlreadyExistsException || error is NoSuchFileException || error is AccessDeniedException) throw error
+            moveNew(source, target)
+            return
+        }
+        Files.delete(source)
+    }
+
+    // このインストールが作ったディレクトリ（S8.3 L-5）。一意の名前 .dir-<UUID> で作って fileKey を owned に加え、意図した場所にあることを確かめてから、
+    // 最終の名前に付け替える（同じディレクトリの中なので、差し替え先には一意の名前が無く、付け替えは失敗する）。target が既にあれば FileAlreadyExistsException
+    fun createOwnedDirectory(target: Path, owned: MutableSet<String>?) {
+        anchorFor(target)?.let { fs ->
+            val id = fs.mkdir(target)
+            owned?.add(id)
+            return
+        }
+        if (owned == null) {
+            createDirectory(target)
+            return
+        }
+        if (exists(target)) throw FileAlreadyExistsException(target.toString())
+        val creating = target.resolveSibling(".dir-${UUID.randomUUID()}")
+        createDirectory(creating)
+        val key = fileId(creating)
+        if (!isExactly(creating)) unsafe("${target.parent} was replaced by another program while createscript install created a directory in it (L-5); createscript install stopped")
+        key?.let(owned::add)
+        moveNew(creating, target)
+        if (!isExactly(target) || (key != null && fileId(target) != key)) unsafe("${target.parent} was replaced by another program while createscript install created a directory in it (L-5); createscript install stopped")
     }
 
     // 新しいファイル（既にあれば失敗）に書いて、ディスクに書き出す
-    fun createFile(path: Path, bytes: ByteArray): Identity {
+    // S8.3 L-5: 作ったファイルが意図した場所にあることを確かめてから中身を書く（外に作られたなら空のまま止まる）
+    fun createFile(path: Path, bytes: ByteArray, owned: MutableSet<String>? = null): Identity {
+        if (anchored(path)) return writeNew(path, bytes, owned = owned)
+        val key: Any?
         FileChannel.open(path, setOf(StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS), *fileAttributes(path)).use { channel ->
+            key = attributes(path)?.fileKey()
+            if (!isExactly(path)) escapedBeforeWriting(path)
+            // createFile の名前は一意でない（journal.tmp など）ため、外に作られたものは消さない（空のまま残る）
+            fileId(path)?.let { owned?.add(it) }
             val buffer = ByteBuffer.wrap(bytes)
             while (buffer.hasRemaining()) channel.write(buffer)
             channel.force(true)
         }
-        return Identity(attributes(path)?.fileKey(), bytes.size.toLong(), sha256Hex(bytes))
+        return Identity(key, bytes.size.toLong(), sha256Hex(bytes))
     }
 
     // ディレクトリの変更（名前の追加・削除）をディスクに書き出す（できない環境では何もしない）
@@ -395,6 +603,23 @@ internal object SafeIo {
         val name = ".probe-${UUID.randomUUID()}"
         val probe = directory.resolve(name)
         val sidecar = directory.resolve("._$name")
+        anchorFor(probe)?.let { fs ->
+            val id = try {
+                fs.write(probe, ByteArray(0), replace = false)
+            } catch (error: IOException) {
+                unsafe("cannot write to $directory")
+            }
+            return try {
+                attributes(sidecar) != null
+            } finally {
+                try {
+                    fs.remove(probe, id)
+                    fs.stat(sidecar)?.takeIf { it.kind == 'f' }?.let { fs.remove(sidecar, it.id) }
+                } catch (error: IOException) {
+                    // 空のファイルが残るだけ
+                }
+            }
+        }
         try {
             Files.newByteChannel(probe, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS).close()
         } catch (error: IOException) {
@@ -414,16 +639,28 @@ internal object SafeIo {
 
     // 置き換える移動（同じファイルシステムの中の rename）
     fun replace(source: Path, target: Path) {
+        anchorFor(source)?.let { fs ->
+            val id = fs.stat(source)?.id ?: throw NoSuchFileException(source.toString())
+            fs.rename(source, target, id, replace = true)
+            return
+        }
         Files.move(source, target, StandardCopyOption.ATOMIC_MOVE)
     }
 
     // 置き換えない移動（ディレクトリ・ファイル）。target が既にあれば FileAlreadyExistsException
     fun moveNew(source: Path, target: Path) {
+        anchorFor(source)?.let { fs ->
+            val id = fs.stat(source)?.id ?: throw NoSuchFileException(source.toString())
+            fs.rename(source, target, id, replace = false)
+            return
+        }
         Files.move(source, target)
     }
 
     // POSIX の権限を写す（新しいマニフェスト・ロックファイルを、前のファイルと同じ権限にする）
     fun copyPermissions(from: Path, to: Path) {
+        // 固定したディレクトリでは、権限は書くときに決める（chmod でリンクの先を変えない）
+        if (anchored(to)) return
         try {
             Files.setPosixFilePermissions(to, Files.getPosixFilePermissions(from, LinkOption.NOFOLLOW_LINKS))
         } catch (error: UnsupportedOperationException) {
@@ -442,18 +679,75 @@ internal object SafeIo {
         }
         if (file.identity.sha256 != sha256) return "its contents changed"
         if (fileKey != null && file.identity.fileKey != null && file.identity.fileKey != fileKey) return "it was replaced by another file"
-        return try {
-            Files.delete(path)
-            null
-        } catch (error: NoSuchFileException) {
-            null
-        } catch (error: IOException) {
-            "cannot delete it"
+        return deleteVerified(path) { candidate ->
+            val again = try {
+                readRegular(candidate, maxBytes)
+            } catch (failure: InstallFailure) {
+                null
+            }
+            again != null && again.identity.sha256 == sha256 && (file.identity.fileKey == null || again.identity.fileKey == file.identity.fileKey)
         }
+    }
+
+    // 確かめたものを消す（S8.3 L-5）。確かめた後に途中のディレクトリが差し替えられると、名前で消すと別の場所の同じ名前のものを消す。そこで、まず同じディレクトリの
+    // 一意の名前 .delete-<UUID> に付け替え（置き換えない）、付け替えたものが確かめたもの（isOurs）であるときだけ消す。違えば元の名前に戻す（消さない）。
+    // 戻せなかったときは、その名前を返す（利用者のものを消さず、名前を変えただけ）。消したか、無ければ null
+    fun deleteVerified(path: Path, isOurs: (Path) -> Boolean): String? {
+        anchorFor(path)?.let { fs ->
+            // 固定したディレクトリの中の名前だけを消す（外のものには届かない）。確かめたものと、固定したディレクトリから見たものが同じときだけ
+            val entry = fs.stat(path) ?: return null
+            if (fileId(path) != entry.id || !isOurs(path)) return "another program changed it while it was deleted (L-5); it was not deleted"
+            return try {
+                fs.remove(path, entry.id)
+                null
+            } catch (error: DirectoryNotEmptyException) {
+                "it is not empty"
+            } catch (error: IOException) {
+                "cannot delete it"
+            }
+        }
+        val aside = path.resolveSibling(".delete-${UUID.randomUUID()}")
+        try {
+            moveNew(path, aside)
+        } catch (error: NoSuchFileException) {
+            return null
+        } catch (error: IOException) {
+            return "cannot delete it"
+        }
+        if (isOurs(aside)) {
+            return try {
+                Files.delete(aside)
+                null
+            } catch (error: DirectoryNotEmptyException) {
+                restore(aside, path, "it is not empty")
+            } catch (error: IOException) {
+                restore(aside, path, "cannot delete it")
+            }
+        }
+        return restore(aside, path, "another program replaced its directory while it was deleted (L-5); it was not deleted")
+    }
+
+    private fun restore(aside: Path, path: Path, reason: String): String = try {
+        moveNew(aside, path)
+        reason
+    } catch (error: IOException) {
+        "$reason, and it was left as ${aside.fileName} next to it"
     }
 
     // 空のディレクトリ（リンクでないこと）だけを消す。消さなかった理由を返す
     fun deleteEmptyDirectory(path: Path): String? {
+        anchorFor(path)?.let { fs ->
+            val entry = fs.stat(path) ?: return null
+            if (entry.kind != 'd') return "it is not a directory"
+            return try {
+                fs.remove(path, entry.id)
+                null
+            } catch (error: DirectoryNotEmptyException) {
+                "it is not empty"
+            } catch (error: IOException) {
+                "cannot delete it"
+            }
+        }
         val attributes = attributes(path) ?: return null
         if (attributes.isSymbolicLink || !attributes.isDirectory) return "it is not a directory"
         return try {
@@ -482,20 +776,26 @@ internal object SafeIo {
         unsafe("cannot list $directory")
     }
 
-    // 今回作ったばかりの作業用のディレクトリを消す（ジャーナルを書く前の失敗のとき。リンクはたどらずに、リンクそのものを消す）
-    fun deleteOwnTree(path: Path) {
-        val attributes = try {
-            Files.readAttributes(path, BasicFileAttributes::class.java, LinkOption.NOFOLLOW_LINKS)
-        } catch (error: IOException) {
-            return
+    // 今回作ったばかりの作業用のディレクトリを消す（ジャーナルを書く前の失敗のとき）。S8.3 L-5: 消すのは、このインストールが作ったもの（fileKey が owned にあるもの）だけで、
+    // それぞれ deleteVerified で付け替えて確かめてから消す（途中のディレクトリが差し替えられても、差し替え先の利用者のファイルは消さない）。リンクはたどらない。
+    // 消さなかったものを返す（残ったものは、次のインストールに影響しない: txn-* はジャーナルからだけ参照する）
+    fun deleteOwnTree(path: Path, owned: Set<String>): List<String> {
+        val kept = ArrayList<String>()
+        val attributes = attributes(path) ?: return kept
+        val key = currentId(path)
+        if (key == null || key !in owned) {
+            kept += "$path (it was not created by this installation)"
+            return kept
         }
-        try {
-            if (attributes.isDirectory) {
-                Files.newDirectoryStream(path).use { stream -> stream.toList() }.forEach { deleteOwnTree(it) }
+        if (attributes.isDirectory) {
+            val children = try {
+                Files.newDirectoryStream(path).use { stream -> stream.toList() }
+            } catch (error: IOException) {
+                return kept + "$path (cannot list it)"
             }
-            Files.deleteIfExists(path)
-        } catch (error: IOException) {
-            // 残ったものは、次のインストールに影響しない（txn-* はジャーナルからだけ参照する）
+            for (child in children) kept += deleteOwnTree(child, owned)
         }
+        deleteVerified(path) { aside -> fileId(aside) == key }?.let { kept += "$path ($it)" }
+        return kept
     }
 }

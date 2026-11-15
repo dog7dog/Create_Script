@@ -2,7 +2,7 @@
 
 > **状態（2026-11-13、S8.3 Phase 10B-2A）：Phase 9 で設計として採用し、Phase 10A で雛形とツールに実装しました。テスト用のリポジトリ（dog7dog/CreateScript-Registry-Test）で、App・ruleset A・B の動作（PT-1〜PT-4、U1〜U7。PT-2 は admin だけ）と、P-18・P-19・P-21 を確かめ、P-20 は一部を確かめました（`docs/audits/S8.3-Phase10B2A-Solo-Integration.md`）。本番では何も確かめていません。**
 >
-> - 案 B'（管理者が記録し、設定の証明用の鍵で署名したスナップショットと、`updated_at` などの見える項目を照合する）を、`createscript-registry-tool` の `record-ruleset-snapshot`・`check-ruleset-snapshot`（`RulesetSnapshots.kt`）として実装し、雛形の `publish.yml` の `check` と `release`（下書きの前と公開の直前の再確認）に接続しました（ローカル。GitHub では未実行）。設定の証明用の鍵の運用は `docs/registry-settings-key.md`（U-1：専用の鍵・ツールに固定した指紋・最大 180 日の期限）。本番の鍵は無く、ツールに固定した指紋も空なので、雛形のままでは公開は止まります。main の ruleset は、まだ照合していません。
+> - 案 B'（管理者が記録し、設定の証明用の鍵で署名したスナップショットと、`updated_at` などの見える項目を照合する）を、`createscript-registry-tool` の `record-ruleset-snapshot`・`check-ruleset-snapshot`（`RulesetSnapshots.kt`）として実装し、雛形の `publish.yml` の `check` と `release`（下書きの前と公開の直前の再確認）に接続しました（ローカル。GitHub では未実行）。設定の証明用の鍵の運用は `docs/registry-settings-key.md`（U-1：専用の鍵・ツールに固定した指紋・最大 180 日の期限）。本番の鍵は無く、ツールに固定した指紋も空なので、雛形のままでは公開は止まります。main の ruleset と既定のブランチも、スナップショット版 3（U-2）で照合します（ローカルに実装。ブランチの ruleset での P-19〜P-21 は GitHub で未確認）。
 >
 > - 公開専用の GitHub App（Registry Publisher App）を使う方式を、設計の方針として採用しました。
 > - 雛形の `publish.yml` の `release` ジョブは、Publisher App のトークンだけで公開します（W1）。ruleset は A・B の 2 つのファイルです（W2）。`check-settings`・`check-live-rulesets` がそれらを検査します（W3）。テスト専用のビルドもあります（W7）。詳細は `docs/audits/S8.3-Phase10A-Local-Implementation.md`。

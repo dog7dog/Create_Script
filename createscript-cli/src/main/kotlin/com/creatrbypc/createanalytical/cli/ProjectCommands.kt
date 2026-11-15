@@ -27,8 +27,19 @@ import java.security.MessageDigest
 import java.util.UUID
 
 // 作ったファイルの同一性（S8.1 の追加検証）。fileKey はファイルシステムの識別子（macOS・Linux ではデバイス番号と i ノード番号。取得できない環境では null）、
-// size と sha256 は書いた内容。ロールバックで、別のプロセスが差し替えたファイルを消さないために使う
-internal class FileIdentity(val fileKey: Any?, val size: Long, val sha256: ByteArray)
+// size と sha256 は書いた内容。ロールバックで、別のプロセスが差し替えたファイルを消さないために使う。
+// holder は、作ったファイルを開いたままにしている記述子（fileKey があるときだけ）。開いている間は i ノードが解放されないので、
+// 別のプロセスが消して作り直したファイルは、内容が同じでも必ず別の i ノード番号になる（Linux は解放された番号をすぐ使い回すため、
+// 閉じていると見分けられない）。照合と削除を終えたら close で閉じる
+internal class FileIdentity(val fileKey: Any?, val size: Long, val sha256: ByteArray, private val holder: AutoCloseable? = null) : AutoCloseable {
+    override fun close() {
+        try {
+            holder?.close()
+        } catch (error: Exception) {
+            // 閉じられなくても、書いたファイルには影響しない
+        }
+    }
+}
 
 // ファイルを壊さずに書く・読む手順（S8.1）
 internal object SafeFiles {
@@ -36,19 +47,25 @@ internal object SafeFiles {
     // 同じディレクトリの一時ファイルに書いて内容をディスクに書き出し（force）、ハードリンクで名前を付ける（リンクの作成は、名前が既にあれば失敗する。
     // 途中で止まっても、目的の名前に書きかけのファイルは残らない）。ハードリンクを作れないファイルシステムでは、置き換えない移動を使う。
     // 一時ファイルは CREATE_NEW で作る（Files.createTempFile は所有者だけが読める 0600 で作るため使わない。権限は通常のファイルと同じく umask に従う）。
-    // fileKey は名前を付ける前の一時ファイルのもの（ハードリンク・同じファイルシステムの中の移動では、目的のファイルと同じ）
+    // fileKey は名前を付ける前の一時ファイルのもの（ハードリンク・同じファイルシステムの中の移動では、目的のファイルと同じ）。
+    // fileKey があるときは、書いた記述子を閉じずに返す（FileIdentity の holder。使い終えたら close する）
     fun writeNew(target: Path, text: String): FileIdentity = writeNew(target, text.toByteArray(Charsets.UTF_8))
 
     fun writeNew(target: Path, bytes: ByteArray): FileIdentity {
         val directory = target.toAbsolutePath().parent
         val temporary = directory.resolve(".createscript-${UUID.randomUUID()}.tmp")
+        var channel: FileChannel? = null
         try {
-            FileChannel.open(temporary, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE).use { channel ->
-                val buffer = ByteBuffer.wrap(bytes)
-                while (buffer.hasRemaining()) channel.write(buffer)
-                channel.force(true)
-            }
+            channel = FileChannel.open(temporary, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)
+            val buffer = ByteBuffer.wrap(bytes)
+            while (buffer.hasRemaining()) channel.write(buffer)
+            channel.force(true)
             val fileKey = Files.readAttributes(temporary, BasicFileAttributes::class.java, LinkOption.NOFOLLOW_LINKS).fileKey()
+            // fileKey が無い環境（Windows など）では、これまでどおり名前を付ける前に閉じる
+            if (fileKey == null) {
+                channel.close()
+                channel = null
+            }
             try {
                 Files.createLink(target, temporary)
             } catch (error: FileAlreadyExistsException) {
@@ -59,8 +76,15 @@ internal object SafeFiles {
                 if (Files.exists(target, LinkOption.NOFOLLOW_LINKS)) throw FileAlreadyExistsException(target.toString())
                 Files.move(temporary, target)
             }
-            return FileIdentity(fileKey, bytes.size.toLong(), sha256(bytes))
+            val holder = channel
+            channel = null
+            return FileIdentity(fileKey, bytes.size.toLong(), sha256(bytes), holder)
         } finally {
+            try {
+                channel?.close()
+            } catch (error: IOException) {
+                // 書いた内容は force 済み
+            }
             // 名前を付けた後の一時ファイルの削除の失敗は、書き込みの失敗にしない（このメソッドが例外を投げたら、目的のファイルは作っていない）
             try {
                 Files.deleteIfExists(temporary)
@@ -147,9 +171,22 @@ internal class ProjectCommands(
     private sealed interface Created {
         val path: Path
 
-        class File(override val path: Path, val identity: FileIdentity) : Created
+        // 照合と削除を終えたら閉じる（作ったものを開いたままにしている記述子。FileIdentity の holder と同じ理由）
+        fun release()
 
-        class Directory(override val path: Path, val fileKey: Any?) : Created
+        class File(override val path: Path, val identity: FileIdentity) : Created {
+            override fun release() = identity.close()
+        }
+
+        class Directory(override val path: Path, val fileKey: Any?, private val holder: AutoCloseable? = null) : Created {
+            override fun release() {
+                try {
+                    holder?.close()
+                } catch (error: Exception) {
+                    // 閉じられなくても、作ったディレクトリには影響しない
+                }
+            }
+        }
     }
 
     companion object {
@@ -217,6 +254,9 @@ internal class ProjectCommands(
             val kept = rollBack(created)
             val reason = if (error is FileAlreadyExistsException) "${error.file} already exists" else (error.message ?: error.javaClass.simpleName)
             throw Failure(ExitCode.CANNOT_CREATE, "cannot create the project: $reason; " + if (kept.isEmpty()) "nothing was left behind" else "kept: ${kept.joinToString()}")
+        } finally {
+            // ロールバックの照合と削除を終えた後（成功したときは作り終えた後）に、開いたままにしていた記述子を閉じる
+            for (item in created) item.release()
         }
         out.println("Created $manifestPath")
         out.println("Created $entryPath")
@@ -225,7 +265,9 @@ internal class ProjectCommands(
         return ExitCode.OK
     }
 
-    // 無いディレクトリを外側から作り、作ったもの（と、その fileKey）を記録する
+    // 無いディレクトリを外側から作り、作ったもの（と、その fileKey）を記録する。
+    // fileKey があるときは、作ったディレクトリを開いたままにする（i ノードを解放させず、消して作り直されたものを別の番号にする）。
+    // 開く前と後で fileKey が違えば（その間に差し替えられた）、どの fileKey とも一致しない印を記録する（ロールバックで消さない）
     private fun createDirectories(directory: Path, created: MutableList<Created>) {
         val missing = ArrayList<Path>()
         var current: Path? = directory.toAbsolutePath().normalize()
@@ -235,13 +277,25 @@ internal class ProjectCommands(
         }
         for (path in missing.asReversed()) {
             Files.createDirectory(path)
-            val fileKey = try {
-                Files.readAttributes(path, BasicFileAttributes::class.java, LinkOption.NOFOLLOW_LINKS).fileKey()
+            val fileKey = directoryKey(path)
+            if (fileKey == null) {
+                created.add(Created.Directory(path, null))
+                continue
+            }
+            val holder = try {
+                Files.newDirectoryStream(path)
             } catch (error: IOException) {
                 null
             }
-            created.add(Created.Directory(path, fileKey))
+            val same = holder != null && directoryKey(path) == fileKey
+            created.add(Created.Directory(path, if (same) fileKey else Any(), holder))
         }
+    }
+
+    private fun directoryKey(path: Path): Any? = try {
+        Files.readAttributes(path, BasicFileAttributes::class.java, LinkOption.NOFOLLOW_LINKS).fileKey()
+    } catch (error: IOException) {
+        null
     }
 
     // 作った順の逆に、作ったときと同じものであることを確かめてから消す。消さなかったものを、理由とともに返す
@@ -318,7 +372,7 @@ internal class ProjectCommands(
         }
         val output = outputOption?.let(::path) ?: root.resolve(PackageArchives.FILE_NAME)
         try {
-            SafeFiles.writeNew(output, archive)
+            SafeFiles.writeNew(output, archive).close()
         } catch (error: FileAlreadyExistsException) {
             throw Failure(ExitCode.CANNOT_CREATE, "$output already exists; remove it or choose another file with --output")
         } catch (error: IOException) {

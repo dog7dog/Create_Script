@@ -212,7 +212,10 @@ class TemplateTest {
         val check = jobs(publish).getValue("check")
         // S8.3 Phase 10B-2A（案 B'）: check ジョブは署名されたスナップショットと照合し（GITHUB_TOKEN、--actor workflow）、
         // release ジョブは Publisher App のトークンで、下書きの前と公開の直前に、check ジョブが見た ruleset から変わっていないことを確かめる
-        assertTrue(check.contains("check-ruleset-snapshot --repo registry --live live-rulesets --repository \"\$REPOSITORY\" --actor workflow"), "the tag rulesets are checked against the signed snapshot")
+        assertTrue(check.contains("check-ruleset-snapshot --repo registry --live live-rulesets --repository-info live-rulesets/repository.json") && check.contains("--repository \"\$REPOSITORY\" --actor workflow"), "the rulesets are checked against the signed snapshot")
+        // 版 3（S8.3 U-2）: ブランチの ruleset と既定のブランチも取得して照合し、release ジョブも確かめ直す
+        assertTrue(check.contains("select(.target == \"tag\" or .target == \"branch\")") && check.contains("gh api \"repos/\$REPOSITORY\" > live-rulesets/repository.json"))
+        assertTrue(release.contains("DEFAULT_BRANCH: \${{ needs.check.outputs.default_branch }}") && release.contains("gh api \"repos/\$REPOSITORY\" > rulesets-now/repository.json") && release.contains("\"main\": \"never\""))
         assertTrue(check.indexOf("check-ruleset-snapshot") < check.indexOf("Record the files to publish"))
         assertTrue(check.indexOf("check-ruleset-snapshot") < check.indexOf("echo \"rulesets=\$seen\""), "what was seen is recorded only after the check passed")
         assertTrue(publish.contains("rulesets: \${{ steps.rulesets.outputs.rulesets }}") && release.contains("RULESETS: \${{ needs.check.outputs.rulesets }}"))

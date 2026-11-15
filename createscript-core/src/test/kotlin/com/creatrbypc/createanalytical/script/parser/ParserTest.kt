@@ -72,6 +72,11 @@ class ParserTest {
         is MemberAccessExpression -> "(. ${render(expression.receiver)} ${expression.name})"
         is ThisExpression -> "this"
         is IndexExpression -> "([] ${render(expression.receiver)} ${render(expression.index)})"
+        is com.creatrbypc.createanalytical.script.ast.LambdaExpression ->
+            "(lambda (${expression.parameters.joinToString(" ") { it.name + (it.type?.let { t -> ":" + t.name } ?: "") }})${if (expression.hasArrow) "->" else ""} ${expression.body.size})"
+        is com.creatrbypc.createanalytical.script.ast.FunctionReference -> "::${expression.name}"
+        is com.creatrbypc.createanalytical.script.ast.PipeExpression -> "(|> ${render(expression.left)} ${render(expression.right)})"
+        is com.creatrbypc.createanalytical.script.ast.FallbackExpression -> "(?! ${render(expression.left)} ${render(expression.right)})"
     }
 
     private fun unarySymbol(operator: UnaryOperator) = when (operator) {
@@ -523,13 +528,39 @@ class ParserTest {
         assertEquals(listOf(DiagnosticCode.PARSE_EXPECTED_STATEMENT_END), codes("val x = 1 2"))
     }
 
+    // ---- 第9.0〜9.3段階: ラムダ・関数の参照・関数の型・パイプライン・エラーフォールバック ----
+
+    @Test
+    fun lambdasPipelinesAndFallbacks() {
+        fun expression(source: String) = render((program(source).statements.single() as com.creatrbypc.createanalytical.script.ast.ExpressionStatement).expression)
+        assertEquals("(call (. xs map) (lambda (x)-> 1))", expression("xs.map { x -> x * 2 }"))
+        assertEquals("(call (. xs map) (lambda (a:Int b)-> 2))", expression("xs.map { a: Int, b ->\n    println(a)\n    b\n}"))
+        assertEquals("(call (. xs where) (lambda ()-> 1))", expression("xs.where { -> true }"))
+        assertEquals("(call f 1 (lambda () 1))", expression("f(1) { it }"))
+        assertEquals("(call (. xs map) ::double)", expression("xs.map(::double)"))
+        // 括弧の中のラムダの本体は改行で文を区切る
+        assertEquals("(call (. xs map) (lambda (x)-> 2))", expression("xs.map({ x ->\n    val y = x\n    y\n})"))
+        // |> は || より弱く左結合、?! はさらに弱く右結合。次の行の先頭でも続く
+        assertEquals("(|> (|> (|| a b) f) (call g 1))", expression("a || b |> f |> g(1)"))
+        assertEquals("(?! a (?! b c))", expression("a ?! b ?! c"))
+        assertEquals("(?! (|> a f) 0)", expression("a\n    |> f\n    ?! 0"))
+        assertEquals("(|> xs (call where (lambda () 1)))", expression("xs |> where { it > 1 }"))
+        val declaration = program("val f: (Int, String) -> Unit = { a, b -> }").statements.single() as com.creatrbypc.createanalytical.script.ast.VariableDeclaration
+        assertEquals(listOf("Int", "String", "Unit"), declaration.type!!.arguments.map { it.name })
+        assertEquals(com.creatrbypc.createanalytical.script.ast.FUNCTION_TYPE_NAME, declaration.type!!.name)
+        assertEquals(listOf(DiagnosticCode.PARSE_EXPECTED_RIGHT_BRACE), codes("xs.map { x -> x"))
+        assertEquals(listOf(DiagnosticCode.PARSE_EXPECTED_IDENTIFIER), codes("xs.map(::1)"))
+        assertEquals(listOf(DiagnosticCode.PARSE_EXPECTED_TYPE), codes("val f: (Int) = 1"))
+    }
+
     // ---- 未対応の構文 ----
 
     @Test
     fun standaloneBlockIsLambda() {
         assertEquals(listOf(DiagnosticCode.PARSE_LAMBDA_UNSUPPORTED), codes("{ println(1) }"))
-        assertEquals(listOf(DiagnosticCode.PARSE_LAMBDA_UNSUPPORTED), codes("val f = { 1 }"))
-        assertEquals(listOf(DiagnosticCode.PARSE_LAMBDA_UNSUPPORTED), codes("println(1) { }"))
+        // 第9.0段階: 式の中の { } はラムダ、呼び出しの後の { } は後置ラムダ（使える場所かどうかは Semantic 段階で判定する）
+        assertEquals("(lambda () 1)", render((program("val f = { 1 }").statements.single() as com.creatrbypc.createanalytical.script.ast.VariableDeclaration).initializer))
+        assertEquals("(call println 1 (lambda () 0))", render((program("println(1) { }").statements.single() as com.creatrbypc.createanalytical.script.ast.ExpressionStatement).expression))
     }
 
     @Test

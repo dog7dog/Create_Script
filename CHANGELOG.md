@@ -8,6 +8,38 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- Install (S8.3 L-5 fix): on macOS and Linux every change to files in the project goes through a helper process
+  (`/bin/sh` with a fixed script; names passed as arguments) whose working directory is checked against the project
+  directory (device and inode, and `..` back to the project) and then held, so swapping a directory on the path for a
+  link no longer redirects writes, moves, renames, permission changes or removals. Files are created exclusively and
+  written after the open file is confirmed; names are given with `link` or `mv -h` / `mv -T`; permissions are changed
+  through the open file. Package directories are written in place as `packages/<name>/.placing-<id>` and renamed,
+  and `createscript.json`, `createscript.lock` and the journal are written next to their final names. Windows keeps
+  the earlier checks. New tests: `AnchoredFsTest` (fixed-point swaps, hard links, FIFOs, a killed or silent helper);
+  `L5RaceTest` gained bait modes. The install module's "runs no code" test allows exactly this helper.
+- `docs/registry-github-execution-plan.md`: the GitHub integration operations (G1–G7) with targets, steps and
+  rollback, all awaiting approval, and the read-only U-2 results.
+
+- Language (stage 9.0): list functions `where`, `map`, `group` (a list of groups in first-appearance order),
+  `each` and `average` (`Double`, `NaN` for an empty list) with Kotlin-style lambdas `{ x -> … }`, `it` and
+  trailing lambdas. Lambdas are expanded inline into ordinary loops, so runs can still be paused, saved and
+  restored at any instruction.
+- Language (stage 9.1): the pipeline operator `x |> f(a)` (`f(x, a)`), also with list functions
+  (`xs |> where { … }`).
+- Language (stage 9.2): the error fallback operator `a ?! b`, which gives `b` when a value error (division by
+  zero, overflow, index out of range, math and vector errors) happens while `a` runs. Resource limits are not
+  recovered. Core: `CompiledProgram.handlers` (`ErrorHandler`); programs without `?!` have no handlers and the same
+  instructions and `ProgramFingerprint.ofProgram` as before. The saved state (`VmSnapshot`) is unchanged, so states
+  saved by earlier versions still restore.
+- Language (stage 9.3): lambda parameter and result types inferred from context, lambda values in a `val`
+  (`val f = { x: Int -> x * 2 }`, `val g: (Int) -> Int = { it * 2 }`), function references `::name`, and empty
+  `listOf()` / `mutableListOf()` typed from a declared type, an assignment target or a return type.
+- New diagnostics: `CS_SEM_LAMBDA_NOT_ALLOWED`, `CS_SEM_LAMBDA_PARAMETER_COUNT`,
+  `CS_SEM_LAMBDA_PARAMETER_TYPE_REQUIRED`, `CS_SEM_RETURN_IN_LAMBDA`, `CS_SEM_LAMBDA_IN_INITIALIZER`,
+  `CS_SEM_FUNCTION_VALUE_OUTSIDE_SCOPE`, `CS_SEM_INVALID_PIPE_TARGET`, `CS_SEM_GROUP_KEY_TYPE`,
+  `CS_SEM_FUNCTION_TYPE_NOT_ALLOWED` and `CS_COMP_TOO_MANY_INLINE_EXPANSIONS`. `{ }` in an expression is now a
+  lambda instead of `CS_PARSE_LAMBDA_UNSUPPORTED` (a `{` at the start of a statement still reports it).
+
 - Local modules: `import name` at the top of a file uses the functions of `name.cscr` as `name.f(...)`,
   with type checks across files, one resolution per module, and diagnostics for missing, ambiguous,
   cyclic and out-of-project modules. Modules contain only `import` lines and functions.
@@ -224,7 +256,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   expired, future-dated, too long or out-of-order snapshots fail). `sign-ruleset-snapshot` signs a snapshot after
   checking it and printing a summary; production keys are refused until the settings key ceremony is approved. The
   production tool trusts a settings key only if its fingerprint is pinned in the tool (`SettingsKeyPins`, empty for
-  now, so the production path stays closed). The main branch ruleset is not checked yet.
+  now, so the production path stays closed).
+- S8.3 U-2 (local): ruleset snapshots are version 3. They also record the main branch ruleset (2 approvals, code
+  owners, required checks from the Checks App, no bypass actors, active) and the default branch (`main`);
+  `check-ruleset-snapshot` and the template's `publish.yml` (check and release jobs) compare them and stop on any
+  change, a changed default branch, or an extra branch ruleset that may apply to it. Whether GitHub changes a branch
+  ruleset's `updated_at` when only its bypass actors change has not been tried on GitHub.
+- Signed library integration test (local, `SignedLibraryIntegrationTest`): pack, signed index, install through the
+  test-only client, import and run, and refusal of tampered signatures, indexes and packages.
+
+### Fixed
+
+- Build: `gradle/verification-metadata.xml` lists `junit-bom-5.10.2.pom` (SHA-256 checked against Maven Central and
+  the Gradle Plugin Portal), so strict dependency verification also passes with an empty Gradle cache.
+- Install (L-5 helper, macOS): `stat` and `chmod` on `/dev/fd/3` can fail briefly with "Bad file descriptor" when many
+  processes run at once. The helper now reads again (at most five times) only when the read fails; values that do not
+  match still stop at once. A permission change that fails or cannot be confirmed (read back by name, without
+  following links, with the same inode) is now a failure instead of a success that leaves the file `0400`; a name
+  replaced before the change stops as L-5.
+- `createscript init` (Linux): the rollback told files apart by inode number, which Linux reuses at once, so a file
+  replaced with the same contents or a recreated empty directory could be removed. `init` now keeps what it created
+  open until the rollback has checked and removed it, so a replacement always has another inode number. Windows
+  (no file keys) is unchanged.
 
 ## [0.1.0-alpha] - 2026-11-04 (pre-release)
 

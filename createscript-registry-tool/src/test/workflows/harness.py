@@ -360,29 +360,37 @@ A = {"name": "index tags: creation", "target": "tag", "enforcement": "active",
      "conditions": {"ref_name": {"include": ["refs/tags/index-*"], "exclude": []}}, "rules": [{"type": "creation"}]}
 B = {"name": "index tags: update and deletion", "target": "tag", "enforcement": "active", "bypass_actors": [],
      "conditions": {"ref_name": {"include": ["refs/tags/index-*"], "exclude": []}}, "rules": [{"type": "deletion"}, {"type": "update"}, {"type": "non_fast_forward"}]}
-ID_A, ID_B = 41, 42
+ID_A, ID_B, ID_MAIN = 41, 42, 50
+# the main branch ruleset (snapshot version 3, S8.3 U-2): the template with the Checks App's ID. No real GitHub response for a
+# branch ruleset exists yet, so its views are made like the tag rulesets' measured ones (assumption, not verified on GitHub)
+MAIN_RULE = json.loads((REPO / "registry-template/github-settings/main-ruleset.json").read_text())
+for _rule in MAIN_RULE["rules"]:
+    for _check in (_rule.get("parameters") or {}).get("required_status_checks", []): _check["integration_id"] = 111
 def owner_view(rule, rid, created, updated):
     return {"id": rid, "source_type": "Repository", "source": REPOSITORY, **rule, "created_at": created, "updated_at": updated,
             "current_user_can_bypass": "never", "node_id": "RRS_x", "_links": {"self": {"href": "https://api.github.com/x"}}}
-OWNER = {ID_A: owner_view(A, ID_A, "2026-11-13T13:35:13.841+09:00", "2026-11-13T13:35:14.034+09:00"),
+OWNER = {ID_MAIN: owner_view(MAIN_RULE, ID_MAIN, "2026-11-14T10:00:00.083+09:00", "2026-11-14T10:00:00.120+09:00"),
+         ID_A: owner_view(A, ID_A, "2026-11-13T13:35:13.841+09:00", "2026-11-13T13:35:14.034+09:00"),
          ID_B: owner_view(B, ID_B, "2026-11-13T13:38:18.176+09:00", "2026-11-13T13:38:18.206+09:00")}
 UTC = {"2026-11-13T13:35:13.841+09:00": "2026-11-13T04:35:13.841Z", "2026-11-13T13:35:14.034+09:00": "2026-11-13T04:35:14.034Z",
-       "2026-11-13T13:38:18.176+09:00": "2026-11-13T04:38:18.176Z", "2026-11-13T13:38:18.206+09:00": "2026-11-13T04:38:18.206Z"}
+       "2026-11-13T13:38:18.176+09:00": "2026-11-13T04:38:18.176Z", "2026-11-13T13:38:18.206+09:00": "2026-11-13T04:38:18.206Z",
+       "2026-11-14T10:00:00.083+09:00": "2026-11-14T01:00:00.083Z", "2026-11-14T10:00:00.120+09:00": "2026-11-14T01:00:00.120Z"}
 def token_view(rid, can_bypass, **over):
     """What an App or GITHUB_TOKEN sees (measured for the Apps): no bypass_actors, times in UTC (Z)."""
     r = {k: v for k, v in OWNER[rid].items() if k != "bypass_actors"}
     r.update(created_at=UTC[r["created_at"]], updated_at=UTC[r["updated_at"]], current_user_can_bypass=can_bypass)
     r.update(over)
     return {k: v for k, v in r.items() if v is not None}
-WORKFLOW_VIEW = {ID_A: token_view(ID_A, "never"), ID_B: token_view(ID_B, "never")}
-PUBLISHER_VIEW = {ID_A: token_view(ID_A, "always"), ID_B: token_view(ID_B, "never")}
+WORKFLOW_VIEW = {ID_A: token_view(ID_A, "never"), ID_B: token_view(ID_B, "never"), ID_MAIN: token_view(ID_MAIN, "never")}
+PUBLISHER_VIEW = {ID_A: token_view(ID_A, "always"), ID_B: token_view(ID_B, "never"), ID_MAIN: token_view(ID_MAIN, "never")}
 # what the check job records for the release job (its jq), from the workflow view
-SEEN = json.dumps([{"id": r["id"], "name": r["name"], "enforcement": r["enforcement"], "created_at": r["created_at"], "updated_at": r["updated_at"],
-                    "role": "creation" if r["name"] == A["name"] else "protection"} for _, r in sorted(WORKFLOW_VIEW.items())], separators=(",", ":"))
+SEEN = json.dumps([{"id": r["id"], "name": r["name"], "target": r["target"], "enforcement": r["enforcement"], "created_at": r["created_at"], "updated_at": r["updated_at"],
+                    "role": "creation" if r["name"] == A["name"] else "protection" if r["name"] == B["name"] else "main"} for _, r in sorted(WORKFLOW_VIEW.items())], separators=(",", ":"))
+REPO_INFO = {"full_name": REPOSITORY, "default_branch": "main"}
 
 def put_rulesets(fake, rulesets, list_ok=True, suffix=""):
     if list_ok:
-        api(fake, f"repos/{REPOSITORY}/rulesets?per_page=100", [[{"id": i, "name": r.get("name"), "target": r.get("target", "tag")} for i, r in sorted(rulesets.items())] + [{"id": 3, "name": "main", "target": "branch"}]])
+        api(fake, f"repos/{REPOSITORY}/rulesets?per_page=100", [[{"id": i, "name": r.get("name"), "target": r.get("target", "tag")} for i, r in sorted(rulesets.items())] + [{"id": 3, "name": "push rules", "target": "push"}]])
     for i, r in rulesets.items():
         name = "".join(c if c.isalnum() else "_" for c in f"repos/{REPOSITORY}/rulesets/{i}")
         (fake / "api" / (name + suffix)).write_text(json.dumps(r))
@@ -391,18 +399,19 @@ PUB_TOKEN = "ghs_mockpublisher0987654321"
 GRANTED = {"token": PUB_TOKEN, "expires_at": "x", "permissions": {"contents": "write", "metadata": "read"},
            "repository_selection": "selected", "repositories": [{"name": "CreateScript-Registry"}]}
 
-def release_run(prepare=None, installed=True, granted=GRANTED, revoke_ok=True, extra_env=None, rulesets=PUBLISHER_VIEW, rulesets_list_ok=True, seen=SEEN, **flags):
+def release_run(prepare=None, installed=True, granted=GRANTED, revoke_ok=True, extra_env=None, rulesets=PUBLISHER_VIEW, rulesets_list_ok=True, seen=SEEN, repo_info=REPO_INFO, seen_branch="main", **flags):
     """The release job's step with the publishing App (W1). The step's env has no GH_TOKEN; extra_env can add one
     (to show that there is no fallback to it). rulesets is what the App's token sees; seen is what the check job recorded."""
     fake = new_fake()
     put_rulesets(fake, rulesets, rulesets_list_ok)
+    if repo_info is not None: api(fake, f"repos/{REPOSITORY}", repo_info)
     if prepare: prepare(fake)
     if installed: curl_response(fake, "GET", f"https://api.github.com/repos/{REPOSITORY}/installation", {"id": 77})
     if granted is not None: curl_response(fake, "POST", "https://api.github.com/app/installations/77/access_tokens", granted)
     if revoke_ok: curl_response(fake, "DELETE", "https://api.github.com/installation/token", {})
     env = env_for(fake, {"APP_ID": "222", "APP_KEY": KEY, "FAKE_EXPECT_TOKEN": PUB_TOKEN, "REPOSITORY": REPOSITORY,
                          "SERIAL": outputs["serial"], "INDEX_SHA256": outputs["index_sha256"], "SIG_SHA256": outputs["sig_sha256"],
-                         "GITHUB_SHA": merged, "RULESETS": seen, **(extra_env or {}), **flags})
+                         "GITHUB_SHA": merged, "RULESETS": seen, "DEFAULT_BRANCH": seen_branch, **(extra_env or {}), **flags})
     code, o, e = bash(release, env, work)
     state = json.loads((fake / "releases.json").read_text()) if (fake / "releases.json").exists() else []
     summary = (fake / "summary.md").read_text() if (fake / "summary.md").exists() else ""
@@ -483,7 +492,8 @@ create_at = next(i for i, c in enumerate(calls) if c[:2] == ["release", "create"
 patch_at = next(i for i, c in enumerate(calls) if "PATCH" in c)
 expect("B'/release: unchanged rulesets -> published, re-checked before the draft and again before publishing", code == 0 and len(rs_gets) == 2 and rs_gets[0] < create_at < rs_gets[1] < patch_at, calls)
 expect("B'/release: the re-check uses the Publisher App token only", gh_tokens(fake) and set(gh_tokens(fake)) == {"app"}, gh_tokens(fake))
-plus9 = {ID_A: {**PUBLISHER_VIEW[ID_A], "updated_at": "2026-11-13T13:35:14.034+09:00", "created_at": "2026-11-13T13:35:13.841+09:00"}, ID_B: PUBLISHER_VIEW[ID_B]}
+plus9 = {ID_A: {**PUBLISHER_VIEW[ID_A], "updated_at": "2026-11-13T13:35:14.034+09:00", "created_at": "2026-11-13T13:35:13.841+09:00"}, ID_B: PUBLISHER_VIEW[ID_B],
+         ID_MAIN: {**PUBLISHER_VIEW[ID_MAIN], "updated_at": "2026-11-14T10:00:00.120+09:00", "created_at": "2026-11-14T10:00:00.083+09:00"}}
 code, log, state, calls, summary = release_run(rulesets=plus9)
 expect("B'/release: the same instants written with +09:00 instead of Z -> published", code == 0 and state and state[0]["draft"] is False, log)
 def stopped_before_draft(name, **kwargs):
@@ -506,6 +516,16 @@ stopped_before_draft("the rulesets cannot be read (API error)", rulesets_list_ok
 stopped_before_draft("the check job recorded nothing", seen="")
 stopped_before_draft("the check job's record is not JSON", seen="{oops")
 stopped_before_draft("the check job's record lacks ruleset B", seen=json.dumps([json.loads(SEEN)[0]]))
+# snapshot version 3 (S8.3 U-2): the main branch ruleset and the default branch, re-checked with the App's token
+stopped_before_draft("the main branch ruleset changed since the check (updated_at)", rulesets={**PUBLISHER_VIEW, ID_MAIN: {**PUBLISHER_VIEW[ID_MAIN], "updated_at": "2026-11-14T02:00:00.000Z"}})
+stopped_before_draft("the main branch ruleset was disabled", rulesets={**PUBLISHER_VIEW, ID_MAIN: {**PUBLISHER_VIEW[ID_MAIN], "enforcement": "disabled"}})
+stopped_before_draft("the main branch ruleset was deleted", rulesets={ID_A: PUBLISHER_VIEW[ID_A], ID_B: PUBLISHER_VIEW[ID_B]})
+stopped_before_draft("the App can bypass the main branch ruleset", rulesets={**PUBLISHER_VIEW, ID_MAIN: {**PUBLISHER_VIEW[ID_MAIN], "current_user_can_bypass": "always"}})
+stopped_before_draft("a branch ruleset was added", rulesets={**PUBLISHER_VIEW, 51: {**PUBLISHER_VIEW[ID_MAIN], "id": 51, "name": "extra"}})
+stopped_before_draft("the default branch changed since the check", repo_info={**REPO_INFO, "default_branch": "dev"})
+stopped_before_draft("the repository cannot be read", repo_info=None)
+stopped_before_draft("the check job recorded another default branch", seen_branch="dev")
+stopped_before_draft("the check job's record lacks the main branch ruleset", seen=json.dumps([r for r in json.loads(SEEN) if r["role"] != "main"]))
 # changed between the draft and publishing: the fake returns another response once the draft exists
 def change_after_draft(fake):
     put_rulesets(fake, {ID_A: {**PUBLISHER_VIEW[ID_A], "updated_at": "2026-11-13T05:59:14.394Z"}}, list_ok=False, suffix=".after")
@@ -514,7 +534,7 @@ expect("B'/release: a ruleset changed after the draft was created -> left as a d
        code != 0 and len(state) == 1 and state[0]["draft"] is True and not [c for c in calls if "PATCH" in c] and "left as a draft" in log and "stopped" in summary, log)
 
 # B': the check job compares the read-only view with the signed snapshot (check-ruleset-snapshot --actor workflow)
-gate = step(publish, "check", "Check the repository's tag rulesets against the signed snapshot (fails when they cannot be verified)")
+gate = step(publish, "check", "Check the repository's tag and main branch rulesets and default branch against the signed snapshot (fails when they cannot be verified)")
 # a test key (test-only-): only the test-only build (TestRegistryTool) trusts it; the production tool refuses it and, with T3
 # (S8.3 U-1), trusts no settings key at all until one is pinned in its source
 SETTINGS_KEY_ID = "test-only-settings-1"
@@ -539,6 +559,7 @@ def settings_repo(target):
     (target / "github-settings").mkdir()
     (target / "github-settings/index-tags-creation-ruleset.json").write_text(json.dumps(A, indent=2))
     (target / "github-settings/index-tags-protection-ruleset.json").write_text(json.dumps(B, indent=2))
+    (target / "github-settings/main-ruleset.json").write_text(json.dumps(MAIN_RULE, indent=2))
     (target / "keys/settings-keys.json").write_text(keys_file())
 
 # the lead records the snapshot from the administrator's view (bypass_actors visible) with the real tool
@@ -546,16 +567,17 @@ record_dir = pathlib.Path(tempfile.mkdtemp(dir=RUNS))
 settings_repo(record_dir / "registry")
 (record_dir / "admin").mkdir()
 for i, r in OWNER.items(): (record_dir / "admin" / f"ruleset-{i}.json").write_text(json.dumps(r))
-r = subprocess.run([str(TOOL), "record-ruleset-snapshot", "--repo", str(record_dir / "registry"), "--live", str(record_dir / "admin"), "--repository", REPOSITORY,
+(record_dir / "repository.json").write_text(json.dumps(REPO_INFO))
+r = subprocess.run([str(TOOL), "record-ruleset-snapshot", "--repo", str(record_dir / "registry"), "--live", str(record_dir / "admin"), "--repository-info", str(record_dir / "repository.json"), "--repository", REPOSITORY,
                     "--recorded-by", "dog7dog", "--checks-app-id", str(CHECKS_ID), "--publisher-app-id", str(PUBLISHER_ID), "--out", str(record_dir / "snapshot.json")], capture_output=True, text=True)
 expect("B'/record: the snapshot is recorded from the administrator's view", r.returncode == 0, r.stdout + r.stderr)
 SNAPSHOT = (record_dir / "snapshot.json").read_bytes()
 for i, rr in WORKFLOW_VIEW.items(): (record_dir / "admin" / f"ruleset-{i}.json").write_text(json.dumps(rr))
-r = subprocess.run([str(TOOL), "record-ruleset-snapshot", "--repo", str(record_dir / "registry"), "--live", str(record_dir / "admin"), "--repository", REPOSITORY,
+r = subprocess.run([str(TOOL), "record-ruleset-snapshot", "--repo", str(record_dir / "registry"), "--live", str(record_dir / "admin"), "--repository-info", str(record_dir / "repository.json"), "--repository", REPOSITORY,
                     "--recorded-by", "dog7dog", "--checks-app-id", str(CHECKS_ID), "--publisher-app-id", str(PUBLISHER_ID), "--out", str(record_dir / "s2.json")], capture_output=True, text=True)
 expect("B'/record: a read-only view (no bypass_actors) cannot be recorded", r.returncode == 1 and "bypass_actors is not visible" in r.stdout and not (record_dir / "s2.json").exists(), r.stdout + r.stderr)
 
-def gate_run(live=WORKFLOW_VIEW, list_ok=True, snapshot=SNAPSHOT, signature="good", keys=None, checks_id=str(CHECKS_ID), publisher_id=str(PUBLISHER_ID), tool=TEST_TOOL):
+def gate_run(live=WORKFLOW_VIEW, list_ok=True, snapshot=SNAPSHOT, signature="good", keys=None, checks_id=str(CHECKS_ID), publisher_id=str(PUBLISHER_ID), tool=TEST_TOOL, repo_info=REPO_INFO):
     work = pathlib.Path(tempfile.mkdtemp(dir=RUNS))
     settings_repo(work / "registry")
     if keys is not None: (work / "registry/keys/settings-keys.json").write_text(keys)
@@ -567,6 +589,7 @@ def gate_run(live=WORKFLOW_VIEW, list_ok=True, snapshot=SNAPSHOT, signature="goo
         if sig is not None: (work / "registry/github-settings/verified-rulesets.json.sig").write_text(sig)
     fake = new_fake()
     put_rulesets(fake, live, list_ok)
+    if repo_info is not None: api(fake, f"repos/{REPOSITORY}", repo_info)
     out = work / "github_output"; out.touch()
     code, o, e = bash(gate, env_for(fake, {"GH_TOKEN": "t", "REPOSITORY": REPOSITORY, "CHECKS_APP_ID": checks_id, "PUBLISHER_APP_ID": publisher_id, "GITHUB_OUTPUT": str(out), "TOOL": str(tool)}), work)
     recorded = dict(l.split("=", 1) for l in out.read_text().splitlines() if "=" in l)
@@ -595,6 +618,15 @@ gate_fails("the workflow token could bypass A (permission mismatch)", "current_u
 gate_fails("current_user_can_bypass missing", "current_user_can_bypass is missing", live={**WORKFLOW_VIEW, ID_A: token_view(ID_A, None)})
 gate_fails("an extra tag ruleset that may apply to index-*", "may apply to index-* tags", live={**WORKFLOW_VIEW, 45: {**token_view(ID_B, "never", id=45, name="extra"), "conditions": {"ref_name": {"include": ["refs/tags/*"], "exclude": []}}}})
 gate_fails("the App ID variable differs", "not the Registry Publisher App (333)", publisher_id="333")
+# snapshot version 3 (S8.3 U-2): the main branch ruleset and the default branch
+gate_fails("the main branch ruleset disabled", "enforcement is disabled", live={**WORKFLOW_VIEW, ID_MAIN: token_view(ID_MAIN, "never", enforcement="disabled")})
+gate_fails("the main branch ruleset changed (updated_at)", "changed after the snapshot", live={**WORKFLOW_VIEW, ID_MAIN: token_view(ID_MAIN, "never", updated_at="2026-11-14T02:00:00.000Z")})
+gate_fails("the main branch ruleset deleted", "no ruleset with the recorded id %d" % ID_MAIN, live={ID_A: WORKFLOW_VIEW[ID_A], ID_B: WORKFLOW_VIEW[ID_B]})
+gate_fails("the workflow token could bypass main", "current_user_can_bypass is always for this token", live={**WORKFLOW_VIEW, ID_MAIN: token_view(ID_MAIN, "always")})
+gate_fails("an extra branch ruleset on the default branch", "may apply to the default branch", live={**WORKFLOW_VIEW, 52: {**token_view(ID_MAIN, "never", id=52, name="extra")}})
+gate_fails("the default branch is not main", "the default branch is dev, not main", repo_info={**REPO_INFO, "default_branch": "dev"})
+code, log, recorded = gate_run(repo_info=None)
+expect("B'/check: the repository cannot be read (no default branch) -> fails", code != 0 and "rulesets" not in recorded, log)
 code, log, recorded = gate_run(publisher_id="")
 expect("B'/check: the App ID variable is not set -> fails", code != 0 and "rulesets" not in recorded, log)
 code, log, recorded = gate_run(list_ok=False)

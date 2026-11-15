@@ -238,6 +238,12 @@ class CsVm(private val program: CompiledProgram, randomSeed: Long = 0L) {
     // 実行時エラーを VM の外へ伝えるための内部例外
     private class RuntimeFailure : RuntimeException(null, null, false, false)
 
+    // エラーフォールバック（第9.2段階）で回復した。いまの命令の実行をやめ、受け手から続ける
+    private class Recovered : RuntimeException(null, null, false, false)
+
+    // コンストラクタの関数の番号（第9.2段階。回復のためにフレームを戻すとき、初期化中のインスタンスのフレームは越えない）
+    private val constructors: Set<Int> = program.classes.mapNotNullTo(HashSet()) { it.constructor.takeIf { c -> c >= 0 } }
+
     init {
         if (program.variableCount !in 0..VmLimits.MAX_VARIABLES) recordError(DiagnosticCode.RUN_INVALID_BYTECODE, ORIGIN)
     }
@@ -256,7 +262,11 @@ class CsVm(private val program: CompiledProgram, randomSeed: Long = 0L) {
                 val instruction = program.instructions.getOrNull(pc) ?: fail(DiagnosticCode.RUN_INVALID_BYTECODE, ORIGIN)
                 pc++
                 executed++
-                execute(instruction)
+                try {
+                    execute(instruction)
+                } catch (recovered: Recovered) {
+                    // 受け手へ移った（第9.2段階）。命令は実行したものとして数える
+                }
                 // 回収を始めた NEW は実行していない（PC は NEW に戻してある）ため、命令数に数えない
                 if (collector != null) executed--
             }
@@ -1242,8 +1252,36 @@ class CsVm(private val program: CompiledProgram, randomSeed: Long = 0L) {
         (pop(position) as? Value.BoolValue)?.value ?: fail(DiagnosticCode.RUN_INVALID_BYTECODE, position)
 
     private fun fail(code: DiagnosticCode, position: SourcePosition, vararg arguments: Int): Nothing {
+        if (code in RECOVERABLE && recover()) throw Recovered()
         recordError(code, position, *arguments)
         throw RuntimeFailure()
+    }
+
+    // エラーフォールバック（第9.2段階）。失敗した命令（pc - 1）を含む範囲を内側から探し、無ければ呼び出し元の CALL の位置で探す（フレームを 1 つずつ戻る）。
+    // 見つかれば、その範囲のある手続きのフレームまで戻し、スタックを範囲の前の深さに切り詰めて受け手へ移る。途中の LINALG の計算は捨てる。
+    // コンストラクタのフレームは越えない（初期化中のインスタンスを残さない）。範囲が無い・形がおかしければ回復しない
+    private fun recover(): Boolean {
+        val handlers = program.handlers
+        if (handlers.isEmpty()) return false
+        var failed = pc - 1
+        var depth = callFrames.size
+        while (true) {
+            val handler = handlers.firstOrNull { failed >= it.start && failed < it.end }
+            if (handler != null) {
+                val base = (if (depth == 0) 0 else callFrames[depth - 1].stackBase) + handler.stackDepth
+                if (handler.handler !in program.instructions.indices || handler.stackDepth < 0 || stack.size < base) return false
+                while (callFrames.size > depth) callFrames.removeAt(callFrames.lastIndex)
+                while (stack.size > base) stack.removeAt(stack.lastIndex)
+                linalg = null
+                pc = handler.handler
+                return true
+            }
+            if (depth == 0) return false
+            val frame = callFrames[depth - 1]
+            if (frame.function in constructors) return false
+            failed = frame.returnPc - 1
+            depth--
+        }
     }
 
     private fun recordError(code: DiagnosticCode, position: SourcePosition, vararg arguments: Int) {
@@ -1253,6 +1291,23 @@ class CsVm(private val program: CompiledProgram, randomSeed: Long = 0L) {
 
     companion object {
         private val ORIGIN = SourcePosition(0, 1, 1)
+
+        // ?! で回復できる実行時エラー（第9.2段階）。プログラムの値による失敗だけで、資源の上限（スタック・呼び出しの深さ・オブジェクト・リストの大きさ）・
+        // 不正なバイトコード・初期化前のプロパティ（初期化中のインスタンスを残さない）は回復しない
+        val RECOVERABLE: Set<DiagnosticCode> = setOf(
+            DiagnosticCode.RUN_INTEGER_OVERFLOW,
+            DiagnosticCode.RUN_DIVISION_BY_ZERO,
+            DiagnosticCode.RUN_NEGATIVE_WAIT,
+            DiagnosticCode.RUN_INDEX_OUT_OF_BOUNDS,
+            DiagnosticCode.RUN_EMPTY_COERCE_RANGE,
+            DiagnosticCode.RUN_ROUND_NAN,
+            DiagnosticCode.RUN_INVALID_RANDOM_RANGE,
+            DiagnosticCode.RUN_INVALID_TOLERANCE,
+            DiagnosticCode.RUN_DIMENSION_MISMATCH,
+            DiagnosticCode.RUN_INVALID_DIMENSION,
+            DiagnosticCode.RUN_ZERO_VECTOR,
+            DiagnosticCode.RUN_RAGGED_MATRIX,
+        )
 
         // SplitMix64 の定数（第3.11e段階）
         private val GOLDEN_GAMMA = 0x9e3779b97f4a7c15uL.toLong()

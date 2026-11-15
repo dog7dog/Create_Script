@@ -13,6 +13,11 @@ import com.creatrbypc.createanalytical.script.ast.ContinueStatement
 import com.creatrbypc.createanalytical.script.ast.DoubleLiteral
 import com.creatrbypc.createanalytical.script.ast.Expression
 import com.creatrbypc.createanalytical.script.ast.ExpressionStatement
+import com.creatrbypc.createanalytical.script.ast.FUNCTION_TYPE_NAME
+import com.creatrbypc.createanalytical.script.ast.FallbackExpression
+import com.creatrbypc.createanalytical.script.ast.FunctionReference
+import com.creatrbypc.createanalytical.script.ast.LambdaExpression
+import com.creatrbypc.createanalytical.script.ast.PipeExpression
 import com.creatrbypc.createanalytical.script.ast.FloatLiteral
 import com.creatrbypc.createanalytical.script.ast.ForStatement
 import com.creatrbypc.createanalytical.script.ast.FunctionDeclaration
@@ -132,6 +137,14 @@ sealed class ScriptType {
             repeat(depth) { text.append('>') }
             text.toString()
         }
+
+        override fun toString() = displayName
+    }
+
+    // 関数の型（第9.3段階）。ラムダ・関数の参照を入れた val だけが持つ（値としては保存・受け渡しできない: インライン展開）。
+    // 結果が Unit なら、ラムダの最後の式の値は捨てる
+    data class FunctionType(val parameters: List<ScriptType>, val result: ScriptType) : ScriptType() {
+        override val displayName: String get() = parameters.joinToString(", ", "(", ")") { it.displayName } + " -> " + result.displayName
 
         override fun toString() = displayName
     }
@@ -301,6 +314,29 @@ data class MathCall(val operation: MathOperation, val type: ScriptType)
 // リストのメンバーの操作（第3.10a段階。要素の読み書きは IndexExpression）
 enum class ListOperation { SIZE, ADD, REMOVE_AT, CLEAR }
 
+// リストの関数（第9.0段階）。where（条件に合う要素）・map（変換）・group（キーごとのグループ。最初に現れた順）・each（要素ごとに実行）・average（平均）
+enum class CollectionOperation(val methodName: String) {
+    WHERE("where"), MAP("map"), GROUP("group"), EACH("each"), AVERAGE("average");
+
+    companion object {
+        val BY_NAME = entries.associateBy { it.methodName }
+    }
+}
+
+// その場で展開する関数（第9.0・9.3段階）。Lambda はラムダの本体を引数の変数（parameters）とともに展開し、Function はユーザー定義関数を CALL で呼ぶ。
+// result は結果の型で、UNIT なら最後の式の値を捨てる
+sealed interface InlineFunction {
+    val result: ScriptType
+
+    class Lambda(val expression: LambdaExpression, val parameters: List<VariableSymbol>, override val result: ScriptType) : InlineFunction
+
+    class Function(val declaration: FunctionDeclaration, override val result: ScriptType) : InlineFunction
+}
+
+// リストの関数の呼び出し（第9.0段階）。element は受け手の要素の型、function は where・map・group・each の関数（average は null）、
+// key は group のキーの型（それ以外は null）
+class CollectionCall(val operation: CollectionOperation, val receiver: Expression, val element: ScriptType, val function: InlineFunction?, val key: ScriptType? = null)
+
 // Stage 3.5 の組み込み関数。変数名として再宣言できない（D20）
 object BuiltinFunctions {
     const val PRINTLN = "println"
@@ -359,6 +395,14 @@ class AnalyzedProgram(
     val randomCalls: Map<CallExpression, RandomOperation>,
     // Vector の演算（第3.11e段階。関数の呼び出し・演算子の式）
     val linalgOperations: Map<Expression, LinalgOperation>,
+    // リストの関数の呼び出し（第9.0段階）
+    val collectionCalls: Map<CallExpression, CollectionCall> = emptyMap(),
+    // 関数の値の呼び出し f(…)（第9.3段階）と、展開する関数
+    val inlineCalls: Map<CallExpression, InlineFunction> = emptyMap(),
+    // パイプライン（第9.1段階）と、それを書き換えた呼び出し
+    val pipeCalls: Map<PipeExpression, CallExpression> = emptyMap(),
+    // 関数の値の宣言（第9.3段階。変数の番号を使わず、命令を出さない）
+    val functionValueDeclarations: Set<VariableDeclaration> = emptySet(),
 )
 
 // program はエラーが無いときだけ返す（警告だけなら成功）。診断は Lexer・Parser の分を含めて最大16件
@@ -461,6 +505,24 @@ class SemanticAnalyzer private constructor(private val diagnostics: DiagnosticCo
     // && || の右辺（評価されないことがある）の中の深さ
     private var conditionalDepth = 0
 
+    // ---- ラムダ・パイプライン・エラーフォールバック（第9.0〜9.3段階） ----
+
+    // いま解析しているラムダの本体の入れ子の数（return を拒否する）
+    private var lambdaDepth = 0
+    private val collectionCalls = IdentityHashMap<CallExpression, CollectionCall>()
+    private val inlineCalls = IdentityHashMap<CallExpression, InlineFunction>()
+    private val pipeCalls = IdentityHashMap<PipeExpression, CallExpression>()
+    private val functionValueDeclarations: MutableSet<VariableDeclaration> = Collections.newSetFromMap(IdentityHashMap())
+
+    // 関数の値（ラムダ・関数の参照を入れた val）。routine は宣言した手続き（トップレベルは null）で、その中でだけ展開できる
+    private class FunctionValue(val function: InlineFunction, val type: ScriptType.FunctionType, val routine: CallableDeclaration?)
+
+    private val functionValues = IdentityHashMap<VariableSymbol, FunctionValue>()
+
+    // 文脈から決まる型（第9.3段階）。expression がこの式そのもののときだけ使う（空の listOf()・mutableListOf() の要素の型）
+    private var expectedFor: Expression? = null
+    private var expectedType: ScriptType? = null
+
     // クラスごとの、初期化式で必ず（&& || の右辺以外で）生成するクラス
     private val constructionEdges = IdentityHashMap<ClassDeclaration, MutableList<ClassDeclaration>>()
 
@@ -478,6 +540,9 @@ class SemanticAnalyzer private constructor(private val diagnostics: DiagnosticCo
 
         // リストのメンバー（第3.10a段階）
         private const val SIZE = "size"
+
+        // ラムダの暗黙の引数（第9.0段階）
+        private const val IMPLICIT_PARAMETER = "it"
         private val LIST_METHODS = mapOf("add" to ListOperation.ADD, "removeAt" to ListOperation.REMOVE_AT, "clear" to ListOperation.CLEAR)
 
         fun analyze(parseResult: ParseResult): SemanticResult = analyze(parseResult, null)
@@ -563,6 +628,10 @@ class SemanticAnalyzer private constructor(private val diagnostics: DiagnosticCo
             Collections.unmodifiableMap(mathConstants),
             Collections.unmodifiableMap(randomCalls),
             Collections.unmodifiableMap(linalgOperations),
+            Collections.unmodifiableMap(collectionCalls),
+            Collections.unmodifiableMap(inlineCalls),
+            Collections.unmodifiableMap(pipeCalls),
+            Collections.unmodifiableSet(functionValueDeclarations),
         )
     }
 
@@ -777,6 +846,11 @@ class SemanticAnalyzer private constructor(private val diagnostics: DiagnosticCo
 
     // return の値は戻り値の型と同じ型（暗黙の変換なし）。Unit の関数は値を返せない（値の型と Unit の不一致として報告する）
     private fun analyzeReturn(statement: ReturnStatement) {
+        if (lambdaDepth > 0) {
+            reportError(DiagnosticCode.SEM_RETURN_IN_LAMBDA, statement.position)
+            statement.value?.let(::analyzeValue)
+            return
+        }
         val function = currentFunction
         if (function == null) {
             reportError(DiagnosticCode.SEM_RETURN_OUTSIDE_FUNCTION, statement.position)
@@ -788,7 +862,7 @@ class SemanticAnalyzer private constructor(private val diagnostics: DiagnosticCo
             if (expected != null && expected != ScriptType.UNIT) reportError(DiagnosticCode.SEM_RETURN_WITHOUT_VALUE, statement.position, function.name, expected.displayName)
             return
         }
-        val actual = analyzeValue(value) ?: return
+        val actual = analyzeExpected(value, expected) ?: return
         if (expected != null && !assignable(expected, actual)) reportTypeMismatch(value.position, expected, actual)
     }
 
@@ -929,17 +1003,26 @@ class SemanticAnalyzer private constructor(private val diagnostics: DiagnosticCo
     }
 
     private fun analyzeDeclaration(declaration: VariableDeclaration) {
-        // 初期化式は宣言より前に解析する（初期化式の中では、宣言中の変数はまだ見えない）
-        val initializerType = analyzeValue(declaration.initializer)
+        val initializer = declaration.initializer
+        if (initializer is LambdaExpression || initializer is FunctionReference || declaration.type?.name == FUNCTION_TYPE_NAME || isFunctionValue(initializer)) {
+            analyzeFunctionValueDeclaration(declaration)
+            return
+        }
+        val annotated = declaration.type?.let { resolveType(it) }
+        // 初期化式は宣言より前に解析する（初期化式の中では、宣言中の変数はまだ見えない）。型の注釈は空のリストの要素の型を決める（第9.3段階）
+        val initializerType = analyzeExpected(declaration.initializer, annotated)
         val type = if (declaration.type == null) {
             initializerType
         } else {
-            val annotated = resolveType(declaration.type)
             if (annotated != null && initializerType != null && !assignable(annotated, initializerType)) {
                 reportTypeMismatch(declaration.initializer.position, annotated, initializerType)
             }
             annotated
         }
+        declare(declaration, type)
+    }
+
+    private fun declare(declaration: VariableDeclaration, type: ScriptType?): VariableSymbol? {
         val conflict = declarationConflict(declaration.name)
         when {
             conflict != null -> reportError(conflict, declaration.namePosition, declaration.name)
@@ -948,9 +1031,12 @@ class SemanticAnalyzer private constructor(private val diagnostics: DiagnosticCo
                 val symbol = VariableSymbol(declaration.name, type, declaration.isMutable, declaration.namePosition)
                 scopes.last()[declaration.name] = symbol
                 declarations[declaration] = symbol
-                if (currentFunction == null && scopes.size == 1) globalDeclarationIndices[symbol] = topLevelIndex
+                // 関数の値（第9.3段階）は変数の番号を持たないため、大域変数に数えない
+                if (currentFunction == null && scopes.size == 1 && type !is ScriptType.FunctionType) globalDeclarationIndices[symbol] = topLevelIndex
+                return symbol
             }
         }
+        return null
     }
 
     // 変数・引数・ループ変数に使えない名前（組み込み関数・関数・クラスと同じ名前: 第3.8c・3.9a段階）の診断コード。
@@ -998,7 +1084,7 @@ class SemanticAnalyzer private constructor(private val diagnostics: DiagnosticCo
             }
             else -> error("Parser should have rejected: $assigned")
         }
-        val valueType = analyzeValue(assignment.value)
+        val valueType = analyzeExpected(assignment.value, target?.type)
         if (target == null) return
         if (!target.isMutable) {
             reportError(DiagnosticCode.SEM_VAL_REASSIGNMENT, assignment.target.position, target.name)
@@ -1011,15 +1097,27 @@ class SemanticAnalyzer private constructor(private val diagnostics: DiagnosticCo
 
     // 副作用のない式（呼び出し以外）の結果が使われない場合は警告する（A4）。警告はコンパイルを妨げない
     private fun analyzeExpressionStatement(statement: ExpressionStatement) {
-        val type = analyzeExpression(statement.expression)
-        if (type != null && statement.expression !is CallExpression) {
-            report(DiagnosticCode.SEM_UNUSED_EXPRESSION, DiagnosticSeverity.WARNING, statement.expression.position)
+        val expression = statement.expression
+        val type = analyzeExpression(expression)
+        // 関数の値（第9.3段階）だけの文は値として使えない
+        if (type is ScriptType.FunctionType) {
+            reportError(DiagnosticCode.SEM_LAMBDA_NOT_ALLOWED, expression.position)
+            return
+        }
+        // パイプライン（呼び出しになる）・エラーフォールバック（第9.1・9.2段階）は警告しない
+        if (type != null && expression !is CallExpression && expression !is PipeExpression && expression !is FallbackExpression) {
+            report(DiagnosticCode.SEM_UNUSED_EXPRESSION, DiagnosticSeverity.WARNING, expression.position)
         }
     }
 
     // List<T> / MutableList<T>（第3.10a段階）は型引数が 1 つ。それ以外の型に型引数は無い。
     // 入れ子のリスト（第3.10b段階）は外側から順にたどって段ごとの可変性を集め、内側の型から組み立てる（深い入れ子でも再帰しない）
     private fun resolveType(type: TypeReference): ScriptType? {
+        // 関数の型（第9.3段階）は val の型の注釈（analyzeFunctionValueDeclaration）にだけ書ける
+        if (type.name == FUNCTION_TYPE_NAME) {
+            reportError(DiagnosticCode.SEM_FUNCTION_TYPE_NOT_ALLOWED, type.position)
+            return null
+        }
         val levels = ArrayList<Boolean>()
         var current = type
         while (current.name == ScriptType.LIST || current.name == ScriptType.MUTABLE_LIST) {
@@ -1068,7 +1166,34 @@ class SemanticAnalyzer private constructor(private val diagnostics: DiagnosticCo
             reportError(DiagnosticCode.SEM_UNIT_VALUE_NOT_ALLOWED, expression.position)
             return null
         }
+        // 関数の値（第9.3段階）は呼び出すか、リストの関数・パイプラインに渡すだけ（値として保存・計算・表示できない）
+        if (type is ScriptType.FunctionType) {
+            reportError(DiagnosticCode.SEM_LAMBDA_NOT_ALLOWED, expression.position)
+            return null
+        }
         return type
+    }
+
+    // 文脈の型 expected のある場所（初期化式・代入・return・?! の右辺）の値（第9.3段階）。式そのものが空の listOf() なら要素の型を expected から決める
+    private fun analyzeExpected(expression: Expression, expected: ScriptType?, allowUnit: Boolean = false): ScriptType? {
+        val savedFor = expectedFor
+        val savedType = expectedType
+        expectedFor = expression
+        expectedType = expected
+        try {
+            if (allowUnit) {
+                val type = analyzeExpression(expression)
+                if (type is ScriptType.FunctionType) {
+                    reportError(DiagnosticCode.SEM_LAMBDA_NOT_ALLOWED, expression.position)
+                    return null
+                }
+                return type
+            }
+            return analyzeValue(expression)
+        } finally {
+            expectedFor = savedFor
+            expectedType = savedType
+        }
     }
 
     // 型が決まらなかった式（エラーを報告済み）は null を返す
@@ -1097,6 +1222,13 @@ class SemanticAnalyzer private constructor(private val diagnostics: DiagnosticCo
                 else -> resolveProperty(expression, receiver)?.let { propertyType(it, expression.position) }
             }
             is IndexExpression -> analyzeIndex(expression)?.element
+            // ラムダ・関数の参照（第9.0・9.3段階）は、リストの関数の引数・val の初期化式・関数の値の呼び出しにだけ書ける
+            is LambdaExpression, is FunctionReference -> {
+                reportError(DiagnosticCode.SEM_LAMBDA_NOT_ALLOWED, expression.position)
+                null
+            }
+            is PipeExpression -> analyzePipe(expression)
+            is FallbackExpression -> analyzeFallback(expression)
         }
         if (type != null) expressionTypes[expression] = type
         return type
@@ -1259,6 +1391,8 @@ class SemanticAnalyzer private constructor(private val diagnostics: DiagnosticCo
             list -> analyzeListCreation(call, callee)
             callee.name == BuiltinFunctions.PRINTLN -> analyzePrintln(call, callee)
             callee.name == BuiltinFunctions.WAIT_TICKS -> analyzeWaitTicks(call, callee)
+            // 関数の値（第9.3段階）。ローカル変数の名前は数学関数などの組み込みの名前より優先する
+            functionValueSymbol(callee.name) != null -> analyzeFunctionValueCall(call, callee, functionValueSymbol(callee.name)!!)
             method != null -> analyzeInvocation(call, callee.name, callee.position, method)
             userFunction(callee.name) != null -> analyzeInvocation(call, callee.name, callee.position, userFunction(callee.name)!!)
             userClass(callee.name) != null -> analyzeConstruction(call, callee, userClass(callee.name)!!)
@@ -1308,6 +1442,8 @@ class SemanticAnalyzer private constructor(private val diagnostics: DiagnosticCo
                 }
             }
         }
+        // 要素も型引数も無い空のリストは、文脈の型（第9.3段階: val xs: List<Int> = listOf() など）から要素の型を決める
+        if (element == null && valid && expectedFor === call) element = (expectedType as? ScriptType.ListType)?.element
         if (element == null) {
             if (valid) reportError(DiagnosticCode.SEM_LIST_TYPE_REQUIRED, callee.position, callee.name)
             return null
@@ -1334,6 +1470,7 @@ class SemanticAnalyzer private constructor(private val diagnostics: DiagnosticCo
 
     // add(T): Unit・removeAt(Int): T・clear(): Unit。どれも MutableList だけ（List は読み取り専用）
     private fun analyzeListMethod(call: CallExpression, callee: MemberAccessExpression, list: ScriptType.ListType): ScriptType? {
+        CollectionOperation.BY_NAME[callee.name]?.let { return analyzeCollectionCall(call, callee, list, it) }
         val operation = LIST_METHODS[callee.name]
         if (operation == null) {
             if (callee.name == SIZE) {
@@ -1781,6 +1918,379 @@ class SemanticAnalyzer private constructor(private val diagnostics: DiagnosticCo
     // モジュールの関数の中（第8.0段階）では、トップレベルのスコープ（エントリーのファイルの変数）を探さない
     private fun lookup(name: String): VariableSymbol? =
         (if (currentModule == null) scopes else scopes.subList(1, scopes.size)).asReversed().firstNotNullOfOrNull { it[name] }
+
+    // ---- ラムダ・関数の値・パイプライン・エラーフォールバック（第9.0〜9.3段階） ----
+
+    // 名前が、いま見える関数の値（ラムダ・関数の参照を入れた val）か
+    private fun functionValueSymbol(name: String): VariableSymbol? = lookup(name)?.takeIf { it in functionValues }
+
+    private fun isFunctionValue(expression: Expression): Boolean = expression is NameReference && functionValueSymbol(expression.name) != null
+
+    // 関数の値の宣言 val f = { x: Int -> … } / val f: (Int) -> Int = { it * 2 } / val g = ::double / val h = f（第9.3段階）。
+    // val だけ。型の注釈があれば、ラムダの引数・結果の型をそこから推論する。注釈が無ければ、ラムダの引数には型が必要で、結果の型は本体から推論する
+    private fun analyzeFunctionValueDeclaration(declaration: VariableDeclaration) {
+        val initializer = declaration.initializer
+        val annotation = declaration.type
+        var valid = true
+        if (declaration.isMutable) {
+            reportError(DiagnosticCode.SEM_LAMBDA_NOT_ALLOWED, declaration.namePosition)
+            valid = false
+        }
+        val annotated: ScriptType.FunctionType? = when {
+            annotation == null -> null
+            annotation.name == FUNCTION_TYPE_NAME -> resolveFunctionType(annotation) ?: run {
+                valid = false
+                null
+            }
+            else -> {
+                // 関数の値を関数でない型の変数に入れる
+                resolveType(annotation)
+                reportError(DiagnosticCode.SEM_LAMBDA_NOT_ALLOWED, initializer.position)
+                declare(declaration, null)
+                return
+            }
+        }
+        val function: InlineFunction? = when (initializer) {
+            is LambdaExpression -> if (annotated != null) {
+                if (valid) analyzeLambda(initializer, annotated.parameters, annotated.result, declaration.name) else null
+            } else {
+                val types = initializer.parameters.map { parameter ->
+                    val type = parameter.type
+                    if (type == null) {
+                        reportError(DiagnosticCode.SEM_LAMBDA_PARAMETER_TYPE_REQUIRED, parameter.position, parameter.name)
+                        null
+                    } else {
+                        resolveType(type)
+                    }
+                }
+                if (types.any { it == null }) null else analyzeLambda(initializer, types.map { it!! }, null, declaration.name)
+            }
+            is FunctionReference -> resolveFunctionReference(initializer, annotated?.parameters, annotated?.result, declaration.name)
+            is NameReference -> functionValueOf(initializer)?.let { value -> checkFunctionValue(value, initializer, annotated?.parameters, annotated?.result, declaration.name) }
+            else -> {
+                analyzeExpression(initializer)
+                reportError(DiagnosticCode.SEM_TYPE_MISMATCH, initializer.position, annotated?.displayName ?: "function", expressionTypes[initializer]?.displayName ?: "?")
+                null
+            }
+        }
+        if (function == null || !valid) {
+            declare(declaration, null)
+            return
+        }
+        val type = annotated ?: ScriptType.FunctionType(parametersOf(function), function.result)
+        val symbol = declare(declaration, type) ?: return
+        functionValues[symbol] = FunctionValue(function, type, currentRoutine)
+        functionValueDeclarations.add(declaration)
+    }
+
+    private fun parametersOf(function: InlineFunction): List<ScriptType> = when (function) {
+        is InlineFunction.Lambda -> function.parameters.map { it.type!! }
+        is InlineFunction.Function -> signatures.getValue(function.declaration).parameterTypes.map { it!! }
+    }
+
+    // (A, B) -> R。引数は値の型、結果は値の型か Unit
+    private fun resolveFunctionType(type: TypeReference): ScriptType.FunctionType? {
+        val parameters = type.arguments.dropLast(1).map { argument -> resolveType(argument) ?: return null }
+        val resultReference = type.arguments.last()
+        val result = if (resultReference.name == ScriptType.UNIT.displayName && resultReference.arguments.isEmpty()) ScriptType.UNIT else resolveType(resultReference) ?: return null
+        return ScriptType.FunctionType(parameters, result)
+    }
+
+    // 名前の参照が関数の値なら、その値（宣言した手続きの外では使えない）
+    private fun functionValueOf(reference: NameReference): FunctionValue? {
+        val symbol = functionValueSymbol(reference.name)
+        if (symbol == null) {
+            analyzeExpression(reference)
+            if (expressionTypes[reference] != null) reportError(DiagnosticCode.SEM_LAMBDA_NOT_ALLOWED, reference.position)
+            return null
+        }
+        val value = functionValues.getValue(symbol)
+        if (value.routine !== currentRoutine) {
+            reportError(DiagnosticCode.SEM_FUNCTION_VALUE_OUTSIDE_SCOPE, reference.position, reference.name)
+            return null
+        }
+        references[reference] = symbol
+        if (value.function is InlineFunction.Function) recordCall(value.function.declaration, value.function.declaration.name, reference.position)
+        return value
+    }
+
+    // 関数の値を、引数の型 parameters・結果の型 result（null なら何でもよい。UNIT なら結果を捨てる）の場所に使えるか確かめる
+    private fun checkFunctionValue(value: FunctionValue, reference: Expression, parameters: List<ScriptType>?, result: ScriptType?, owner: String): InlineFunction? {
+        val type = value.type
+        if (parameters != null) {
+            if (parameters.size != type.parameters.size) {
+                reportError(DiagnosticCode.SEM_LAMBDA_PARAMETER_COUNT, reference.position, owner, parameters.size, type.parameters.size)
+                return null
+            }
+            for ((expected, actual) in parameters.zip(type.parameters)) {
+                if (!assignable(actual, expected)) {
+                    reportTypeMismatch(reference.position, actual, expected)
+                    return null
+                }
+            }
+        }
+        return adaptResult(value.function, result, reference.position)
+    }
+
+    // 結果の型を文脈に合わせる。文脈が Unit なら結果を捨てる（関数の結果は CALL の後に捨てる）
+    private fun adaptResult(function: InlineFunction, result: ScriptType?, position: SourcePosition): InlineFunction? = when {
+        result == null || result == function.result -> function
+        result == ScriptType.UNIT -> when (function) {
+            is InlineFunction.Lambda -> InlineFunction.Lambda(function.expression, function.parameters, ScriptType.UNIT)
+            is InlineFunction.Function -> InlineFunction.Function(function.declaration, ScriptType.UNIT)
+        }
+        function.result != ScriptType.UNIT && assignable(result, function.result) -> function
+        else -> {
+            reportTypeMismatch(position, result, function.result)
+            null
+        }
+    }
+
+    // ::名前（第9.3段階）。トップレベルの関数（モジュールの中では同じモジュールの関数）だけ。メソッド・組み込み関数は参照できない
+    private fun resolveFunctionReference(reference: FunctionReference, parameters: List<ScriptType>?, result: ScriptType?, owner: String): InlineFunction? {
+        val function = userFunction(reference.name)
+        if (function == null) {
+            reportError(DiagnosticCode.SEM_UNKNOWN_FUNCTION, reference.namePosition, reference.name)
+            return null
+        }
+        val signature = signatures.getValue(function)
+        if (signature.parameterTypes.any { it == null } || signature.returnType == null && function.returnType != null) return null
+        val types = signature.parameterTypes.map { it!! }
+        if (parameters != null) {
+            if (parameters.size != types.size) {
+                reportError(DiagnosticCode.SEM_LAMBDA_PARAMETER_COUNT, reference.position, owner, parameters.size, types.size)
+                return null
+            }
+            for ((expected, actual) in parameters.zip(types)) {
+                if (!assignable(actual, expected)) {
+                    reportError(DiagnosticCode.SEM_ARGUMENT_TYPE_MISMATCH, reference.position, reference.name, actual.displayName, expected.displayName)
+                    return null
+                }
+            }
+        }
+        recordCall(function, reference.name, reference.position)
+        return adaptResult(InlineFunction.Function(function, signature.returnType ?: ScriptType.UNIT), result, reference.position)
+    }
+
+    // 関数を受け取る引数（リストの関数の引数）。ラムダ・関数の参照・関数の値のどれか
+    private fun analyzeFunctionArgument(argument: Expression, parameters: List<ScriptType>, result: ScriptType?, owner: String): InlineFunction? = when (argument) {
+        is LambdaExpression -> analyzeLambda(argument, parameters, result, owner)
+        is FunctionReference -> resolveFunctionReference(argument, parameters, result, owner)
+        is NameReference -> functionValueOf(argument)?.let { checkFunctionValue(it, argument, parameters, result, owner) }
+        else -> {
+            analyzeExpression(argument)
+            reportError(DiagnosticCode.SEM_ARGUMENT_TYPE_MISMATCH, argument.position, owner, "function", expressionTypes[argument]?.displayName ?: "?")
+            null
+        }
+    }
+
+    // ラムダ（第9.0段階）。引数の型は文脈（parameters）から決まり（第9.3段階）、型の注釈があればそれと合うこと。引数の無いラムダに引数が 1 つ渡る文脈では
+    // 暗黙の引数 it を使う。本体は新しいスコープで、break / continue は本体の中のループにだけ、return は書けない。本体は実行されないことがある（空のリスト）ため、
+    // && || の右辺と同じく条件つきとして扱う。結果の型は最後の式の文の型（無ければ Unit）。result が null なら推論し、Unit なら値を捨て、それ以外はその型に使えること
+    private fun analyzeLambda(lambda: LambdaExpression, parameters: List<ScriptType>, result: ScriptType?, owner: String): InlineFunction.Lambda? {
+        if (initializing != null) {
+            reportError(DiagnosticCode.SEM_LAMBDA_IN_INITIALIZER, lambda.position)
+            return null
+        }
+        val implicit = !lambda.hasArrow && lambda.parameters.isEmpty() && parameters.size == 1
+        if (!implicit && lambda.parameters.size != parameters.size) {
+            reportError(DiagnosticCode.SEM_LAMBDA_PARAMETER_COUNT, lambda.position, owner, parameters.size, lambda.parameters.size)
+            return null
+        }
+        scopes.add(HashMap())
+        val symbols = ArrayList<VariableSymbol>()
+        var valid = true
+        if (implicit) {
+            VariableSymbol(IMPLICIT_PARAMETER, parameters.single(), false, lambda.position).also {
+                scopes.last()[IMPLICIT_PARAMETER] = it
+                symbols.add(it)
+            }
+        } else {
+            for ((parameter, expected) in lambda.parameters.zip(parameters)) {
+                val annotated = parameter.type?.let { resolveType(it) ?: run { valid = false; null } }
+                if (annotated != null && !assignable(annotated, expected)) {
+                    reportTypeMismatch(parameter.position, annotated, expected)
+                    valid = false
+                }
+                val conflict = declarationConflict(parameter.name)
+                when {
+                    conflict != null -> {
+                        reportError(conflict, parameter.position, parameter.name)
+                        valid = false
+                    }
+                    parameter.name in scopes.last() -> {
+                        reportError(DiagnosticCode.SEM_DUPLICATE_DECLARATION, parameter.position, parameter.name)
+                        valid = false
+                    }
+                    else -> VariableSymbol(parameter.name, annotated ?: expected, false, parameter.position).also {
+                        scopes.last()[parameter.name] = it
+                        symbols.add(it)
+                    }
+                }
+            }
+        }
+        val savedLoopDepth = loopDepth
+        loopDepth = 0
+        lambdaDepth++
+        conditionalDepth++
+        var actual: ScriptType? = ScriptType.UNIT
+        val last = lambda.body.lastOrNull()
+        for (statement in lambda.body) {
+            if (statement === last && statement is ExpressionStatement) {
+                actual = analyzeExpression(statement.expression)
+                if (actual is ScriptType.FunctionType) {
+                    reportError(DiagnosticCode.SEM_LAMBDA_NOT_ALLOWED, statement.expression.position)
+                    actual = null
+                }
+            } else {
+                analyzeStatement(statement)
+            }
+        }
+        conditionalDepth--
+        lambdaDepth--
+        loopDepth = savedLoopDepth
+        scopes.removeAt(scopes.lastIndex)
+        if (!valid || actual == null) return null
+        val effective = when {
+            result == null -> actual
+            result == ScriptType.UNIT -> ScriptType.UNIT
+            actual != ScriptType.UNIT && assignable(result, actual) -> result
+            else -> {
+                reportTypeMismatch((last as? ExpressionStatement)?.expression?.position ?: lambda.position, result, actual)
+                return null
+            }
+        }
+        return InlineFunction.Lambda(lambda, symbols, effective)
+    }
+
+    // 関数の値の呼び出し f(…)（第9.3段階）。引数の数・型を確かめ、左から評価する
+    private fun analyzeFunctionValueCall(call: CallExpression, callee: NameReference, symbol: VariableSymbol): ScriptType? {
+        val value = functionValueOf(callee) ?: return null
+        val type = value.type
+        if (call.arguments.size != type.parameters.size) {
+            reportError(DiagnosticCode.SEM_WRONG_ARGUMENT_COUNT, callee.position, callee.name, call.arguments.size)
+            return null
+        }
+        var valid = true
+        for ((argument, expected) in call.arguments.zip(type.parameters)) {
+            val actual = analyzeValue(argument)
+            if (actual == null) {
+                valid = false
+            } else if (!assignable(expected, actual)) {
+                reportError(DiagnosticCode.SEM_ARGUMENT_TYPE_MISMATCH, argument.position, callee.name, expected.displayName, actual.displayName)
+                valid = false
+            }
+        }
+        if (!valid) return null
+        references[callee] = symbol
+        inlineCalls[call] = value.function
+        return type.result
+    }
+
+    // リストの関数（第9.0段階）。List・MutableList のどちらにも使え、受け手は変更しない（結果は新しい List）。
+    // where(T -> Boolean): List<T>、map(T -> R): List<R>、group(T -> K): List<List<T>>（K は Int・String・Boolean。キーの最初に現れた順）、
+    // each(T -> Unit): Unit、average(): Double（要素は Int・Float・Double。Double で合計し、空のリストは NaN: Kotlin と同じ）
+    private fun analyzeCollectionCall(call: CallExpression, callee: MemberAccessExpression, list: ScriptType.ListType, operation: CollectionOperation): ScriptType? {
+        val name = callee.name
+        if (operation == CollectionOperation.AVERAGE) {
+            if (call.arguments.isNotEmpty()) {
+                reportError(DiagnosticCode.SEM_WRONG_ARGUMENT_COUNT, callee.position, name, call.arguments.size)
+                return null
+            }
+            if (!ScriptType.isNumeric(list.element)) {
+                reportError(DiagnosticCode.SEM_INVALID_OPERAND_TYPE, callee.position, name, list.displayName)
+                return null
+            }
+            collectionCalls[call] = CollectionCall(operation, callee.receiver, list.element, null)
+            return ScriptType.DOUBLE
+        }
+        if (call.arguments.size != 1) {
+            reportError(DiagnosticCode.SEM_WRONG_ARGUMENT_COUNT, callee.position, name, call.arguments.size)
+            return null
+        }
+        val expected = when (operation) {
+            CollectionOperation.WHERE -> ScriptType.BOOLEAN
+            CollectionOperation.EACH -> ScriptType.UNIT
+            else -> null
+        }
+        val function = analyzeFunctionArgument(call.arguments.single(), listOf(list.element), expected, name) ?: return null
+        val type = when (operation) {
+            CollectionOperation.WHERE -> ScriptType.ListType(list.element, false)
+            CollectionOperation.EACH -> ScriptType.UNIT
+            CollectionOperation.MAP -> {
+                if (function.result == ScriptType.UNIT) {
+                    reportError(DiagnosticCode.SEM_UNIT_VALUE_NOT_ALLOWED, call.arguments.single().position)
+                    return null
+                }
+                ScriptType.ListType(function.result, false)
+            }
+            CollectionOperation.GROUP -> {
+                if (function.result != ScriptType.INT && function.result != ScriptType.STRING && function.result != ScriptType.BOOLEAN) {
+                    reportError(DiagnosticCode.SEM_GROUP_KEY_TYPE, call.arguments.single().position, function.result.displayName)
+                    return null
+                }
+                ScriptType.ListType(ScriptType.ListType(list.element, false), false)
+            }
+            CollectionOperation.AVERAGE -> error("unreachable")
+        }
+        collectionCalls[call] = CollectionCall(operation, callee.receiver, list.element, function, function.result.takeIf { operation == CollectionOperation.GROUP })
+        return type
+    }
+
+    // 左 |> 右（第9.1段階）。右が 名前 なら 名前(左)、名前(引数…) なら 名前(左, 引数…)。名前がリストの関数（where など）で、
+    // 同じ名前のユーザー定義関数・メソッド・関数の値が無ければ 左.名前(引数…)。書き換えた呼び出しを解析する
+    private fun analyzePipe(pipe: PipeExpression): ScriptType? {
+        val right = pipe.right
+        val callee: NameReference
+        val arguments: List<Expression>
+        val typeArguments: List<TypeReference>
+        when {
+            right is NameReference -> {
+                callee = right
+                arguments = emptyList()
+                typeArguments = emptyList()
+            }
+            right is CallExpression && right.callee is NameReference -> {
+                callee = right.callee as NameReference
+                arguments = right.arguments
+                typeArguments = right.typeArguments
+            }
+            else -> {
+                analyzeExpression(pipe.left)
+                reportError(DiagnosticCode.SEM_INVALID_PIPE_TARGET, right.position)
+                return null
+            }
+        }
+        val name = callee.name
+        val shadowed = userFunction(name) != null || name in currentMethods() || functionValueSymbol(name) != null
+        val rewritten = if (name in CollectionOperation.BY_NAME && !shadowed && typeArguments.isEmpty()) {
+            CallExpression(MemberAccessExpression(pipe.left, name, callee.position), arguments, callee.position)
+        } else {
+            CallExpression(callee, listOf(pipe.left) + arguments, callee.position, typeArguments)
+        }
+        pipeCalls[pipe] = rewritten
+        return analyzeExpression(rewritten)
+    }
+
+    // 左 ?! 右（第9.2段階）。左の評価中に回復できる実行時エラーが起きたら右の値になる。両辺は同じ型（MutableList<T> と List<T> は List<T>。
+    // Unit どうしは文として使える）。右は評価されないことがある。右の空のリストの要素の型は、文脈か左の型から決める
+    private fun analyzeFallback(fallback: FallbackExpression): ScriptType? {
+        val outer = if (expectedFor === fallback) expectedType else null
+        val left = analyzeExpected(fallback.left, outer, allowUnit = true)
+        conditionalDepth++
+        val right = analyzeExpected(fallback.right, outer ?: left, allowUnit = true)
+        conditionalDepth--
+        if (left == null || right == null) return null
+        return when {
+            left == right -> left
+            assignable(left, right) -> left
+            assignable(right, left) -> right
+            else -> {
+                reportTypeMismatch(fallback.right.position, left, right)
+                null
+            }
+        }
+    }
 
     // ---- 診断 ----
 

@@ -13,7 +13,8 @@
 #      this commit. It then checks the approvals again (P4-M4): the pushed commit must come from exactly one merged
 #      pull request, whose head commit has the same tree, and whose reviews (read with the token) pass
 #      check-approvals against the commit before the push. It passes on the SHA-256 of the two files.
-#      It also checks the repository's index-* tag rulesets against the administrator's signed snapshot
+#      It also checks the repository's index-* tag rulesets, the main branch ruleset and the default branch (snapshot
+#      version 3, S8.3 U-2) against the administrator's signed snapshot
 #      (github-settings/verified-rulesets.json and .sig, keys/settings-keys.json; S8.3 Phase 10B-2A, plan B'):
 #      GitHub returns a ruleset's bypass actors only to users who can write it, so this job's read-only token
 #      compares what it can see (id, enforcement, conditions, rules, created_at, updated_at, and
@@ -67,6 +68,7 @@ jobs:
       index_sha256: ${{ steps.files.outputs.index_sha256 }}
       sig_sha256: ${{ steps.files.outputs.sig_sha256 }}
       rulesets: ${{ steps.rulesets.outputs.rulesets }}
+      default_branch: ${{ steps.rulesets.outputs.default_branch }}
     steps:
       - name: Refuse to run before the bootstrap
         run: |
@@ -122,7 +124,7 @@ jobs:
           if [ -f published/index.json ]; then set -- --previous-index published/index.json --previous-sig published/index.json.sig; fi
           "$TOOL" publish-check --repo registry "$@"
 
-      - name: Check the repository's tag rulesets against the signed snapshot (fails when they cannot be verified)
+      - name: Check the repository's tag and main branch rulesets and default branch against the signed snapshot (fails when they cannot be verified)
         id: rulesets
         env:
           GH_TOKEN: ${{ github.token }}
@@ -133,21 +135,30 @@ jobs:
           set -euo pipefail
           mkdir live-rulesets
           gh api --paginate --slurp "repos/$REPOSITORY/rulesets?per_page=100" > live-rulesets/list.json
-          for id in $(jq -r '.[][] | select(.target == "tag") | .id' live-rulesets/list.json); do
+          # the repository's default branch (snapshot version 3, S8.3 U-2): ~DEFAULT_BRANCH protects main only while it is the default
+          gh api "repos/$REPOSITORY" > live-rulesets/repository.json
+          for id in $(jq -r '.[][] | select(.target == "tag" or .target == "branch") | .id' live-rulesets/list.json); do
             case "$id" in ''|*[!0-9]*) echo "unexpected ruleset id" >&2; exit 1 ;; esac
             gh api "repos/$REPOSITORY/rulesets/$id" > "live-rulesets/ruleset-$id.json"
           done
           echo "::stop-commands::$(uuidgen)"
-          "$TOOL" check-ruleset-snapshot --repo registry --live live-rulesets --repository "$REPOSITORY" --actor workflow \
-            --checks-app-id "$CHECKS_APP_ID" --publisher-app-id "$PUBLISHER_APP_ID"
+          "$TOOL" check-ruleset-snapshot --repo registry --live live-rulesets --repository-info live-rulesets/repository.json \
+            --repository "$REPOSITORY" --actor workflow --checks-app-id "$CHECKS_APP_ID" --publisher-app-id "$PUBLISHER_APP_ID"
           # What this job saw, for the release job's re-check just before publishing (no secret in it).
           creation="$(jq -r .name registry/github-settings/index-tags-creation-ruleset.json)"
           protection="$(jq -r .name registry/github-settings/index-tags-protection-ruleset.json)"
-          seen="$(jq -c -s --arg creation "$creation" --arg protection "$protection" \
-            'map({id, name, enforcement, created_at, updated_at,
-                  role: (if .name == $creation then "creation" elif .name == $protection then "protection" else "other" end)}) | sort_by(.id)' \
+          main="$(jq -r .name registry/github-settings/main-ruleset.json)"
+          seen="$(jq -c -s --arg creation "$creation" --arg protection "$protection" --arg main "$main" \
+            'map({id, name, target, enforcement, created_at, updated_at,
+                  role: (if .target == "tag" and .name == $creation then "creation" elif .target == "tag" and .name == $protection then "protection"
+                         elif .target == "branch" and .name == $main then "main" else "other" end)}) | sort_by(.id)' \
             live-rulesets/ruleset-*.json)"
-          echo "rulesets=$seen" >> "$GITHUB_OUTPUT"
+          default_branch="$(jq -r .default_branch live-rulesets/repository.json)"
+          case "$default_branch" in main) ;; *) echo "unexpected default branch" >&2; exit 1 ;; esac
+          {
+            echo "rulesets=$seen"
+            echo "default_branch=$default_branch"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Find the merged pull request and read its reviews
         id: pr
@@ -262,6 +273,7 @@ jobs:
           INDEX_SHA256: ${{ needs.check.outputs.index_sha256 }}
           SIG_SHA256: ${{ needs.check.outputs.sig_sha256 }}
           RULESETS: ${{ needs.check.outputs.rulesets }}
+          DEFAULT_BRANCH: ${{ needs.check.outputs.default_branch }}
         run: |
           set -euo pipefail
           # One cleanup for every way out: remove the key file and revoke the App token. The token is never written
@@ -335,11 +347,12 @@ jobs:
             mkdir rulesets-now
             gh api --paginate --slurp "repos/$REPOSITORY/rulesets?per_page=100" > rulesets-now/list.json ||
               stop "the repository's rulesets could not be read $1; $2"
-            for rid in $(jq -r '.[][] | select(.target == "tag") | .id' rulesets-now/list.json); do
+            gh api "repos/$REPOSITORY" > rulesets-now/repository.json || stop "the repository could not be read $1; $2"
+            for rid in $(jq -r '.[][] | select(.target == "tag" or .target == "branch") | .id' rulesets-now/list.json); do
               case "$rid" in ''|*[!0-9]*) stop "unexpected ruleset id $1; $2" ;; esac
               gh api "repos/$REPOSITORY/rulesets/$rid" > "rulesets-now/ruleset-$rid.json" || stop "the ruleset $rid could not be read $1; $2"
             done
-            python3 -I - rulesets-now <<'PY' || stop "the tag rulesets differ from what the check job verified, or cannot be verified, $1; $2"
+            python3 -I - rulesets-now <<'PY' || stop "the rulesets or the default branch differ from what the check job verified, or cannot be verified, $1; $2"
           import json, os, pathlib, re, sys
           from datetime import datetime
           STAMP = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}(Z|[+-]\d{2}:\d{2})")
@@ -351,21 +364,25 @@ jobs:
               expected = json.loads(os.environ.get("RULESETS") or "null")
               assert isinstance(expected, list) and expected, "the check job recorded no rulesets"
               roles = sorted(r.get("role") for r in expected)
-              assert roles.count("creation") == 1 and roles.count("protection") == 1, "the check job did not record both tag rulesets"
+              assert roles.count("creation") == 1 and roles.count("protection") == 1 and roles.count("main") == 1, "the check job did not record both tag rulesets and the main branch ruleset"
+              # the default branch: as the check job saw it (main), and still main now
+              repository = json.loads((pathlib.Path(sys.argv[1]) / "repository.json").read_text())
+              if os.environ.get("DEFAULT_BRANCH") != "main": problems.append("the check job recorded the default branch %r, not 'main'" % (os.environ.get("DEFAULT_BRANCH"),))
+              if not isinstance(repository, dict) or repository.get("default_branch") != "main": problems.append("the default branch is now %r, not 'main'" % (repository.get("default_branch") if isinstance(repository, dict) else None,))
               now = {}
               for f in sorted(pathlib.Path(sys.argv[1]).glob("ruleset-*.json")):
                   r = json.loads(f.read_text()); now[r.get("id")] = r
-              if sorted(now) != sorted(r["id"] for r in expected): problems.append("tag rulesets were added or removed: %s, expected %s" % (sorted(now), sorted(r["id"] for r in expected)))
+              if sorted(now) != sorted(r["id"] for r in expected): problems.append("tag or branch rulesets were added or removed: %s, expected %s" % (sorted(now), sorted(r["id"] for r in expected)))
               for e in expected:
                   r = now.get(e["id"])
                   if r is None: continue
-                  for field in ("name", "enforcement"):
+                  for field in ("name", "target", "enforcement"):
                       if r.get(field) != e.get(field): problems.append("ruleset %s: %s is %r, expected %r" % (e["id"], field, r.get(field), e.get(field)))
                   for field in ("created_at", "updated_at"):
                       try:
                           if instant(r.get(field)) != instant(e.get(field)): problems.append("ruleset %s: %s changed since the check job" % (e["id"], field))
                       except ValueError as error: problems.append("ruleset %s: %s: %s" % (e["id"], field, error))
-                  want = {"creation": "always", "protection": "never"}.get(e["role"])
+                  want = {"creation": "always", "protection": "never", "main": "never"}.get(e["role"])
                   if want is not None and r.get("current_user_can_bypass") != want:
                       problems.append("ruleset %s: current_user_can_bypass is %r for the Publisher App, expected %r" % (e["id"], r.get("current_user_can_bypass"), want))
           except (AssertionError, ValueError, KeyError, TypeError, AttributeError) as error:

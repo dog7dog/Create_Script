@@ -43,9 +43,13 @@ class SettingsKeyTest {
         val template = Paths.get("..").toAbsolutePath().normalize().resolve("registry-template/github-settings")
         Files.writeString(repo.resolve(TagRulesets.CREATION_FILE), Files.readString(template.resolve("index-tags-creation-ruleset.json")).replace("\"actor_id\": 0", "\"actor_id\": $publisher"))
         Files.copy(template.resolve("index-tags-protection-ruleset.json"), repo.resolve(TagRulesets.PROTECTION_FILE))
+        Files.writeString(repo.resolve(RulesetSnapshots.MAIN_FILE), Files.readString(template.resolve("main-ruleset.json")).replace("\"integration_id\": 0", "\"integration_id\": $checks"))
+        Files.write(directory.resolve("repository.json"), resource("FABRICATED-repository.json"))
         live = Files.createDirectories(directory.resolve("live"))
         Files.write(live.resolve("ruleset-27176846.json"), resource("owner-ruleset-A.json"))
         Files.write(live.resolve("ruleset-27176940.json"), resource("owner-ruleset-B.json"))
+        // main の ruleset（版 3）: GitHub の実際の応答はまだ無いので、雛形から作った応答（FABRICATED）
+        Files.write(live.resolve("ruleset-27200001.json"), resource("FABRICATED-owner-ruleset-main.json"))
         keys(testKey)
     }
 
@@ -59,7 +63,7 @@ class SettingsKeyTest {
 
     private fun record(days: String? = null): Pair<Int, ByteArray?> {
         val out = directory.resolve("snapshot-${System.nanoTime()}.json")
-        val (code, text) = run(listOf("record-ruleset-snapshot", "--repo", "$repo", "--live", "$live", "--repository", repositoryName, "--recorded-by", "dog7dog",
+        val (code, text) = run(listOf("record-ruleset-snapshot", "--repo", "$repo", "--live", "$live", "--repository-info", "${directory.resolve("repository.json")}", "--repository", repositoryName, "--recorded-by", "dog7dog",
             "--checks-app-id", "$checks", "--publisher-app-id", "$publisher", "--out", "$out") + (days?.let { listOf("--valid-days", it) } ?: emptyList()))
         return code to (if (code == 0) Files.readAllBytes(out) else null).also { if (code != 0) assertTrue(text.isNotEmpty()) }
     }
@@ -76,7 +80,7 @@ class SettingsKeyTest {
     }
 
     private fun check(allowTestKeys: Boolean = true, pins: Map<String, String> = SettingsKeyPins.OFFICIAL) =
-        run(listOf("check-ruleset-snapshot", "--repo", "$repo", "--live", "$live", "--repository", repositoryName, "--checks-app-id", "$checks", "--publisher-app-id", "$publisher", "--actor", "workflow"), allowTestKeys, pins)
+        run(listOf("check-ruleset-snapshot", "--repo", "$repo", "--live", "$live", "--repository-info", "${directory.resolve("repository.json")}", "--repository", repositoryName, "--checks-app-id", "$checks", "--publisher-app-id", "$publisher", "--actor", "workflow"), allowTestKeys, pins)
 
     private fun assertFails(result: Pair<Int, String>, expected: String) {
         assertEquals(1, result.first, result.second)
@@ -97,7 +101,7 @@ class SettingsKeyTest {
         val (code, snapshot) = record()
         assertEquals(0, code)
         val text = String(snapshot!!)
-        assertTrue(text.contains("\"snapshotVersion\":2") && text.contains("\"recordedAt\":\"2026-11-13T07:00:00Z\"") && text.contains("\"expires\":\"2027-05-12T07:00:00Z\""), text)
+        assertTrue(text.contains("\"snapshotVersion\":3") && text.contains("\"recordedAt\":\"2026-11-13T07:00:00Z\"") && text.contains("\"expires\":\"2027-05-12T07:00:00Z\""), text)
         assertEquals(0, record("1").first)
         assertEquals(0, record("180").first)
         assertEquals(1, record("181").first)
@@ -143,10 +147,10 @@ class SettingsKeyTest {
         assertFails(check(), "is not after recordedAt")
         resigned(snapshot, "\"expires\":\"2027-05-12T07:00:00Z\"", "\"expires\":\"2027-05-12T16:00:00+09:00\"")
         assertFails(check(), "expires is not a UTC timestamp in seconds")
-        // 版 1（期限の無い形）は受け入れない
-        val v1 = String(snapshot).replace("\"expires\":\"2027-05-12T07:00:00Z\",", "").replace("\"snapshotVersion\":2", "\"snapshotVersion\":1").toByteArray()
+        // 古い版（ここでは期限の無い形で版 2 を名乗るもの）は受け入れない
+        val v1 = String(snapshot).replace("\"expires\":\"2027-05-12T07:00:00Z\",", "").replace("\"snapshotVersion\":3", "\"snapshotVersion\":1").toByteArray()
         place(v1, signature(v1, testKey))
-        assertFails(check(), "snapshotVersion must be 2")
+        assertFails(check(), "snapshotVersion must be 3")
     }
 
     // T3: 本番の経路（allowTestKeys = false）は、ツールに固定した指紋と一致する鍵だけを信頼する

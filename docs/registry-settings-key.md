@@ -1,6 +1,6 @@
 # Ruleset スナップショットの署名鍵（設定の証明用の鍵）の運用
 
-> **状態（2026-11-13、S8.3 U-1）：設計を採用し、ツールにローカルで実装しました。**
+> **状態（2026-11-14、S8.3 U-1・U-2）：設計を採用し、ツールにローカルで実装しました（U-2 で版 3：main の ruleset と既定のブランチ）。**
 > - 鍵は、本番もテストも、まだ実ファイルとして作っていません。
 > - GitHub 上では、この運用を試していません。
 > - 本番の鍵での署名は、鍵の作成の儀式が承認されるまで、ツールが拒否します（`RulesetSnapshots.PRODUCTION_SIGNING_ENABLED = false`）。
@@ -23,7 +23,7 @@
 
 ## 2. 形式
 
-**スナップショット（`github-settings/verified-rulesets.json`、`snapshotVersion: 2`）**
+**スナップショット（`github-settings/verified-rulesets.json`、`snapshotVersion: 3`。版 3 の追加は 6 章）**
 - 正規化した JSON（キーを並べ替え、空白を入れない）。
 - 項目は、ちょうど次の 6 つ：`snapshotVersion`・`repository`・`recordedAt`・`expires`・`recordedBy`・`rulesets`。
   - `recordedAt` と `expires` は、秒までの UTC（`YYYY-MM-DDTHH:MM:SSZ`）。
@@ -120,35 +120,34 @@ T3 で守れるのは、**レジストリのリポジトリの権限だけを持
 - この限界は、index の信頼の設計（`docs/registry-github-architecture.md` 9 章）と同じ前提です。
 - ワークフローの変更や `TOOL_COMMIT` の変更を、レジストリの外から見張る仕組み（例：CreateScript の CI が、レジストリの `publish.yml` の SHA-256 を照合する）は、まだありません。
 
-## 6. main の ruleset の検証（未実装）：必要な項目、API の挙動、ギャップ
+## 6. main の ruleset と既定のブランチの検証（S8.3 U-2、スナップショット版 3、ローカルに実装）
 
-**記録して照合すべき項目**
-- 雛形の `main-ruleset.json` と、`GitHubSettings.rulesetProblems` が見ている項目。
-  - 対象：`~DEFAULT_BRANCH`、enforcement、回避者（空）
-  - 規則：`deletion`・`non_fast_forward`・`required_linear_history`
-  - `pull_request` の付加項目：`required_approving_review_count` が 2 以上、`dismiss_stale_reviews_on_push`・`require_code_owner_review`・`require_last_push_approval`・`required_review_thread_resolution`
-  - `required_status_checks`：`registry/validate`・`registry/approvals` と、それぞれの `integration_id` が Checks App であること、`strict_required_status_checks_policy`
+**版 3 で加えたもの**
+- スナップショットに、main ブランチの ruleset（雛形 `github-settings/main-ruleset.json` と同じ名前の、ブランチの ruleset）と `defaultBranch: "main"` を記録する。版 2 以前は受け入れない（「snapshotVersion must be 3」）。
+- `record-ruleset-snapshot`・`check-ruleset-snapshot` は `--repository-info FILE`（`GET /repos/{owner}/{repo}` の応答）が必須。`full_name` がリポジトリと一致し、`default_branch` が `main` でなければ失敗する。
+- 記録する main の ruleset の方針（`mainProblems`）：
+  - 名前が雛形と同じ、`target: branch`、`conditions.ref_name.include` がちょうど `["~DEFAULT_BRANCH"]`、`exclude` が空
+  - `GitHubSettings.rulesetProblems` に通る（回避者なし・有効・削除と強制 push の禁止・直線的な履歴・2 人以上の承認とコード所有者・最後の push の承認・古い承認の取り消し・2 つの必須チェック・`strict`）
+  - 必須チェックの `integration_id` が Registry Checks App
+- 公開の前の照合（main の ruleset も、タグの ruleset と同じ規則）：id・名前・target・source・`enforcement: active`・conditions・rules・時刻（時刻として比較）・見える場合の `bypass_actors`・`current_user_can_bypass`（ワークフローの `GITHUB_TOKEN`・Publisher App とも `never`）。
+- 記録に無いブランチの ruleset が既定のブランチに当たり得る場合（`~ALL`・`~DEFAULT_BRANCH`・`refs/heads/m*` など）は失敗する。
+- `publish.yml`：`check` がブランチの ruleset と `GET /repos/{r}` も取得して照合し、`default_branch` を出力する。`release` は、下書きの前と公開の直前に、main の ruleset と既定のブランチも確かめ直す。
 
-**API の挙動**
+**検出できるもの（ローカルの試験で確認）**：main の ruleset の無効化・評価のみへの変更・削除・作り直し・回避者の追加（見える場合は直接、見えない場合は `updated_at`）・承認の人数の減少・必須チェックの削除・対象のブランチの変更・既定のブランチの変更・余分なブランチの ruleset・署名の後の改ざん・方針に反する記録。
 
-| API | 分かっていること | 未確認 |
-|---|---|---|
-| `GET /repos/{r}/rulesets/{id}`（target が branch） | タグの ruleset と同じ形。`bypass_actors` は、書き込める利用者にだけ返る [文書]。読み取りのトークンでの挙動は、タグの ruleset で実測した（P-19・P-21） | ブランチの ruleset で、`GITHUB_TOKEN` に返る項目（同じと推定するが、実測していない） |
-| `GET /repos/{r}/rules/branches/{branch}` | そのブランチに有効な規則を返す。evaluate・disabled の ruleset は含まない。ブランチが無くてもよい [文書] | 応答の項目（`ruleset_id`・`ruleset_source` など）は、文書に載っていない。回避者・`current_user_can_bypass` は含まれない [文書]。必要な権限も、文書に書かれていない |
-| `pull_request`・`required_status_checks` の付加項目 | 文書の形（上の項目）[文書] | GitHub が既定値を補って返すか（例：`allowed_merge_methods`、`dismissal_restriction`）。補う場合、記録との完全な一致での比較が不安定になる |
+**GitHub で未確認の前提（違えば止まるだけで、誤って通ることはない。ただし P-20 だけは例外）**
+1. ブランチの ruleset の応答の形（GitHub が付加項目を補うか、`~DEFAULT_BRANCH` がそのまま返るか）。補われても、記録と照合は同じ応答どうしの比較なので推測は要らない。ただし、雛形と違う形で返ると、記録の方針の検査（`include` がちょうど `~DEFAULT_BRANCH`）で止まる可能性がある。
+2. ブランチの ruleset での P-19（読み取りのトークンに `bypass_actors` が返らない）と P-21（`current_user_can_bypass` が `never`）。
+3. **ブランチの ruleset での P-20（回避者の追加・元に戻す変更で `updated_at` が変わる）。** タグの ruleset でだけ実測した。これが成り立たないと、読み取りのトークンからは main への回避者の追加が見えない。**ここは推測に依存している。**
+4. `GITHUB_TOKEN` で `GET /repos/{r}` の `default_branch` を読めるか。
 
-**実装の前のギャップ**
-1. スナップショットの形を版 3 に上げ、`rulesets` に main を加える必要がある。A・B の 2 つ固定の検査を変えることになる。
-2. 方針の検査（`GitHubSettings.rulesetProblems`）を、実際の応答にも使えるようにする必要がある。応答では、知らない付加項目や既定値が加わる可能性がある。
-3. `current_user_can_bypass` の期待値：main では、`GITHUB_TOKEN`・Publisher App とも `never` を期待するが、実測していない。
-4. ブランチの ruleset の、記録に無いもの（余分なもの）の扱い。タグと同じく、main に当たり得るものは失敗とするか。
-5. **実測が必要：** テスト用のリポジトリに main の ruleset を作り（承認が必要）、所有者・App・`GITHUB_TOKEN` での見え方を確かめる。
-6. それまでは、**main の ruleset が黙って弱められても、公開の前の検査では見つからない。** これは既知の残存リスクとして扱う。
+**限界**：レジストリのリポジトリの admin は、ワークフロー・`TOOL_COMMIT`・main の ruleset をまとめて書き換えられる。照合するのはそのワークフロー自身なので、書き換えの後の検出には限界がある（5 章）。
 
 ## 7. 試験
 
 - **単体試験：**
-  - `SettingsKeyTest`（7 件）：版 2・期限・時刻の前後関係と境界（5 分の許容・180 日・期限ちょうど）、本番の既定がどの鍵の構成でも失敗すること、T3（固定あり・空・不一致・外された鍵・本番でのテスト用の鍵）、署名の重複・知らない鍵・失効・鍵の交換の順序、署名の関数（別の秘密鍵・一覧に無い鍵の ID・既存の署名への追加・本番の鍵の拒否）、署名のコマンド（要約・期限切れ・方針違反・本番の鍵のファイルを読まないこと）
+  - `MainRulesetSnapshotTest`（6 件、U-2）：版 3 の記録、main の ruleset の変更・無効化・削除・作り直し・回避者・承認の人数・必須チェック・対象、既定のブランチ、余分なブランチの ruleset、弱い記録・署名の後の改ざん。main の ruleset と GET /repos の応答は、実際の応答が無いので雛形から作ったもの（`FABRICATED-*.json`）
+  - `SettingsKeyTest`（7 件）：版 3 の期限・時刻の前後関係と境界（5 分の許容・180 日・期限ちょうど）、本番の既定がどの鍵の構成でも失敗すること、T3（固定あり・空・不一致・外された鍵・本番でのテスト用の鍵）、署名の重複・知らない鍵・失効・鍵の交換の順序、署名の関数（別の秘密鍵・一覧に無い鍵の ID・既存の署名への追加・本番の鍵の拒否）、署名のコマンド（要約・期限切れ・方針違反・本番の鍵のファイルを読まないこと）
   - `RulesetSnapshotTest`（8 件、版 2 に合わせた）
   - 鍵は、試験の中でメモリーの中だけに作る。
 - **ワークフローの模擬試験（harness）：**

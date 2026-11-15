@@ -508,6 +508,25 @@ $ createscript install --offline    # the same without the network (from the cac
 - Directories of versions that are no longer used are not removed (removing packages is planned for a later stage).
 - `createscript.json`, `createscript.lock`, `.createscript` and everything in it must not be symbolic links:
   `install` does not write through links.
+- **Directories swapped during an installation (L-5).** Java 21 names files by path, so another program running as
+  the same user could replace a directory on the path with a link between a check and a write. On macOS and Linux,
+  `install` therefore changes files in the project only through a small helper process (`/bin/sh` with a fixed
+  script and the standard `stat`, `mkdir`, `link`, `unlink`, `mv`, `rmdir`, `chmod` and `head` commands; names are
+  passed as arguments and checked, never put into the script):
+  - The helper starts in the project directory and checks its device and inode. It enters the target directory one
+    level at a time and checks that following `..` from there leads back to the project directory. Its working
+    directory is then held by the system, so later swaps of directories on the path do not redirect it.
+  - It works only with single names inside that directory. New files are created exclusively and written only after
+    the open file is confirmed to be the new, empty file with one link; names are given with `link` (never replacing)
+    or `mv -h` / `mv -T` (never entering a link); permissions are changed through the open file; removals use
+    `unlink` and `rmdir`, which remove a link itself.
+  - Nothing moves between directories: package directories are written as `.createscript/packages/<name>/.placing-<id>`
+    and renamed in place, and `createscript.json`, `createscript.lock` and the journal are written next to their final
+    names and renamed in place.
+  - If the helper does not answer within 60 seconds it is stopped and the installation fails.
+  - On Windows (no `/bin/sh`) the earlier path-based checks are used, and the race is not prevented there.
+  - The opt-in race test (`CREATESCRIPT_L5_RACE=1`, `L5RaceTest`) swaps directories during installations and also puts
+    files with the installer's names behind the links; `AnchoredFsTest` swaps them at fixed points.
 - Nothing that is downloaded is run: archives are only checked and unpacked as files.
 
 ### Changing several files safely

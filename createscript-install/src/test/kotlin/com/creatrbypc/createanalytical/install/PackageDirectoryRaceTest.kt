@@ -94,28 +94,27 @@ class PackageDirectoryRaceTest {
 
     // ---- 確かめた直後（移動の直前）に差し替える ----
 
-    // 移動はリンクの先へ行く（防げない）。移動の後の確認で見つけ、成功扱いにしない。リンクの先のファイルは、置かれたものも含めて消さない
+    // S8.3 L-5（作業ディレクトリを固定した子プロセス）: 置く操作は、packages/<name> まで固定した子プロセスが、ルートの中であることを確かめてから行う。
+    // 確かめた直後（置く直前）に差し替えても、リンクの先へは何も書かず・移さず、成功扱いにしない。リンクの先は読まず・消さない
     @Test
-    fun aSwapRightBeforeTheMoveIsFoundAfterIt() {
+    fun aSwapRightBeforeTheMoveWritesNothingOutside() {
         var away: Path? = null
         val failure = assertThrows(InstallFailure::class.java) {
             installer({ if (it == "moving:numbers") away = swapToLink(numbersDir) }).install(spec, false)
         }
         assertNotInstalled(failure)
         val message = failure.message!!
-        assertTrue(message.contains("numbers 3.0.0 was not found in .createscript/packages/numbers/3.0.0 after it was moved there"), message)
-        assertTrue(message.contains("may have been written outside the project; nothing was removed there"), message)
+        assertTrue(message.contains("another program replaced or moved a directory on the way to") && message.contains("L-5"), message)
         // 取り消しは、リンクの先を読まず・消さない
         assertTrue(message.contains(".createscript/packages/numbers/3.0.0 (not touched: .createscript/packages/numbers is a symbolic link"), message)
-        // 外への書き込みは起きた（移動の前には防げない）が、利用者のファイルは変わらず、置かれたものも消していない
-        assertEquals(userFiles, outsideFiles().filterKeys { !it.startsWith("3.0.0") })
-        assertTrue(Files.exists(outside.resolve("3.0.0/.createscript-package.json")))
+        // 外には何も書かれない（以前は、パッケージのディレクトリがリンクの先へ移った）
+        assertEquals(userFiles, outsideFiles())
         assertTrue(Files.isDirectory(away!!))
     }
 
-    // 差し替えて、移動の後にすぐ元のディレクトリに戻すもの（途中のディレクトリは、確かめるときには元のまま）も、置いた場所に無いので見つける
+    // 差し替えて、置いた後にすぐ元のディレクトリに戻すもの: 置く前の確認で止まり、外には何も書かれない
     @Test
-    fun aSwapThatIsUndoneBeforeTheCheckIsFound() {
+    fun aSwapThatIsUndoneAfterwardsWritesNothingOutside() {
         var away: Path? = null
         val failure = assertThrows(InstallFailure::class.java) {
             installer({
@@ -129,9 +128,7 @@ class PackageDirectoryRaceTest {
             }).install(spec, false)
         }
         assertNotInstalled(failure)
-        assertTrue(failure.message!!.contains(".createscript/packages/numbers/3.0.0 is not there"), failure.message)
-        assertTrue(Files.exists(outside.resolve("3.0.0/.createscript-package.json")))
-        assertEquals(userFiles, outsideFiles().filterKeys { !it.startsWith("3.0.0") })
+        assertEquals(userFiles, outsideFiles())
     }
 
     // ---- 移動の後に差し替える ----

@@ -45,6 +45,12 @@ class RulesetSnapshotTest {
     private val ownerB get() = resource("owner-ruleset-B.json")
     private val ownerC get() = resource("owner-ruleset-C.json")
 
+    // main の ruleset（S8.3 U-2、版 3）。GitHub の実際の応答はまだ無いので、雛形から作った応答（FABRICATED と名前に明記）を使う
+    private val idMain = 27200001L
+    private val ownerMain get() = resource("FABRICATED-owner-ruleset-main.json")
+    private val workflowMain get() = readOnly(ownerMain, "never")
+    private lateinit var repoInfo: Path
+
     // 応答の一部を変えたもの（null は項目を消す）
     private fun edit(bytes: ByteArray, changes: Map<String, JsonValue?>): ByteArray {
         val obj = TagRulesets.parse(bytes)!!
@@ -70,13 +76,17 @@ class RulesetSnapshotTest {
         val template = Paths.get("..").toAbsolutePath().normalize().resolve("registry-template/github-settings")
         Files.writeString(repo.resolve(TagRulesets.CREATION_FILE), Files.readString(template.resolve("index-tags-creation-ruleset.json")).replace("\"actor_id\": 0", "\"actor_id\": $publisher"))
         Files.copy(template.resolve("index-tags-protection-ruleset.json"), repo.resolve(TagRulesets.PROTECTION_FILE))
+        Files.writeString(repo.resolve(RulesetSnapshots.MAIN_FILE), Files.readString(template.resolve("main-ruleset.json")).replace("\"integration_id\": 0", "\"integration_id\": $checks"))
+        repoInfo = Files.write(directory.resolve("repository.json"), resource("FABRICATED-repository.json"))
         Files.writeString(repo.resolve(RulesetSnapshots.KEYS_FILE), TrustedKeysFile.write(listOf(key.trusted)))
         live = Files.createDirectories(directory.resolve("live"))
     }
 
+    // main の ruleset は、指定が無ければ読み取りのトークンの表示で加える（版 3 では常に照合される）。何も指定しなければ、何も置かない
     private fun setLive(vararg rulesets: Pair<Long, ByteArray>) {
         Files.list(live).use { s -> s.toList() }.forEach(Files::delete)
         for ((id, bytes) in rulesets) Files.write(live.resolve("ruleset-$id.json"), bytes)
+        if (rulesets.isNotEmpty() && rulesets.none { it.first == idMain }) Files.write(live.resolve("ruleset-$idMain.json"), workflowMain)
     }
 
     private var now: Instant = Instant.parse("2026-11-13T07:00:00Z")
@@ -101,9 +111,9 @@ class RulesetSnapshotTest {
 
     // 所有者の表示から記録し、署名して、リポジトリに置く
     private fun recordAndSign(): ByteArray {
-        setLive(idA to ownerA, idB to ownerB, 27179117L to ownerC)
+        setLive(idA to ownerA, idB to ownerB, 27179117L to ownerC, idMain to ownerMain)
         val out = directory.resolve("snapshot.json")
-        val (code, text) = run(listOf("record-ruleset-snapshot", "--repo", "$repo", "--live", "$live", "--repository", repositoryName, "--recorded-by", "dog7dog", "--checks-app-id", "$checks", "--publisher-app-id", "$publisher", "--out", "$out"))
+        val (code, text) = run(listOf("record-ruleset-snapshot", "--repo", "$repo", "--live", "$live", "--repository-info", "$repoInfo", "--repository", repositoryName, "--recorded-by", "dog7dog", "--checks-app-id", "$checks", "--publisher-app-id", "$publisher", "--out", "$out"))
         assertEquals(0, code, text)
         val snapshot = Files.readAllBytes(out)
         Files.write(repo.resolve(RulesetSnapshots.FILE), snapshot)
@@ -112,7 +122,7 @@ class RulesetSnapshotTest {
     }
 
     private fun check(actor: String = "workflow", allowTestKeys: Boolean = true, pins: Map<String, String> = SettingsKeyPins.OFFICIAL) =
-        run(listOf("check-ruleset-snapshot", "--repo", "$repo", "--live", "$live", "--repository", repositoryName, "--checks-app-id", "$checks", "--publisher-app-id", "$publisher", "--actor", actor), allowTestKeys, pins)
+        run(listOf("check-ruleset-snapshot", "--repo", "$repo", "--live", "$live", "--repository-info", "$repoInfo", "--repository", repositoryName, "--checks-app-id", "$checks", "--publisher-app-id", "$publisher", "--actor", actor), allowTestKeys, pins)
 
     private fun assertFails(result: Pair<Int, String>, expected: String) {
         assertEquals(1, result.first, result.second)
@@ -223,8 +233,10 @@ class RulesetSnapshotTest {
         }
         setLive(idA to workflowA, idB to workflowB, 5L to edit(workflowC, mapOf("id" to JsonWriter.integer(5), "conditions" to null)))
         assertFails(check(), "has no visible conditions")
-        // ブランチの ruleset は関係しない
+        // 版 3: 記録に無いブランチの ruleset は、既定のブランチに当たり得るなら失敗、当たり得ないなら通る
         setLive(idA to workflowA, idB to workflowB, 6L to edit(workflowC, mapOf("id" to JsonWriter.integer(6), "target" to JsonWriter.string("branch"), "conditions" to json("""{"ref_name": {"include": ["~ALL"], "exclude": []}}"""))))
+        assertFails(check(), "may apply to the default branch")
+        setLive(idA to workflowA, idB to workflowB, 6L to edit(workflowC, mapOf("id" to JsonWriter.integer(6), "target" to JsonWriter.string("branch"), "conditions" to json("""{"ref_name": {"include": ["refs/heads/release-*"], "exclude": []}}"""))))
         assertEquals(0, check().first, check().second)
     }
 
@@ -237,7 +249,7 @@ class RulesetSnapshotTest {
         assertFails(check(allowTestKeys = false), "has test keys")
         // テスト専用のビルドでは通る
         val err = ByteArrayOutputStream()
-        val args = listOf("check-ruleset-snapshot", "--repo", "$repo", "--live", "$live", "--repository", repositoryName, "--checks-app-id", "$checks", "--publisher-app-id", "$publisher", "--actor", "workflow")
+        val args = listOf("check-ruleset-snapshot", "--repo", "$repo", "--live", "$live", "--repository-info", "$repoInfo", "--repository", repositoryName, "--checks-app-id", "$checks", "--publisher-app-id", "$publisher", "--actor", "workflow")
         assertEquals(0, TestRegistryTool.run(args, repositoryName, PrintStream(err, true)) { allow -> tool(allow) })
         // 署名が無い・鍵が無い・別の鍵・改ざん
         Files.delete(repo.resolve(RulesetSnapshots.SIGNATURE_FILE))
@@ -274,14 +286,14 @@ class RulesetSnapshotTest {
     // 記録は、bypass_actors が見える管理者の応答からだけ作れる。index-* に当たり得る余分な ruleset があれば記録しない
     @Test
     fun recordingNeedsTheAdministratorsView() {
-        fun record(): Pair<Int, String> = run(listOf("record-ruleset-snapshot", "--repo", "$repo", "--live", "$live", "--repository", repositoryName, "--recorded-by", "dog7dog", "--checks-app-id", "$checks", "--publisher-app-id", "$publisher", "--out", "${directory.resolve("s.json")}"))
+        fun record(): Pair<Int, String> = run(listOf("record-ruleset-snapshot", "--repo", "$repo", "--live", "$live", "--repository-info", "$repoInfo", "--repository", repositoryName, "--recorded-by", "dog7dog", "--checks-app-id", "$checks", "--publisher-app-id", "$publisher", "--out", "${directory.resolve("s.json")}"))
         setLive(idA to workflowA, idB to workflowB)
         assertFails(record(), "bypass_actors is not visible")
         setLive(idA to ownerA, idB to ownerB, 5L to edit(ownerC, mapOf("id" to JsonWriter.integer(5), "conditions" to json("""{"ref_name": {"include": ["refs/tags/*"], "exclude": []}}"""))))
         assertFails(record(), "may apply to index-* tags")
         setLive(idA to ownerA, idB to ownerB)
-        assertFails(run(listOf("record-ruleset-snapshot", "--repo", "$repo", "--live", "$live", "--repository", "dog7dog/Other", "--recorded-by", "dog7dog", "--checks-app-id", "$checks", "--publisher-app-id", "$publisher", "--out", "${directory.resolve("s.json")}")), "must be a ruleset of dog7dog/Other itself")
-        assertEquals(2, run(listOf("check-ruleset-snapshot", "--repo", "$repo", "--live", "$live", "--repository", repositoryName, "--checks-app-id", "$checks", "--publisher-app-id", "$publisher", "--actor", "admin")).first)
+        assertFails(run(listOf("record-ruleset-snapshot", "--repo", "$repo", "--live", "$live", "--repository-info", "$repoInfo", "--repository", "dog7dog/Other", "--recorded-by", "dog7dog", "--checks-app-id", "$checks", "--publisher-app-id", "$publisher", "--out", "${directory.resolve("s.json")}")), "must be a ruleset of dog7dog/Other itself")
+        assertEquals(2, run(listOf("check-ruleset-snapshot", "--repo", "$repo", "--live", "$live", "--repository-info", "$repoInfo", "--repository", repositoryName, "--checks-app-id", "$checks", "--publisher-app-id", "$publisher", "--actor", "admin")).first)
         assertFalse(Files.exists(directory.resolve("s.json")))
     }
 

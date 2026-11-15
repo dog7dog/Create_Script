@@ -42,9 +42,9 @@ class RegistryTool(
           check-release --release FILE --index FILE --sig FILE
           check-settings --ruleset FILE --tag-creation-ruleset FILE --tag-protection-ruleset FILE [--checks-app-id ID --publisher-app-id ID]
           check-live-rulesets --repo DIR --live DIR --checks-app-id ID --publisher-app-id ID
-          record-ruleset-snapshot --repo DIR --live DIR --repository OWNER/NAME --recorded-by LOGIN --checks-app-id ID --publisher-app-id ID --out FILE [--valid-days 1..180]
+          record-ruleset-snapshot --repo DIR --live DIR --repository-info FILE --repository OWNER/NAME --recorded-by LOGIN --checks-app-id ID --publisher-app-id ID --out FILE [--valid-days 1..180]
           sign-ruleset-snapshot --repo DIR --snapshot FILE --key FILE --key-id ID --repository OWNER/NAME --checks-app-id ID --publisher-app-id ID --out FILE [--existing-sig FILE]
-          check-ruleset-snapshot --repo DIR --live DIR --repository OWNER/NAME --checks-app-id ID --publisher-app-id ID --actor workflow|publisher
+          check-ruleset-snapshot --repo DIR --live DIR --repository-info FILE --repository OWNER/NAME --checks-app-id ID --publisher-app-id ID --actor workflow|publisher
     """.trimIndent()
 
     private class Usage(message: String) : Exception(message)
@@ -266,6 +266,9 @@ class RegistryTool(
         return files.map { f -> TagRulesets.parse(readFile(f)) ?: throw ToolFailure("${f.fileName} is not a JSON object") }
     }
 
+    // --repository-info: GET /repos/{owner}/{repo} の応答（既定のブランチの照合に使う）
+    private fun repositoryInfo(options: Map<String, String>): JsonObject? = TagRulesets.parse(file(options, "repository-info"))
+
     private fun repositoryName(options: Map<String, String>): String =
         required(options, "repository").takeIf { Regex("[A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100}").matches(it) } ?: throw Usage("--repository must be owner/name")
 
@@ -279,8 +282,8 @@ class RegistryTool(
         val recordedBy = required(options, "recorded-by")
         val days = options["valid-days"]?.let { it.toLongOrNull() ?: throw Usage("--valid-days must be a number") } ?: RulesetSnapshots.MAX_VALIDITY_DAYS
         val result = RulesetSnapshots.record(
-            readFile(repo.resolve(TagRulesets.CREATION_FILE)), readFile(repo.resolve(TagRulesets.PROTECTION_FILE)), liveRulesets(options),
-            repositoryName(options), recordedBy, clock(), publisher, checks, days,
+            readFile(repo.resolve(TagRulesets.CREATION_FILE)), readFile(repo.resolve(TagRulesets.PROTECTION_FILE)), readFile(repo.resolve(RulesetSnapshots.MAIN_FILE)),
+            liveRulesets(options), repositoryInfo(options), repositoryName(options), recordedBy, clock(), publisher, checks, days,
         )
         result.problems.forEach(report::error)
         val bytes = result.value ?: return report
@@ -310,8 +313,8 @@ class RegistryTool(
         val live = liveRulesets(options)
         if (live.isEmpty()) report.error("no ruleset of the repository could be read, so the tag protection cannot be verified")
         RulesetSnapshots.checkProblems(
-            readFile(repo.resolve(TagRulesets.CREATION_FILE)), readFile(repo.resolve(TagRulesets.PROTECTION_FILE)), snapshot, live,
-            repositoryName(options), publisher, checks, actor, clock(),
+            readFile(repo.resolve(TagRulesets.CREATION_FILE)), readFile(repo.resolve(TagRulesets.PROTECTION_FILE)), readFile(repo.resolve(RulesetSnapshots.MAIN_FILE)),
+            snapshot, live, repositoryInfo(options), repositoryName(options), publisher, checks, actor, clock(),
         ).forEach(report::error)
         if (report.ok) report.notice("the tag rulesets match the signed snapshot ${RulesetSnapshots.FILE} (updated_at unchanged since it was recorded)")
         return report
@@ -332,7 +335,7 @@ class RegistryTool(
         val repo = path(options, "repo")
         val snapshot = file(options, "snapshot")
         val (problems, _) = RulesetSnapshots.snapshotProblems(
-            readFile(repo.resolve(TagRulesets.CREATION_FILE)), readFile(repo.resolve(TagRulesets.PROTECTION_FILE)), snapshot,
+            readFile(repo.resolve(TagRulesets.CREATION_FILE)), readFile(repo.resolve(TagRulesets.PROTECTION_FILE)), readFile(repo.resolve(RulesetSnapshots.MAIN_FILE)), snapshot,
             repositoryName(options), publisher, checks, clock(),
         )
         RulesetSnapshots.summary(snapshot, keyId).forEach(report::notice)

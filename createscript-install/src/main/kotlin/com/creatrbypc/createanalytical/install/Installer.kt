@@ -142,6 +142,11 @@ class Installer internal constructor(
             throw InstallFailure(InstallFailure.Kind.NO_PROJECT, "not a directory: $root")
         }
         if (SafeIo.attributes(realRoot)?.isDirectory != true) throw InstallFailure(InstallFailure.Kind.NO_PROJECT, "not a directory: $root")
+        // S8.3 L-5: プロジェクトの中のファイルを変える操作は、作業ディレクトリを固定した子プロセスで行う（macOS・Linux。Windows では null で、これまでの処理）
+        return SafeIo.withAnchor(AnchoredFs.open(realRoot)) { startIn(realRoot, spec, plan, offline, registry) }
+    }
+
+    private fun startIn(realRoot: Path, spec: PackageSpec?, plan: RegistryPlan?, offline: Boolean, registry: RegistryLookup?): InstallResult {
         val layout = Layout(realRoot)
         if (!SafeIo.exists(layout.manifest)) throw InstallFailure(InstallFailure.Kind.NO_PROJECT, "${Manifests.FILE_NAME} not found in $root (create one with createscript init)")
         // ほかのユーザーが、プロジェクトのディレクトリや .createscript を書き換えられないこと（S8.2 L-5 の案 C）。何かを作る前に確かめる。権限は直さない
@@ -176,8 +181,20 @@ class Installer internal constructor(
     private fun <T> withInstallLock(layout: Layout, body: () -> T): T {
         val attributes = SafeIo.attributes(layout.installLock)
         if (attributes != null && (attributes.isSymbolicLink || !attributes.isRegularFile)) unsafe("${InstallLayout.DIRECTORY}/${InstallLayout.INSTALL_LOCK} is not a regular file; remove it if no installation is running")
+        // S8.3 L-5: 無ければ固定したディレクトリで作り、パスでは作らずに開く（開くだけでは、どのファイルも変えない）
+        val anchored = SafeIo.anchored(layout.installLock)
+        if (anchored && attributes == null) {
+            try {
+                SafeIo.publishContent(layout.installLock, ByteArray(0))
+            } catch (error: FileAlreadyExistsException) {
+                // ほかの install が作った
+            } catch (error: IOException) {
+                unsafe("cannot create ${InstallLayout.DIRECTORY}/${InstallLayout.INSTALL_LOCK}")
+            }
+        }
+        val options = if (anchored) setOf(StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS) else setOf(StandardOpenOption.CREATE, StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS)
         val channel = try {
-            FileChannel.open(layout.installLock, setOf(StandardOpenOption.CREATE, StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS), *SafeIo.fileAttributes(layout.installLock))
+            FileChannel.open(layout.installLock, options, *SafeIo.fileAttributes(layout.installLock))
         } catch (error: IOException) {
             unsafe("cannot open ${InstallLayout.DIRECTORY}/${InstallLayout.INSTALL_LOCK}")
         }
@@ -377,8 +394,10 @@ class Installer internal constructor(
     private fun transact(layout: Layout, owner: Owner, manifestOld: ReadFile, manifestNew: ByteArray, lockOld: ReadFile?, lockNew: ByteArray?, create: List<ResolvedPackage>): List<String> {
         val id = UUID.randomUUID().toString()
         val txn = layout.transaction(id)
+        // このインストールが作ったファイル・ディレクトリの fileKey（S8.3 L-5: 失敗したときに消すのは、これだけ）
+        val owned = HashSet<String>()
         try {
-            SafeIo.createDirectory(txn)
+            SafeIo.createOwnedDirectory(txn, owned)
         } catch (error: IOException) {
             unsafe("cannot create ${relative(layout, txn)}; nothing was changed")
         }
@@ -396,14 +415,14 @@ class Installer internal constructor(
             val journal = Journal(id, Journal.State.PREPARED, manifestOld.identity.sha256, SafeIo.sha256Hex(manifestNew), lockOld?.identity?.sha256, lockNew?.let(SafeIo::sha256Hex), staged, binding)
             val temporary = txn.resolve(Recovery.JOURNAL_TEMP)
             // どのファイルも、書き終えてから最終の名前を付ける（S8.2 N-3: 途中で止まっても、最終の名前の書きかけは残らない）
-            val write = { path: Path, bytes: ByteArray -> SafeIo.writeNew(path, bytes) { step -> hooks.reached(step) }; Unit }
-            write(temporary, journal.write())
+            val write = { path: Path, bytes: ByteArray -> SafeIo.writeNew(path, bytes, { step -> hooks.reached(step) }, owned); Unit }
+            val temporaryKey = SafeIo.writeNew(temporary, journal.write(), { step -> hooks.reached(step) }, owned).fileKey
             hooks.reached("recorded")
             write(txn.resolve(Recovery.MANIFEST_OLD), manifestOld.bytes)
             write(txn.resolve(Recovery.MANIFEST_NEW), manifestNew)
             lockOld?.let { write(txn.resolve(Recovery.LOCK_OLD), it.bytes) }
             lockNew?.let { write(txn.resolve(Recovery.LOCK_NEW), it) }
-            for (p in create) PackageDirectories.stage(txn.resolve(Recovery.STAGING), p, markers.getValue(p.name), { hooks.reached("staging:${p.name}") }, write)
+            for (p in create) PackageDirectories.stage(txn.resolve(Recovery.STAGING), p, markers.getValue(p.name), { hooks.reached("staging:${p.name}") }, write, owned)
             SafeIo.syncDirectory(txn)
             hooks.reached("staged")
             // 書き込んだ .createscript と作業用のディレクトリが、今も同じ実際のディレクトリであること（S8.2 L-5: 途中でリンクに差し替えられたなら、
@@ -414,7 +433,10 @@ class Installer internal constructor(
             }
             // 書き終えた journal.tmp に transaction.json の名前を付けて公開する（S8.2 L-6: ハードリンク、作れなければ原子的な移動。写さない）
             try {
-                SafeIo.publishNew(temporary, layout.journal, fileSystem)
+                // S8.3 L-5: 固定したディレクトリでは、同じ中身を .createscript の中に書いて、置き換えずに公開する（ディレクトリをまたぐリンクを作らない）
+                // （テストが InstallFileSystem でハードリンク・原子的な移動のできないファイルシステムを模すときは、その模した操作で公開する: S8.2 L-6 の試験）
+                val simulated = fileSystem.createLink !== InstallFileSystem.DEFAULT.createLink || fileSystem.atomicMove !== InstallFileSystem.DEFAULT.atomicMove
+                if (SafeIo.anchored(layout.journal) && !simulated) SafeIo.publishContent(layout.journal, journal.write()) else SafeIo.publishNew(temporary, layout.journal, fileSystem)
             } catch (error: FileAlreadyExistsException) {
                 unsafe("${relative(layout, layout.journal)} appeared during the installation; nothing was changed")
             } catch (error: java.nio.file.AtomicMoveNotSupportedException) {
@@ -434,7 +456,8 @@ class Installer internal constructor(
             placementProblem(layout, txn, binding)?.let { unsafe("$it; another program changed ${InstallLayout.DIRECTORY} while the journal was written") }
             if (!SafeIo.exists(layout.journal)) unsafe("${relative(layout, layout.journal)} disappeared while it was written")
             SafeIo.syncDirectory(layout.state)
-            java.nio.file.Files.deleteIfExists(temporary)
+            // journal.tmp の名前を消す（ジャーナルは同じファイルのハードリンク）。作ったファイルであることを確かめてから（S8.3 L-5）
+            SafeIo.deleteVerified(temporary) { aside -> temporaryKey == null || SafeIo.attributes(aside)?.fileKey() == temporaryKey }
             hooks.reached("journal")
             return Recovery(layout, owner, limits, hooks, keys).forward(journal, manifestOld.identity, lockOld?.identity)
         } catch (error: Exception) {
@@ -442,7 +465,7 @@ class Installer internal constructor(
             val written = journalWritten
             if (written == null) {
                 // 作業用のディレクトリが、今もプロジェクトの中の実際のディレクトリであるときだけ消す（リンクの先は消さない。S8.2 L-5）
-                if (!uncertain && SafeIo.chain(layout.root, txn) == SafeIo.Chain.Real) SafeIo.deleteOwnTree(txn)
+                if (!uncertain && SafeIo.chain(layout.root, txn) == SafeIo.Chain.Real) SafeIo.deleteOwnTree(txn, owned)
                 throw (error as? InstallFailure) ?: InstallFailure(InstallFailure.Kind.UNSAFE, "cannot prepare the installation: $reason; nothing was changed")
             }
             val undo = try {
@@ -479,7 +502,14 @@ internal sealed interface PackageState {
     data object Absent : PackageState
 
     // 印と中身が完全に一致する。files はパス（印を含む）の同一性、contents は確かめたときに読んだ中身（keepContents のときだけ。印を除く）
-    class Valid(val marker: Marker, val markerSha256: String, val files: Map<String, Identity>, val contents: Map<String, ByteArray> = emptyMap()) : PackageState
+    // markerBytes は印のバイト列（keepContents のときだけ。S8.3 L-5: パッケージを置く場所へ書き直すのに使う）
+    class Valid(
+        val marker: Marker,
+        val markerSha256: String,
+        val files: Map<String, Identity>,
+        val contents: Map<String, ByteArray> = emptyMap(),
+        val markerBytes: ByteArray? = null,
+    ) : PackageState
 
     class Invalid(val reason: String) : PackageState
 }
@@ -534,7 +564,7 @@ internal object PackageDirectories {
             check(path, name)?.let { return PackageState.Invalid(it) }
         }
         if (files.keys - InstallLayout.MARKER != marker.files.keys) return PackageState.Invalid("some installed files are missing")
-        return PackageState.Valid(marker, markerFile.identity.sha256, files, contents)
+        return PackageState.Valid(marker, markerFile.identity.sha256, files, contents, if (keepContents) markerFile.bytes else null)
     }
 
     // ._ で始まる名前は、macOS が FAT・exFAT などで作る AppleDouble のファイル（S8.2 L-6。検査は弱めず、理由だけを示す）
@@ -558,17 +588,25 @@ internal object PackageDirectories {
     // 作業用のディレクトリ staging/<name>/<version>/ に、印を最初に書いてから展開する（S8.2 L-3: 途中で止まっても、置いたファイルを印と照合できる）。
     // afterMarker は、印を書いた後（テストの中断に使う）
     // write は、ファイルを書く手順（install は、書き終えてから最終の名前を付ける SafeIo.writeNew。S8.2 N-3）
-    fun stage(staging: Path, p: ResolvedPackage, marker: ByteArray, afterMarker: () -> Unit = {}, write: (Path, ByteArray) -> Unit = { path, bytes -> SafeIo.writeNew(path, bytes); Unit }) {
-        SafeIo.directory(staging, create = true)
+    // owned（S8.3 L-5）があれば、作るディレクトリを SafeIo.createOwnedDirectory で作り、その fileKey を加える
+    fun stage(
+        staging: Path,
+        p: ResolvedPackage,
+        marker: ByteArray,
+        afterMarker: () -> Unit = {},
+        write: (Path, ByteArray) -> Unit = { path, bytes -> SafeIo.writeNew(path, bytes); Unit },
+        owned: MutableSet<String>? = null,
+    ) {
+        ownedDirectory(staging, owned)
         val parent = staging.resolve(p.name)
-        SafeIo.directory(parent, create = true)
+        ownedDirectory(parent, owned)
         val directory = parent.resolve(p.version)
-        SafeIo.createDirectory(directory)
+        SafeIo.createOwnedDirectory(directory, owned)
         write(directory.resolve(InstallLayout.MARKER), marker)
         afterMarker()
         for ((path, bytes) in p.files) {
             val target = if (path.startsWith("$MODULES/")) {
-                SafeIo.directory(directory.resolve(MODULES), create = true)
+                ownedDirectory(directory.resolve(MODULES), owned)
                 directory.resolve(MODULES).resolve(path.removePrefix("$MODULES/"))
             } else {
                 directory.resolve(path)
@@ -576,6 +614,18 @@ internal object PackageDirectories {
             write(target, bytes)
         }
         SafeIo.syncDirectory(directory)
+    }
+
+    // 無ければ作る。あれば、リンクでないディレクトリで、owned があればこのインストールが作ったもの
+    private fun ownedDirectory(path: Path, owned: MutableSet<String>?) {
+        if (!SafeIo.exists(path)) {
+            SafeIo.createOwnedDirectory(path, owned)
+            return
+        }
+        SafeIo.directory(path, create = false)
+        if (owned != null && SafeIo.currentId(path)?.let { it in owned } != true) {
+            throw InstallFailure(InstallFailure.Kind.UNSAFE, "$path was not created by this installation (L-5); createscript install stopped")
+        }
     }
 
     // 確かめたディレクトリを消す（印に書かれたファイルを、同一性を確かめてから消す。印は最後）。消さなかったものを返す

@@ -16,9 +16,16 @@ class InstallDependencyTest {
         )
         val root = File("src/main/kotlin/com/creatrbypc/createanalytical/install")
         assertTrue(root.isDirectory, "not found: ${root.absolutePath}")
+        // S8.3 L-5: 例外は AnchoredFs.kt の 1 か所の ProcessBuilder だけ（固定の /bin/sh と、固定のスクリプトの定数。ダウンロードしたものは実行しない）
+        val allowed = "AnchoredFs.kt:         val builder = ProcessBuilder(command).directory(root.toFile()).redirectError(ProcessBuilder.Redirect.DISCARD)"
         val violations = root.walkTopDown().filter { it.extension == "kt" }.flatMap { file ->
             file.readLines().filterNot { it.trim().startsWith("//") }.filter { line -> forbidden.any { line.contains(it) } }.map { "${file.name}: $it" }
-        }.toList()
+        }.toList().filter { it != allowed }
         assertEquals(emptyList<String>(), violations)
+        val helper = File(root, "AnchoredFs.kt").readText()
+        assertEquals(1, Regex("ProcessBuilder\\(").findAll(helper).count())
+        assertTrue(helper.contains("private const val SHELL = \"/bin/sh\""))
+        assertTrue(helper.contains("command += listOf(SHELL, \"-c\", SCRIPT, "), "the helper runs only the constant script")
+        assertTrue(helper.contains("private val SCRIPT = \"\"\""), "the script is a constant")
     }
 }

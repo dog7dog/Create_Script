@@ -131,6 +131,44 @@ class ProjectFileSafetyTest {
         assertEquals(emptyList<String>(), names(directory))
     }
 
+    // 作ったものを開いたままにするのは、照合と削除を終えるまで（成功・失敗のどちらでも、init の後にプロジェクトの記述子は残らない）
+    @Test
+    fun initReleasesWhatItHeldOpen() {
+        assumeTrue(fileKeysAvailable(), "the file system gives no file keys (nothing is held open)")
+        val done = directory.resolve("done").toAbsolutePath()
+        assertEquals(ExitCode.OK, cli("init", done.toString(), "--name", "done").code)
+        val afterSuccess = openUnder(done)
+        assumeTrue(afterSuccess != null, "cannot list the open files of this process")
+        assertEquals(0, afterSuccess, "open after a successful init")
+        val failed = directory.resolve("failed").toAbsolutePath()
+        initFailingAfter(failed) { }
+        assertFalse(Files.exists(failed))
+        assertEquals(0, openUnder(directory.toAbsolutePath()), "open after a rolled-back init")
+    }
+
+    // このプロセスが開いている、root の下のファイル・ディレクトリの数（Linux は /proc/self/fd、macOS は lsof。数えられなければ null）
+    private fun openUnder(root: Path): Int? {
+        val prefix = root.toRealPath().toString()
+        val proc = Path.of("/proc/self/fd")
+        if (Files.isDirectory(proc)) {
+            return Files.list(proc).use { s ->
+                s.toList().count { fd ->
+                    try {
+                        Files.readSymbolicLink(fd).toString().startsWith(prefix)
+                    } catch (error: IOException) {
+                        false
+                    }
+                }
+            }
+        }
+        val lsof = Path.of("/usr/sbin/lsof")
+        if (!Files.isExecutable(lsof)) return null
+        val process = ProcessBuilder(lsof.toString(), "-n", "-P", "-Fn", "-p", ProcessHandle.current().pid().toString()).redirectErrorStream(true).start()
+        val output = process.inputStream.readAllBytes().toString(Charsets.UTF_8)
+        process.waitFor()
+        return output.lines().count { it.startsWith("n") && it.removePrefix("n").startsWith(prefix) }
+    }
+
     // fileKey が取得できない環境（FileIdentity.fileKey が null）では、大きさと内容だけで判断する
     @Test
     fun deletionWithoutFileKeys() {

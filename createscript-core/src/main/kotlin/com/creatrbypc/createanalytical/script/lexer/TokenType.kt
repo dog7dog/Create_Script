@@ -38,6 +38,10 @@ enum class TokenType(val symbol: String? = null) {
     ARROW("->"),
     NOT_NULL_ASSERTION("!!"),
 
+    // パイプライン（第9.1段階）とエラーフォールバック（第9.2段階）
+    PIPE_FORWARD("|>"),
+    FALLBACK("?!"),
+
     PLUS("+"),
     MINUS("-"),
     TIMES("*"),

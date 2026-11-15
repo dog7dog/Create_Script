@@ -296,6 +296,127 @@ println(grid[1][0])
 `listOf(...)` makes a read-only list and `mutableListOf(...)` a list that supports `add`, `removeAt`, `clear`
 and assignment by index. Lists can be nested.
 
+## List functions and lambdas
+
+```kotlin
+val readings = listOf(3, 8, 1, 6, 5)
+println(readings.where { it > 4 })
+println(readings.map { it * 10 })
+println(readings.group { it % 2 })
+readings.each { println(it) }
+println(readings.average())
+```
+
+```text
+[8, 6, 5]
+[30, 80, 10, 60, 50]
+[[3, 1, 5], [8, 6]]
+3
+8
+1
+6
+5
+4.6
+```
+
+- `where { … }` keeps the elements for which the lambda is `true`; `map { … }` makes a list of the results.
+- `group { … }` makes a list of groups (`List<List<T>>`) by the key the lambda returns, in the order the keys
+  first appear. Keys are `Int`, `String` or `Boolean`.
+- `each { … }` runs the lambda for every element. `average()` works on lists of `Int`, `Float` and `Double`,
+  adds in `Double` and gives `NaN` for an empty list, like Kotlin.
+- The functions work on `List` and `MutableList` and do not change the receiver; the result is a new `List`.
+
+A lambda is `{ parameters -> statements }`. A lambda with one parameter can leave it out and use `it`. The value of
+the last expression is the result. Parameter types come from where the lambda is used, and the result type is
+inferred from the body. A lambda after a call or a member name is passed as the last argument
+(`xs.map { … }` is `xs.map({ … })`). `return` is not allowed in a lambda; `break` and `continue` only apply to loops
+inside the lambda.
+
+Lambdas can be kept in a `val` and called, and a function can be passed by reference with `::`:
+
+```kotlin
+fun twice(x: Int): Int {
+    return x * 2
+}
+
+val square = { x: Int -> x * x }
+val isSmall: (Int) -> Boolean = { it < 3 }
+val numbers: MutableList<Int> = mutableListOf()
+numbers.add(1)
+numbers.add(4)
+println(numbers.map(square))
+println(numbers.map(::twice))
+println(numbers.where(isSmall))
+println(square(5))
+```
+
+```text
+[1, 16]
+[2, 8]
+[1]
+25
+```
+
+Without a function type annotation, the parameters of a lambda in a `val` need types. An empty `listOf()` or
+`mutableListOf()` takes its element type from a declared type, an assignment target or a return type.
+
+Lambdas are expanded where they are used (like Kotlin `inline`), so the program and the saved state stay the
+same kind of bytecode as before. A lambda value is a `val`, can be used only in the function (or the top level)
+that declares it, and cannot be stored in a list or property, returned, printed or passed to a user function.
+Function types are allowed only on such a `val`. Lambdas are not allowed in property initializers.
+
+## Pipelines `|>`
+
+```kotlin
+fun scale(x: Int, k: Int): Int {
+    return x * k
+}
+
+val result = listOf(3, 8, 1, 6, 5)
+    |> where { it > 2 }
+    |> map { scale(it, 10) }
+println(result)
+9.0 |> sqrt |> println
+```
+
+```text
+[30, 80, 60, 50]
+3.0
+```
+
+`x |> f` is `f(x)` and `x |> f(a, b)` is `f(x, a, b)`. When the name is a list function (`where`, `map`, `group`,
+`each`, `average`) and no function, method or lambda value has that name, `xs |> map { … }` is `xs.map { … }`.
+A module function needs parentheses: `xs |> stats.odds()`. `|>` binds more loosely than `||`, groups from the
+left, and a line that starts with `|>` continues the previous line.
+
+## Error fallback `?!`
+
+```kotlin
+val values = listOf(4, 0, 2)
+println(values.map { 8 / it ?! -1 })
+println(values[10] ?! 0)
+waitTicks(-1) ?! println("negative wait")
+```
+
+```text
+[2, -1, 4]
+0
+negative wait
+```
+
+`a ?! b` is `a`, but if a runtime error happens while `a` is evaluated (also inside the functions it calls), the
+partial work of `a` is dropped and the result is `b`. Both sides have the same type; a statement can use two `Unit`
+calls. `?!` binds more loosely than every other operator and groups from the right (`a ?! b ?! c` is
+`a ?! (b ?! c)`). Side effects that happened before the error (printed lines, assignments) stay.
+
+The errors that `?!` recovers from come from values: integer overflow, division by zero, a negative `waitTicks`,
+an index out of range, and the math, random and vector errors (`CS_RUN_EMPTY_COERCE_RANGE`, `CS_RUN_ROUND_NAN`,
+`CS_RUN_INVALID_RANDOM_RANGE`, `CS_RUN_INVALID_TOLERANCE`, `CS_RUN_DIMENSION_MISMATCH`, `CS_RUN_INVALID_DIMENSION`,
+`CS_RUN_ZERO_VECTOR`, `CS_RUN_RAGGED_MATRIX`). Limits (stack, call depth, objects, list sizes), invalid bytecode and
+reading a property before it is initialized still stop the program, and an error inside a constructor is not
+recovered outside that constructor. The ranges are a table in the compiled program; a run that is saved and
+restored behaves the same.
+
 ## Math, random numbers, vectors and matrices
 
 ```kotlin

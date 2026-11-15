@@ -284,6 +284,7 @@ object SnapshotVerifier {
         if (program.variableCount !in 0..VmLimits.MAX_VARIABLES || program.instructions.isEmpty()) return Analysis.Invalid
         if (!hasValidClasses(program)) return Analysis.Invalid
         val regions = regionsOf(program) ?: return Analysis.Invalid
+        val handlerAt = handlersOf(program, regions) ?: return Analysis.Invalid
         val size = program.instructions.size
         val frames = arrayOfNulls<Frame>(size)
         frames[0] = Frame(emptyList(), List(program.variableCount) { VariableState.Uninitialized })
@@ -312,6 +313,8 @@ object SnapshotVerifier {
                             if (next <= pc) sweepAgain = true
                         }
                     }
+                    // エラーフォールバックの範囲の命令（第9.2段階）は、実行前の状態のスタックを切り詰めて受け手へも移りうる
+                    handlerAt[pc]?.forEach { handler -> flowTo(handler.handler, toHandler(frame, handler)) }
                     when (instruction.opcode) {
                         Opcode.CALL -> {
                             val function = program.functions.getOrNull(instruction.operand) ?: throw Unverifiable()
@@ -391,12 +394,14 @@ object SnapshotVerifier {
         if (program.variableCount !in 0..VmLimits.MAX_VARIABLES || program.instructions.isEmpty()) return BlockAnalysis.Invalid
         if (!hasValidClasses(program)) return BlockAnalysis.Invalid
         val regions = regionsOf(program) ?: return BlockAnalysis.Invalid
+        val handlerAt = handlersOf(program, regions) ?: return BlockAnalysis.Invalid
         val instructions = program.instructions
         val size = instructions.size
         // ブロックの先頭。CALL もブロックの先頭にする（関数の RETURN の状態が変わったときに、CALL だけを処理し直すため）
         val leader = BooleanArray(size)
         leader[0] = true
         program.functions.forEach { if (it.entry in 0 until size) leader[it.entry] = true }
+        program.handlers.forEach { leader[it.handler] = true }
         for ((pc, instruction) in instructions.withIndex()) {
             when (instruction.opcode) {
                 Opcode.JUMP, Opcode.JUMP_IF_FALSE -> {
@@ -440,6 +445,7 @@ object SnapshotVerifier {
                     while (true) {
                         if (--remainingSteps < 0) throw StepLimit()
                         deepest = maxOf(deepest, frame.stack.size)
+                        handlerAt[pc]?.forEach { handler -> flowTo(handler.handler, toHandler(frame, handler)) }
                         val instruction = instructions[pc]
                         when (instruction.opcode) {
                             Opcode.CALL -> {
@@ -501,6 +507,29 @@ object SnapshotVerifier {
             return if (stepLimit >= maxSteps(program)) BlockAnalysis.Invalid else BlockAnalysis.StepLimitReached
         }
         return BlockAnalysis.Verified(deepest)
+    }
+
+    // エラーフォールバックの範囲（第9.2段階）を命令位置ごとに引く表（範囲の外は null）。範囲は空でなく、範囲・受け手は同じ区間（手続き）にあり、
+    // 受け手は範囲の外で、スタックの深さは上限以内。形が正しくなければ null（検証できない）。範囲の無いプログラムでは何もしない
+    private fun handlersOf(program: CompiledProgram, regions: IntArray): Array<MutableList<ErrorHandler>?>? {
+        val size = program.instructions.size
+        val table = arrayOfNulls<MutableList<ErrorHandler>>(size)
+        for (handler in program.handlers) {
+            if (handler.start !in 0 until size || handler.end !in handler.start + 1..size || handler.handler !in 0 until size) return null
+            if (handler.handler in handler.start until handler.end || handler.stackDepth !in 0..VmLimits.MAX_STACK_DEPTH) return null
+            val region = regions[handler.handler]
+            for (pc in handler.start until handler.end) {
+                if (regions[pc] != region) return null
+                (table[pc] ?: ArrayList<ErrorHandler>().also { table[pc] = it }).add(handler)
+            }
+        }
+        return table
+    }
+
+    // 受け手へ移るときの状態: スタックは範囲の前の深さまで（それより深くなければ検証できない）、変数はそのまま
+    private fun toHandler(frame: Frame, handler: ErrorHandler): Frame {
+        if (frame.stack.size < handler.stackDepth) throw Unverifiable()
+        return Frame(frame.stack.subList(0, handler.stackDepth).toList(), frame.variables, frame.locals)
     }
 
     // 関数のすべての RETURN を合流した大域変数の状態と、結果の型（同じ関数の RETURN はすべて同じ型を返す）
