@@ -22,18 +22,9 @@ why declarations used by `createscript-cli`, `createscript-install` or `createsc
 
 ## Compatibility rules
 
-- Before 1.0, a release can break the Stable API, but only when the break is listed under a `### Changed` or
-  `### Removed` heading of `CHANGELOG.md` with what to use instead.
-- Stable declarations that were in `v0.1.0-alpha` keep their JVM signatures (binary compatibility), as the
-  existing `Program` and `CompiledProgram` compatibility constructors do (`@Deprecated(level = HIDDEN)`).
-- New properties of Stable data classes get default values and go after the existing ones, so constructors
-  and `copy` keep working; a hidden overload keeps the old JVM signature.
-- Saved states: `VmSnapshot` made by an earlier release must still be accepted by `CreateScript.resume`
-  (this is already a rule of the Core; see `docs/language.md` and stage 9.2).
-- Diagnostic code ids (`CS_…`, `CS_PKG_…`) are Stable: an id is never reused for a different meaning. New codes
-  can be added in any release, so a `when` over `DiagnosticCode` or `ProjectDiagnosticCode` needs an `else`.
-  The same holds for `DiagnosticPhase` (this was already announced for `DiagnosticPhase.MODULE`).
-- Internal API can change in any release without a CHANGELOG entry.
+The rules for changing the Stable API, the opt-in policy and how they are checked are in
+[compatibility.md](compatibility.md) (moved there in stage A5a). How to embed the Core is in
+[embedding.md](embedding.md); how to use the project files API is in [project-files.md](project-files.md).
 
 ## `createscript-core`
 

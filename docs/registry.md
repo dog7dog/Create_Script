@@ -285,7 +285,7 @@ These are known limits of the design, not bugs to be fixed later:
 > and strict dependency verification, and the job with the write token builds nothing. Phase 7 revokes the App's
 > token after use, publishes each index as a draft first and checks its assets before making it the latest, and
 > rebuilds the approval base from raw blobs (no `git archive`). The workflow scripts are run against fake `gh` and
-> `curl` by `WorkflowHarnessTest`. None of this has been tried on GitHub (see `docs/registry-github-integration-test.md`).
+> `curl` by `WorkflowHarnessTest`. None of this has been tried on GitHub (see `docs/operations/registry-github-integration-test.md`).
 
 `registry-template/` is the future repository `CreateScript-Registry`: its files (`registry.json`,
 `reserved-names.json`, `maintainers.json`, `keys/trusted-keys.json`, `packages/`, `signed/`), its documents

@@ -290,6 +290,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   replacing the Japanese comments there. `CreateScript.resume` and `ScriptRun.snapshot` describe the limits of saved
   states (an instruction that takes several ticks, such as `vector(...)`, starts again after resuming; a garbage
   collection in progress is not saved). A test checks the first one. No code changed.
+- Documentation (stage A5a): `docs/` is grouped by reader with an index, `docs/README.md` (with a table of old and new
+  paths). The GitHub registry design moved to `docs/design/`, the registry operation documents to `docs/operations/`
+  (`docs/registry-settings-key.md` stays as a page that points to the new place, because registry-tool messages name
+  it). New in `docs/api/`: `embedding.md` (embedding the Core, from the README), `project-files.md` and
+  `compatibility.md` (from `api-surface.md`). `README.md` and `README.ja.md` describe the unreleased changes and the
+  CI results of 2026-11-15. Records (`docs/audits/`, earlier CHANGELOG entries) keep their old paths.
 
 ### Fixed
 

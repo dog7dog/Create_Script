@@ -123,11 +123,11 @@
 
 ### C-7'. 公開専用の GitHub App（Phase 9 で採用、Phase 10A で雛形に実装。**GitHub では未検証**）
 
-- `index-*` のタグを作れる主体を限定するための設計です。全体は `docs/registry-github-architecture.md` にあります。
+- `index-*` のタグを作れる主体を限定するための設計です。全体は `docs/design/registry-github-architecture.md` にあります。
 - 雛形の `publish.yml` の `release` ジョブは、この App のトークンだけで公開します（ジョブの `GITHUB_TOKEN` は読み取りだけ）。
 - 必要な設定：変数 `REGISTRY_PUBLISHER_APP_ID`、environment `publish` の secret `REGISTRY_PUBLISHER_APP_KEY`、ruleset A・B。
 - 公開の前に、`check` ジョブがリポジトリの実際のタグの ruleset を確かめます。GitHub の文書によると、`bypass_actors` は ruleset に書き込める利用者にだけ返されるので、読み取りのトークンでは確かめられず、公開がここで止まる見込みです。どう確かめるかは Phase 10B で決めます。
-- GitHub 上で試験します（`docs/registry-github-integration-test.md` の IT-09・IT-21〜IT-27）。
+- GitHub 上で試験します（`docs/operations/registry-github-integration-test.md` の IT-09・IT-21〜IT-27）。
 - 設計の内容：
   - 2 つめの App「CreateScript Registry Publisher」を作る。権限は Contents: read and write だけで、レジストリのリポジトリだけにインストールする。
   - 秘密鍵は environment `publish` の secret にだけ置く（必須の承認者・自分の承認の禁止・main だけ）。
@@ -135,7 +135,7 @@
     - 更新・削除・non-fast-forward の禁止：回避者なし。
     - 作成の禁止：公開専用の App だけが回避者。
 - この案でも残ること：別の名前の Release と `latest` の変更は防げない。管理者は ruleset を変えられる。App の鍵を持つ人はタグを作れる。
-- 詳細は GOVERNANCE.md の「The publishing GitHub App」と、`docs/registry-github-architecture.md`。
+- 詳細は GOVERNANCE.md の「The publishing GitHub App」と、`docs/design/registry-github-architecture.md`。
 
 ### C-7. トークンの扱い
 

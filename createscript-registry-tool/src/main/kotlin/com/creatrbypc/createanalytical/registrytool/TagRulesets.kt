@@ -6,7 +6,7 @@ import com.creatrbypc.createanalytical.project.JsonObject
 import com.creatrbypc.createanalytical.project.JsonParser
 import com.creatrbypc.createanalytical.project.JsonString
 
-// index-* のタグの ruleset の検査（S8.3 Phase 10A、W2・W3。docs/registry-github-architecture.md の 3 章）。
+// index-* のタグの ruleset の検査（S8.3 Phase 10A、W2・W3。docs/design/registry-github-architecture.md の 3 章）。
 // - A（作成）：規則 creation。回避者は Registry Publisher App（Integration）だけ
 // - B（更新・削除）：規則 update・deletion・non_fast_forward。回避者なし
 // 雛形・案のファイルは exact（規則も回避者も、ちょうどその形）。GitHub の API の応答（live）は、知っている項目だけを読む:

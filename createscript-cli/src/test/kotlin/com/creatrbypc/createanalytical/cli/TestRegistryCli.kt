@@ -17,7 +17,7 @@ import java.nio.file.Paths
 import java.util.Base64
 import kotlin.system.exitProcess
 
-// テスト専用のクライアント（S8.3 Phase 10A、W7）。GitHub の実環境のテスト（docs/registry-github-integration-test.md）で、テスト用の
+// テスト専用のクライアント（S8.3 Phase 10A、W7）。GitHub の実環境のテスト（docs/operations/registry-github-integration-test.md）で、テスト用の
 // レジストリのリポジトリとテスト用の Ed25519 の公開鍵を使って `install` を行う。
 // - テストのソース（src/test）にだけあり、本番の配布物（installDist・パッケージ）には入らない。作るのは
 //   `./gradlew :createscript-cli:testRegistryCli` を明示したときだけ（build/test-registry-cli/、起動スクリプトの名前は createscript-TEST-REGISTRY）

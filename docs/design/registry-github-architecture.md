@@ -2,17 +2,17 @@
 
 > **状態（2026-11-13、S8.3 Phase 10B-2A）：Phase 9 で設計として採用し、Phase 10A で雛形とツールに実装しました。テスト用のリポジトリ（dog7dog/CreateScript-Registry-Test）で、App・ruleset A・B の動作（PT-1〜PT-4、U1〜U7。PT-2 は admin だけ）と、P-18・P-19・P-21 を確かめ、P-20 は一部を確かめました（`docs/audits/S8.3-Phase10B2A-Solo-Integration.md`）。本番では何も確かめていません。**
 >
-> - 案 B'（管理者が記録し、設定の証明用の鍵で署名したスナップショットと、`updated_at` などの見える項目を照合する）を、`createscript-registry-tool` の `record-ruleset-snapshot`・`check-ruleset-snapshot`（`RulesetSnapshots.kt`）として実装し、雛形の `publish.yml` の `check` と `release`（下書きの前と公開の直前の再確認）に接続しました（ローカル。GitHub では未実行）。設定の証明用の鍵の運用は `docs/registry-settings-key.md`（U-1：専用の鍵・ツールに固定した指紋・最大 180 日の期限）。本番の鍵は無く、ツールに固定した指紋も空なので、雛形のままでは公開は止まります。main の ruleset と既定のブランチも、スナップショット版 3（U-2）で照合します（ローカルに実装。ブランチの ruleset での P-19〜P-21 は GitHub で未確認）。
+> - 案 B'（管理者が記録し、設定の証明用の鍵で署名したスナップショットと、`updated_at` などの見える項目を照合する）を、`createscript-registry-tool` の `record-ruleset-snapshot`・`check-ruleset-snapshot`（`RulesetSnapshots.kt`）として実装し、雛形の `publish.yml` の `check` と `release`（下書きの前と公開の直前の再確認）に接続しました（ローカル。GitHub では未実行）。設定の証明用の鍵の運用は `docs/operations/registry-settings-key.md`（U-1：専用の鍵・ツールに固定した指紋・最大 180 日の期限）。本番の鍵は無く、ツールに固定した指紋も空なので、雛形のままでは公開は止まります。main の ruleset と既定のブランチも、スナップショット版 3（U-2）で照合します（ローカルに実装。ブランチの ruleset での P-19〜P-21 は GitHub で未確認）。
 >
 > - 公開専用の GitHub App（Registry Publisher App）を使う方式を、設計の方針として採用しました。
 > - 雛形の `publish.yml` の `release` ジョブは、Publisher App のトークンだけで公開します（W1）。ruleset は A・B の 2 つのファイルです（W2）。`check-settings`・`check-live-rulesets` がそれらを検査します（W3）。テスト専用のビルドもあります（W7）。詳細は `docs/audits/S8.3-Phase10A-Local-Implementation.md`。
 > - どれも、ローカルの模擬の試験だけで確かめています。
-> - この文書の GitHub の動作に関する記述は、すべて GitHub の文書の理解に基づく **前提** です。前提は 7 章に一覧し、`docs/registry-github-integration-test.md` で検証します。
+> - この文書の GitHub の動作に関する記述は、すべて GitHub の文書の理解に基づく **前提** です。前提は 7 章に一覧し、`docs/operations/registry-github-integration-test.md` で検証します。
 >   - **特に、ruleset の回避者（bypass actor）の設定がタグの作成にどう作用するかは、未検証です。**
 >
 > 関連：
 > - `registry-template/GOVERNANCE.md`・`SIGNING.md`・`SECURITY.md`
-> - `docs/registry-production-setup.md`、`docs/registry.md`
+> - `docs/operations/registry-production-setup.md`、`docs/registry.md`
 > - `docs/audits/S8.3-Phase4〜9`
 
 ## 1. Registry Checks App と Registry Publisher App の責務
@@ -156,7 +156,7 @@ index の公開は、2 つの PR と 1 つの公開のワークフローで行�
 
 ## 7. GitHub 上で検証すべき仕様（前提）
 
-太字の「実測」「一部実測」が無いものは **未検証**。実測はすべて、1 人体制のテスト用のリポジトリでの結果で、本番のリポジトリでは何も確かめていない（実測：テスト用リポジトリ dog7dog/CreateScript-Registry-Test、2026-11-13。詳細は `docs/audits/S8.3-Phase10B2A-Solo-Integration.md`）。試験の欄は `docs/registry-github-integration-test.md` の IT と、`docs/registry-github-test-environment-setup.md` の PT。
+太字の「実測」「一部実測」が無いものは **未検証**。実測はすべて、1 人体制のテスト用のリポジトリでの結果で、本番のリポジトリでは何も確かめていない（実測：テスト用リポジトリ dog7dog/CreateScript-Registry-Test、2026-11-13。詳細は `docs/audits/S8.3-Phase10B2A-Solo-Integration.md`）。試験の欄は `docs/operations/registry-github-integration-test.md` の IT と、`docs/operations/registry-github-test-environment-setup.md` の PT。
 
 | ID | 前提 | 試験 |
 |---|---|---|

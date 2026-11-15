@@ -18,7 +18,7 @@ import java.security.Signature
 import java.time.Duration
 import java.time.Instant
 
-// S8.3 U-1: スナップショットの署名鍵の運用（docs/registry-settings-key.md）。snapshotVersion 2 の期限、T3（ツールに固定した指紋）、
+// S8.3 U-1: スナップショットの署名鍵の運用（docs/operations/registry-settings-key.md）。snapshotVersion 2 の期限、T3（ツールに固定した指紋）、
 // sign-ruleset-snapshot、鍵の交換・失効。鍵は、試験の中でメモリーの中だけに作る（TestOnlyKey。ファイルには書かない）。
 // 本番の経路の確認には、test-only- でない ID の、その場で作った鍵（settings-unit-…）を、試験の中だけの指紋の一覧とともに使う
 class SettingsKeyTest {
