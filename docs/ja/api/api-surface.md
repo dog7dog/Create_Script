@@ -1,6 +1,6 @@
 # `createscript-core` と `createscript-project` の API の範囲
 
-> **原文（英語）**：[docs/api/api-surface.md](../../api/api-surface.md)（コミット `4a2192b` の時点）。内容が食い違うときは英語版が正です。
+> **原文（英語）**：[docs/api/api-surface.md](../../api/api-surface.md)（コミット `a945a7b` の時点の英語版に、その後の段階 A5c の修正を反映）。内容が食い違うときは英語版が正です。
 
 状態：**コードに反映し、検査し、文書化した（段階 A4）**。この文書は、2 つのライブラリのモジュールにある、公開されたトップレベルの宣言を
 すべて分類します。段階 A1 で分類し、段階 A2 で Kotlin の explicit API モードと 2 つのオプトインの注釈を使ってコードに反映しました
@@ -41,7 +41,7 @@ Core の組み込み方は [embedding.md](embedding.md)、プロジェクトの�
 | `script.module` | `ModuleResolver`, `ModuleLookup`, `ModuleAccess`, `ScopedModuleResolver`, `ScopedModuleLookup`, `ModuleDiagnostic`, `ModuleCompileResult` | |
 | `script.diagnostic` | `Diagnostic`, `DiagnosticCode`, `DiagnosticPhase`, `DiagnosticSeverity`, `DiagnosticArgument`, `SourcePosition` | |
 | `script.vm` | `CompiledProgram`（型だけ）, `VmState`, `ProgramFingerprint` | `CompiledProgram` は中身を見せないハンドル（不透明な参照）として扱う。コンストラクター・`copy`・プロパティ（`instructions`・`constants`・`functions`・`handlers` など）は内部 API。 |
-| `script.vm`（保存状態） | `VmSnapshot`, `ObjectSnapshot`, `ListSnapshot`, `CallFrameSnapshot`, `Value`, `SnapshotVerifier.SlotType` | 実行を保存するホストは、これらを項目ごとに読み取り、作り直す（CreateAnalytical もそうしている）。データの形として安定 API。未決の問い Q2 を参照。 |
+| `script.vm`（保存状態） | `VmSnapshot`, `ObjectSnapshot`, `ListSnapshot`, `CallFrameSnapshot`, `Value`, `SnapshotVerifier.SlotType` | 実行を保存するホストは、これらを項目ごとに読み取り、作り直す（CreateAnalytical もそうしている）。データの形として安定 API。Q2 でそう決めた（「決定事項」を参照）。 |
 
 ### 内部 API（オプトインが必要）
 
@@ -54,14 +54,14 @@ Core の組み込み方は [embedding.md](embedding.md)、プロジェクトの�
 | `script.compiler` | `Compiler` | `v0.1.0-alpha`。組み込む側は `CreateScript.compile` を使うこと |
 | `script.module` | `ModuleLimits` | `CompileOptions` を通して読む |
 | `script.diagnostic` | `DiagnosticLimits`, `DiagnosticCollector`, `truncateUtf16` | `v0.1.0-alpha` |
-| `script.scheduler` | `Scheduler`, `PowerLevel`, `ExecutionCondition`, `TickResult` | `v0.1.0-alpha`。ゲームのホストのスケジューラー。`RunOptions.gcBudgetPerTick` の既定値は `Scheduler.GC_BUDGET_PER_VM`（値は `RunOptions` に書く予定）。 |
+| `script.scheduler` | `Scheduler`, `PowerLevel`, `ExecutionCondition`, `TickResult` | `v0.1.0-alpha`。ゲームのホストのスケジューラー。`RunOptions.gcBudgetPerTick` の既定値は `Scheduler.GC_BUDGET_PER_VM`（値の 4096 は `RunOptions` に書いてある）。 |
 | `script.vm` | `CsVm`, `Console`, `Opcode`, `Instruction`, `Constant`, `HostFunction`, `FunctionInfo`, `ClassInfo`, `FieldInfo`, `ListShape`, `ErrorHandler`, `VmLimits`, `NumericKind`, `MathFunction`, `LinalgFunction`, `MathResult`, `SnapshotVerifier`（`SlotType` を除く）, `SnapshotProblem` | cli（`Opcode`・`Constant`・`HostFunction`・`SnapshotVerifier`）、`v0.1.0-alpha`。`ErrorHandler` は `CompiledProgram.handlers` から見える。 |
 
 ### モジュール内専用
 
 ありません。ほかのモジュールが使わない core の公開宣言は、どれも `v0.1.0-alpha` にあるか、公開された宣言から見えます
 （例えば `ErrorHandler` は `CompiledProgram.handlers` から、段階 9 の AST のノードは `Program` から）。そのため `internal` にすると、
-コンパイルエラーかバイナリ互換性の破壊になります。A2 では、`internal` にできるかもしれないメンバー（クラスの中の関数とプロパティ）を、もう一度調べます。
+コンパイルエラーかバイナリ互換性の破壊になります。その後 A2 でメンバー（クラスの中の関数とプロパティ）を調べ、core の 20 個のメンバーを `internal` にしました（「A2 での反映」を参照）。
 
 ## `createscript-project`
 
@@ -88,7 +88,7 @@ Core の組み込み方は [embedding.md](embedding.md)、プロジェクトの�
 
 ### モジュール内専用
 
-トップレベルにはありません（候補はどれも install か registry-tool が使っています）。A2 でメンバーを調べます。
+トップレベルにはありません（候補はどれも install か registry-tool が使っています）。A2 で project の 37 個のメンバーを `internal` にしました（「A2 での反映」を参照）。
 
 ## 決定事項（A1 のレビュー、2026-11-15）
 
@@ -108,7 +108,7 @@ Core の組み込み方は [embedding.md](embedding.md)、プロジェクトの�
 トップレベルの `class`・`interface`・`object`・`fun`・`val`・`typealias` の宣言を書き出します。それぞれについて、ほかのモジュールの
 `src/main` か `src/test` がその名前を（パッケージ付きで）参照しているかと、`v0.1.0-alpha` のソース（`git archive v0.1.0-alpha`）に
 同じ名前の公開宣言があるかを記録しました。使われているかの判定は名前の一致で行うので、多めに数えることがあります。
-メンバーの単位の分類は、A2 でコンパイラーを使って行います。
+メンバーの単位の分類は、A2 でコンパイラーを使って行いました。
 
 ## A2 での反映
 
@@ -139,7 +139,7 @@ Core の組み込み方は [embedding.md](embedding.md)、プロジェクトの�
   コンパイルしたホスト（`compat/v010alpha/OldSnapshotHost`）を動かします。4・5・7・11 tick ごとに保存し、`v0.1.0-alpha` のコンストラクターで
   状態を作り直して再開し、中断なしの実行と同じ出力を得ます。tick をまたぐ命令（`vector(...)` などの線形代数の演算）は、途中までの状態では
   保存されず、復元するとやり直します。命令 1 つごとに復元するホストは、その命令の先へ進めません。これは既存の挙動で、A4 で
-  `CreateScript.resume` に書く予定です。
+  `CreateScript.resume` に書きました（「KDoc（A4）」を参照）。
 
 ## API の一覧（A3）
 

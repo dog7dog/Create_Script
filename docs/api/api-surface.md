@@ -10,7 +10,7 @@ Inventory taken on `main` at `b80f73d` (2026-11-15). 172 public top-level declar
 
 ## Tiers
 
-| Tier | Meaning | How it will be marked (A2) |
+| Tier | Meaning | How it is marked (A2) |
 |---|---|---|
 | **Stable** | Supported for hosts and tools. Changes follow the compatibility rules below. | Plain `public`, KDoc required (A4), in the API listing (A3). |
 | **Internal API** | Public on the JVM because other modules of this repository use it, or because it is part of `v0.1.0-alpha`. No compatibility promise; it can change in any release. | `@InternalCreateScriptApi` (core) or `@InternalCreateScriptProjectApi` (project): `@RequiresOptIn` annotations, level `WARNING`. The CLI, install and registry-tool modules opt in. |
@@ -37,7 +37,7 @@ The rules for changing the Stable API, the opt-in policy and how they are checke
 | `script.module` | `ModuleResolver`, `ModuleLookup`, `ModuleAccess`, `ScopedModuleResolver`, `ScopedModuleLookup`, `ModuleDiagnostic`, `ModuleCompileResult` | |
 | `script.diagnostic` | `Diagnostic`, `DiagnosticCode`, `DiagnosticPhase`, `DiagnosticSeverity`, `DiagnosticArgument`, `SourcePosition` | |
 | `script.vm` | `CompiledProgram` (the type only), `VmState`, `ProgramFingerprint` | `CompiledProgram` is an opaque handle: its constructor, `copy` and properties (`instructions`, `constants`, `functions`, `handlers` …) are Internal API. |
-| `script.vm` (saved state) | `VmSnapshot`, `ObjectSnapshot`, `ListSnapshot`, `CallFrameSnapshot`, `Value`, `SnapshotVerifier.SlotType` | Hosts that save runs read and rebuild these field by field (CreateAnalytical does). Stable as a data shape; see open question Q2. |
+| `script.vm` (saved state) | `VmSnapshot`, `ObjectSnapshot`, `ListSnapshot`, `CallFrameSnapshot`, `Value`, `SnapshotVerifier.SlotType` | Hosts that save runs read and rebuild these field by field (CreateAnalytical does). Stable as a data shape, as decided in Q2 (see "Decisions"). |
 
 ### Internal API (opt-in)
 
@@ -50,15 +50,15 @@ The rules for changing the Stable API, the opt-in policy and how they are checke
 | `script.compiler` | `Compiler` | `v0.1.0-alpha`; embedders should use `CreateScript.compile` |
 | `script.module` | `ModuleLimits` | read through `CompileOptions` |
 | `script.diagnostic` | `DiagnosticLimits`, `DiagnosticCollector`, `truncateUtf16` | `v0.1.0-alpha` |
-| `script.scheduler` | `Scheduler`, `PowerLevel`, `ExecutionCondition`, `TickResult` | `v0.1.0-alpha`; the game host's scheduler. `RunOptions.gcBudgetPerTick` defaults to `Scheduler.GC_BUDGET_PER_VM` (the value will be documented on `RunOptions`). |
+| `script.scheduler` | `Scheduler`, `PowerLevel`, `ExecutionCondition`, `TickResult` | `v0.1.0-alpha`; the game host's scheduler. `RunOptions.gcBudgetPerTick` defaults to `Scheduler.GC_BUDGET_PER_VM` (the value, 4096, is documented on `RunOptions`). |
 | `script.vm` | `CsVm`, `Console`, `Opcode`, `Instruction`, `Constant`, `HostFunction`, `FunctionInfo`, `ClassInfo`, `FieldInfo`, `ListShape`, `ErrorHandler`, `VmLimits`, `NumericKind`, `MathFunction`, `LinalgFunction`, `MathResult`, `SnapshotVerifier` (except `SlotType`), `SnapshotProblem` | cli (`Opcode`, `Constant`, `HostFunction`, `SnapshotVerifier`); `v0.1.0-alpha`. `ErrorHandler` is exposed by `CompiledProgram.handlers`. |
 
 ### Module-private
 
 None. Every public core declaration that no other module uses is either in `v0.1.0-alpha` or exposed by a
 public declaration (for example `ErrorHandler` by `CompiledProgram.handlers` and the stage 9 AST nodes by
-`Program`), so making it `internal` would be a compile error or a binary break. A2 will look again at
-members (functions and properties inside classes), where `internal` may still apply.
+`Program`), so making it `internal` would be a compile error or a binary break. A2 then checked the members
+(functions and properties inside classes) and made 20 core members `internal` (see "Applied in A2").
 
 ## `createscript-project`
 
@@ -85,7 +85,8 @@ The module did not exist in `v0.1.0-alpha`, so nothing here has a binary compati
 
 ### Module-private
 
-None at the top level (every candidate is used by install or registry-tool). A2 will look at members.
+None at the top level (every candidate is used by install or registry-tool). A2 made 37 project members `internal`
+(see "Applied in A2").
 
 ## Decisions (A1 review, 2026-11-15)
 
@@ -108,7 +109,7 @@ The inventory was taken with a small script outside the repository. It lists top
 `createscript-project/src/main`. For each one it records whether another module's `src/main` or `src/test`
 refers to the name (with its package), and whether a declaration of the same name is public in the
 `v0.1.0-alpha` sources (`git archive v0.1.0-alpha`). The use check matches names and can over-report.
-Member-level classification is done in A2 with the compiler.
+Member-level classification was done in A2 with the compiler.
 
 ## Applied in A2
 
@@ -144,7 +145,7 @@ Checked with the compiler and with `javap` on the built jars (2026-11-15, on top
   11 ticks, rebuilds the state with the `v0.1.0-alpha` constructors, resumes and gets the output of a run without
   interruptions. An instruction that spans ticks (`vector(...)` and the other linear algebra operations) is not
   saved half done: after a restore it starts again. A host that restores after every single instruction would not
-  get past it; this is existing behaviour, to be documented on `CreateScript.resume` in A4.
+  get past it; this is existing behaviour, documented on `CreateScript.resume` in A4 (see "KDoc (A4)").
 
 ## API listing (A3)
 

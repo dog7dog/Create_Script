@@ -301,6 +301,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   path and commit of its English source; `README.ja.md` links to them. `DocsTranslationTest` (createscript-cli, code in
   `test-support/docs-check/`, no new dependency) checks that each Japanese document keeps the headings, code, tables,
   links, `CS_...` ids and numbers of its source, and that every relative link and anchor in the Markdown files exists.
+- Documentation (stage A5c): outdated English text corrected, with the Japanese versions in step. `docs/packages.md`
+  describes the current package features, the import hooks that S8.2 Phase 4 added to the Core, and L-5 by the
+  records of `docs/audits/S8.3-L5-Java21-Assessment.md` (the `AnchoredFs` protection on macOS and Linux, its test
+  results and limits; Windows unresolved). `docs/cli.md` lists the commands of `createscript --help`;
+  `docs/api/api-surface.md` describes the A2 and A4 work as done.
 
 ### Fixed
 

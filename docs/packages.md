@@ -1,9 +1,12 @@
 # Project files: `createscript.json` and `createscript.lock`
 
-> **Status: in development, not in v0.1.0-alpha.** This is the first step towards packages (S8.1). The
-> command can create and check these files. It does **not** download, install or resolve packages yet: there
-> is no network access, no registry and no `createscript install`. `createscript run` does not read these
-> files yet.
+> **Status: in development, not in v0.1.0-alpha.** S8.1 added these files and the commands that create and check
+> them. S8.2 added package archives and `createscript pack` ([Package archives](#package-archives-createscript-packagezip)),
+> downloading and installing packages with `createscript install github:owner/repo@v1.2.0`
+> ([Installing packages](#installing-packages-s82-phase-3)), and running a project with its installed packages with
+> `createscript run [directory]` ([Running installed packages](#running-installed-packages-s82-phase-4)). Only exact
+> versions are supported; version ranges and dependency resolution are planned for S8.4. The signed registry (S8.3,
+> [registry.md](registry.md)) is not published, so `createscript install <name>@<version>` refuses.
 
 A CreateScript project is a directory with a manifest, `createscript.json`. A project that uses other
 packages will also have a lock file, `createscript.lock`, which records exactly which packages were used.
@@ -116,7 +119,7 @@ short parts of them in diagnostics.
   New fields will come with a new `schemaVersion`.
 - **Package names are not module names.** `import` uses module names (identifiers such as `vector_math`);
   package names may contain `-`. The two are separate, and nothing converts one into the other. How a package's
-  modules are imported will be defined when packages can be installed.
+  modules are imported is described in [Modules from packages](language.md#modules-from-packages).
 - **Entry paths** use `/` between directories and must end in `.cscr`. These are rejected: an empty path,
   absolute paths (`/x`, `//server/x`), `\`, `:` (drive letters and URLs), empty names (`a//b`, a trailing `/`),
   `.` and `..`, characters other than ASCII letters, digits, `.`, `_` and `-`, names ending in `.`, names that
@@ -386,7 +389,9 @@ even if the contents are the same. This makes lock files reproducible and their 
 - `CS_PKG_LOCK_DUPLICATE_PACKAGE`, `CS_PKG_LOCK_DUPLICATE_DEPENDENCY`, `CS_PKG_LOCK_UNKNOWN_DEPENDENCY`,
   `CS_PKG_LOCK_DEPENDENCY_CYCLE`: problems inside the lock file.
 
-In S8.1 the SHA-256 is only checked for its form; nothing is downloaded, so there is no archive to compare it with.
+`createscript lock check` checks only the form of the SHA-256: it downloads nothing, so there is no archive to compare
+it with. `createscript install` compares it with the downloaded or cached archive, and `createscript run [directory]`
+with the archive made again from the installed files (see [Running installed packages](#running-installed-packages-s82-phase-4)).
 
 ## JSON rules (both files)
 
@@ -433,7 +438,10 @@ know it; we did not run them for S8.1.
   `./gradlew --write-verification-metadata sha256 build installDist` and review the difference.
 - `createscript-cli`: reads and writes the files, checks the entry file on disk, and implements `init`,
   `manifest check`, `lock check`, `pack` and `install` (including `install <name>@<version>`).
-- `createscript-core` (the language, compiler and virtual machine) is unchanged.
+- `createscript-core` (the language, compiler and virtual machine): the language and the virtual machine are
+  unchanged. S8.2 Phase 4 added two ways for hosts to control imports, `ModuleAccess` and
+  `CreateScript.compileScoped` with a `ScopedModuleResolver` (see [Modules from packages](language.md#modules-from-packages)).
+  The Core still reads no files and uses no network.
 
 ## Installing packages (S8.2 Phase 3)
 
@@ -643,6 +651,14 @@ When a step fails, the installation is undone at once. When the process stops (a
 - When the installation that runs after a recovery fails (for example, `--offline` and a package not in the cache),
   its message still says that an interrupted installation was finished or undone first.
 
+Known limits of these steps: `install` checks `createscript.json`, `createscript.lock` and the files it removes
+(SHA-256 and, where the file system reports one, `fileKey`) and then replaces or removes them in a separate step, so a
+program running as your user that changes such a file in the moment between the two is not always noticed. On macOS
+and Linux the helper still works inside the checked directory, so such a change cannot redirect the step outside the
+project (see L-5 below), but the file is replaced by its name without being checked again. Where the file system has
+no `fileKey`, a file replaced by another one with the same contents and size cannot be told apart. Windows has not
+been tried. `run` does not have this gap: it compiles the bytes that it checked.
+
 #### Checking an interrupted installation by hand
 
 When `createscript install` stops with "cannot be finished or undone safely", it has changed nothing. Its message
@@ -699,10 +715,6 @@ network drives, to store extended attributes) are not supported: the package dir
 exactly the installed files. `createscript install` finds this with a test file before it changes anything and
 stops with exit code 73; `run` refuses such files in package directories and names the reason.
 
-Known limits: checks and renames are separate steps, so a program that changes a file in the moment between them
-is not always noticed (Java names files by path); a file whose contents and size stay the same after a change
-cannot be told apart where the file system has no `fileKey`. Windows has not been tried.
-
 #### Directories that other users can change
 
 Before it changes anything, `createscript install` checks the owner and the permissions of the project root, of
@@ -726,28 +738,52 @@ is harmless). Where the owner and permissions cannot be read, as on file systems
 (Windows, for example), `install` and `run` with packages stop instead of guessing; installing packages on Windows
 is therefore not possible yet. Linux has the same rules but has not been tried. The check makes it impossible for
 other users to replace the directories, since only the owner and `root` can change their permissions; it does
-not stop programs that run as you, and it does not remove the race described below.
+not stop programs that run as you. Directories replaced by symbolic links during an installation are a separate
+problem (L-5, below).
 
-Directories replaced by symbolic links during an installation: Java on macOS (JDK 21) has no way to move a file
-relative to a directory that is already open (`SecureDirectoryStream`, `openat` and `renameat` are not available),
-so every move names its target by path again. A program running as your user that replaces
-`.createscript/packages/<name>` (or another directory on the way) with a symbolic link in the moment between the
-check and the move makes the move put the package directory behind the link, outside the project. This cannot be
-prevented. What `createscript install` does: it finds this after the move, does not report success, does not
-write `createscript.json` or `createscript.lock`, undoes the installation, and does not read, change or remove
-anything behind the link (including the package that was moved there; the message says where it may be). In a
-test that replaced the directory again and again during 1,200 installations, packages were moved outside the
-project 92 times, no installation was reported as successful, and no other file outside the project was changed.
-A replacement after the last check (just before the lock file is written) is not noticed by `install`; `run`
-refuses symbolic links in `.createscript/packages`. Only programs that can already change the project can do
-this; keep projects in directories that only you can write to.
+Directories replaced by symbolic links during an installation (L-5): Java 21 has no portable way to work relative to
+a directory that is already open (on macOS, `SecureDirectoryStream`, `openat` and `renameat` are not available), so an
+operation that names its target by path can be redirected when a program running as your user replaces
+`.createscript/packages/<name>` (or another directory on the way) with a symbolic link between a check and the
+operation. On macOS and Linux, `install` therefore makes its changes in the project through the helper process
+described in [Files](#files) (`AnchoredFs`). On Windows it still uses the path-based checks, and this is not resolved
+there.
 
-This is still unresolved (S8.3 Phase 8, `docs/audits/S8.3-Phase8-Security-Hardening.md`). In the latest tests
-(10 ways of replacing directories, including the project directory itself; 4,200 installations per run on
-macOS), new files or a staged package directory ended up outside the project in 0.2% to 0.7% of the
-installations. No existing file was changed and no installation was reported as successful. The test is
-`L5RaceTest`; it runs only with `CREATESCRIPT_L5_RACE=1`. A complete fix needs file operations relative to open
-directories, which JDK 21 does not offer on macOS.
+The tests in the records (`docs/audits/S8.3-L5-Java21-Assessment.md`, sections 5.3 and 5.7) replaced directories from
+another thread of the same user during installations, with decoy files of the installer's names behind the links:
+
+| Test (`L5RaceTest`) | Environment | Result |
+|---|---|---|
+| 14 ways × 300 = 4,200 installations, before `AnchoredFs` | macOS, Temurin 21.0.12 | 77 writes outside the project (mostly empty `.part-` files; 1 with contents, a moved package directory) |
+| 14 ways × 300 = 4,200 installations, with `AnchoredFs` | macOS (Darwin 25.3, Apple Silicon), Temurin 21.0.12 | 0 writes outside the project, 0 existing files changed or removed, 0 installations wrongly reported as successful; 2,092 of the 2,100 installations with a single replacement succeeded, the other 8 stopped as unsafe |
+| 14 ways × 60 = 840 installations, with `AnchoredFs` | Linux (Docker `eclipse-temurin:21-jdk`, `/bin/sh` is dash, GNU coreutils), Temurin 21.0.13 | the same zeros; 420 of the 420 installations with a single replacement succeeded |
+| 14 ways × 60 = 840 installations, after the final fix of 2026-11-15 | macOS, Temurin 21.0.12 | the same zeros; 418 of the 420 installations with a single replacement succeeded, the other 2 stopped as unsafe |
+
+These results have limits, and so does the protection:
+
+- The tests cover the ways of replacing directories that they implement. `L5RaceTest` runs only with
+  `CREATESCRIPT_L5_RACE=1`, so it does not run in CI; on Linux it was run only in Docker. The test of a permission
+  change that fails runs on macOS only.
+- The protection covers the changes that `install` makes in the project. The caches outside the project keep their
+  earlier checks.
+- If a program moves the installation's own directory out of the project while it runs, later writes go to the moved
+  directory (its contents are the package being installed and this installation's copies, not your files).
+- The project is the directory found at its real path when the installation starts (device and inode); a project
+  directory replaced before that is taken as the project.
+- `install.lock` is opened by path, so it can open a file of the same name at the replaced location. Its contents are
+  not changed, but the lock then has no effect.
+- A helper that does not answer is stopped after 60 seconds, and the installation fails. On macOS, checking the
+  helper's open file through `/dev/fd` sometimes fails for a moment ("Bad file descriptor"); the cause is not known.
+  The helper reads again up to 5 times and otherwise stops the installation, which is then not reported as successful.
+- A program that runs as your user can change the files of the project directly, without the installer; nothing here
+  stops that. Keep projects in directories that only you can write to.
+
+The assessment records its result as resolved on macOS and Linux under these premises and limits, unresolved on
+Windows, and partly resolved overall (section 5.5). Earlier records, before `AnchoredFs`: with the checks before and
+after each move (S8.2, commit `c9d98f8`), a test of 1,200 installations moved packages outside the project 92 times;
+S8.3 Phase 8 (`docs/audits/S8.3-Phase8-Security-Hardening.md`) measured 23 writes outside the project in 3,360
+installations (8 ways) and 7 in 4,200 (10 ways, including the project directory itself). In all of them no existing
+file was changed and no installation was reported as successful.
 
 ### Still planned
 

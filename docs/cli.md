@@ -3,15 +3,20 @@
 ```
 createscript                         interactive mode (REPL)
 createscript run <file.cscr> [options]
+createscript run [directory] [options]
 createscript init [directory] [--name <name>]
 createscript manifest check [directory]
 createscript lock check [directory]
 createscript pack [directory] [--output <file>]
+createscript install [github:<owner>/<repo>@v<version>] [directory] [--offline]
+createscript install <name>@<version> [directory] [--offline]
 createscript --help      (-h)
 createscript --version
 ```
 
-The detailed Japanese manual is [createscript-cli/README.md](../createscript-cli/README.md).
+These are the commands of `createscript --help`. `createscript install <name>@<version>` refuses until the official
+registry is published (see [Project files](#project-files)). The detailed Japanese manual is
+[createscript-cli/README.md](../createscript-cli/README.md).
 
 ## Running a file
 

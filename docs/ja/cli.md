@@ -1,23 +1,23 @@
 # `createscript` コマンド
 
-> **原文（英語）**：[docs/cli.md](../cli.md)（コミット `4a2192b` の時点）。内容が食い違うときは英語版が正です。
+> **原文（英語）**：[docs/cli.md](../cli.md)（コミット `a945a7b` の時点の英語版に、その後の段階 A5c の修正を反映）。内容が食い違うときは英語版が正です。
 
 ```
 createscript                         interactive mode (REPL)
 createscript run <file.cscr> [options]
+createscript run [directory] [options]
 createscript init [directory] [--name <name>]
 createscript manifest check [directory]
 createscript lock check [directory]
 createscript pack [directory] [--output <file>]
+createscript install [github:<owner>/<repo>@v<version>] [directory] [--offline]
+createscript install <name>@<version> [directory] [--offline]
 createscript --help      (-h)
 createscript --version
 ```
 
-日本語の詳しい説明書は [createscript-cli/README.md](../../createscript-cli/README.md) です。
-
-> [!NOTE]
-> **訳注**：上の一覧（原文のまま）には `createscript install` と `createscript run [directory]`（プロジェクトの実行）が載っていませんが、
-> どちらも使えます。下の「プロジェクトを実行する」と「プロジェクトのファイル」の節で説明しています。
+これらは `createscript --help` が示すコマンドです。`createscript install <name>@<version>` は、公式のレジストリを公開するまで拒否します
+（[プロジェクトのファイル](#プロジェクトのファイル) を参照）。日本語の詳しい説明書は [createscript-cli/README.md](../../createscript-cli/README.md) です。
 
 ## ファイルを実行する
 
