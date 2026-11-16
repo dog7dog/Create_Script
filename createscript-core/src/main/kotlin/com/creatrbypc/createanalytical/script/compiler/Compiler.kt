@@ -101,9 +101,17 @@ public data class CompileResult(
  * the runtime limits (instructions per tick, stack, call depth, objects, lists), which are the same for every
  * option. The limits on constants, variables, parameters and properties are fixed too.
  *
- * Without an instruction limit the size of a program is still bounded by the input limits. Checking the bytecode
- * at the end of each compilation takes time and memory about in proportion to the instructions (measured on a
- * development machine: about 2.4 seconds and 180 MiB for 65,535 instructions of a shape that is slow to check).
+ * Without an instruction limit the size of a program is still bounded by the input limits. Every compilation ends
+ * with a check of the bytecode, and [maxVerificationSteps] decides how:
+ * - `null` (the default, also in [DEFAULT] and [EMBEDDED]): the check keeps a state for every instruction, so its time
+ *   and memory grow with the number of instructions. Its only bound on steps is the one derived from the program,
+ *   which a correct program never reaches.
+ * - a limit (100,000,000 in [STANDALONE]): the check keeps states only at the start of basic blocks, with the same
+ *   rules, and a program that needs more steps gets `CS_COMP_PROGRAM_TOO_COMPLEX`.
+ *
+ * A host that removes the instruction limit or raises the input limits should also set [maxVerificationSteps], as
+ * [STANDALONE] does. Time and memory measured with the standalone limits are in the language documentation
+ * (docs/language.md, "Program size").
  *
  * @property maxInstructions the most bytecode instructions of the whole program, or `null` for no limit
  *   (default 4096).

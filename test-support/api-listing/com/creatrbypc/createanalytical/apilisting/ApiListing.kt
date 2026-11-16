@@ -12,7 +12,8 @@ import java.util.spi.ToolProvider
 // What is listed: public classes whose outer classes are public too (not synthetic), and their public and protected
 // fields, constructors and methods that are not synthetic. Each line is the javap declaration. A field that is a
 // constant also shows its value (code that uses it copies the value). After `//` a line can show:
-//   opt-in      the declaration needs opt-in (it, a class around it, or for a getter its property, has the marker)
+//   opt-in      the declaration needs opt-in (it, a class around it, or for a getter or a constant field its property,
+//               has the marker). A marker on a property that no listed declaration picks up fails the listing.
 //   returns !/? the result is @NotNull / @Nullable
 //   params      one mark per parameter: ! (@NotNull), ? (@Nullable), - (neither)
 //
@@ -78,6 +79,7 @@ object ApiListing {
             out.append('\n')
             val annotationHolders = info.members.filter { it.methodName()?.endsWith("\$annotations") == true }
                 .associateBy { it.methodName()!!.removeSuffix("\$annotations") }
+            val usedHolders = HashSet<String>()
             val lines = ArrayList<String>()
             for (member in info.members) {
                 val flags = member.flags
@@ -85,7 +87,16 @@ object ApiListing {
                 val name = member.methodName() ?: member.fieldName()
                 if (name != null && (name.endsWith(mangled) || name.contains("$mangled\$") || name.endsWith("\$annotations"))) continue
                 val notes = ArrayList<String>()
-                val optIn = classOptIn || marked(member.annotations) || (name != null && annotationHolders[name]?.let { marked(it.annotations) } == true)
+                // A getter shares its name with the holder. A constant (or @JvmField) field has no getter: its holder is
+                // named like the getter the property would have, `get` + the name with its first letter in upper case.
+                val holderName = when {
+                    name == null -> null
+                    name in annotationHolders -> name
+                    member.fieldName() != null -> getterName(name).takeIf { it in annotationHolders }
+                    else -> null
+                }
+                holderName?.let { usedHolders.add(it) }
+                val optIn = classOptIn || marked(member.annotations) || (holderName != null && marked(annotationHolders.getValue(holderName).annotations))
                 if (optIn) notes.add("opt-in")
                 member.annotations.firstNotNullOfOrNull { NULLABILITY[it] }?.let { if (member.methodName() != null || member.fieldName() != null) notes.add("returns $it") }
                 if (member.parameters.isNotEmpty()) {
@@ -95,9 +106,19 @@ object ApiListing {
                 lines.add("  " + declaration + if (notes.isEmpty()) "" else "  // " + notes.joinToString("; "))
             }
             lines.sorted().forEach { out.append(it).append('\n') }
+            // A marker on a property that no listed declaration picks up would be missing from the listing (as the
+            // marker of a top-level constant was before R2.5), so such a holder fails the listing instead
+            val missed = annotationHolders.filter { (holder, member) -> holder !in usedHolders && marked(member.annotations) }.keys.sorted()
+            check(missed.isEmpty()) {
+                "${info.name}: the opt-in marker on ${missed.joinToString { "$it\$annotations" }} applies to no listed declaration"
+            }
         }
         return out.toString()
     }
+
+    // The JVM getter name of a Kotlin property (`count` -> `getCount`, `FUNCTION_TYPE_NAME` -> `getFUNCTION_TYPE_NAME`).
+    // Properties named `isX` keep their name, and their holder is found by the name itself.
+    private fun getterName(property: String): String = "get" + property.replaceFirstChar { it.uppercaseChar() }
 
     private fun Member.methodName(): String? = Regex("""([\w$<>]+)\(""").find(declaration)?.groupValues?.get(1)
 

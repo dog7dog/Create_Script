@@ -21,12 +21,12 @@ class ApiListingTest {
             println("Wrote ${listingFile.name}")
             return
         }
-        if (!listingFile.isFile) fail<Unit>("${listingFile.name} is missing. Make it with ${ApiListing.UPDATE_VARIABLE}=1 ./gradlew :createscript-projectest --tests '*ApiListingTest*'")
+        if (!listingFile.isFile) fail<Unit>("${listingFile.name} is missing. Make it with ${ApiListing.UPDATE_VARIABLE}=1 ./gradlew :createscript-project:test --tests '*ApiListingTest*'")
         val expected = listingFile.readText().replace("\r\n", "\n")
         if (expected != actual) {
             fail<Unit>(
                 "The public API of createscript-project differs from ${listingFile.name}. If the change is intended, run " +
-                    "${ApiListing.UPDATE_VARIABLE}=1 ./gradlew :createscript-projectest --tests '*ApiListingTest*' and review the diff.\n" +
+                    "${ApiListing.UPDATE_VARIABLE}=1 ./gradlew :createscript-project:test --tests '*ApiListingTest*' and review the diff.\n" +
                     ApiListing.difference(expected, actual),
             )
         }

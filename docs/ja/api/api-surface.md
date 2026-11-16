@@ -166,8 +166,9 @@ CREATESCRIPT_API_UPDATE=1 ./gradlew :createscript-core:test --tests '*ApiListing
 
 - 外側のクラスも公開されている公開クラス（合成のものを除く）と、その public と protected のフィールド・コンストラクター・メソッドのうち
   合成でないもの。`javap` が出力する形で、並べ替えてあります。定数のフィールドは値も示します。使う側のコードが値を写すためです。
-- `//` の後ろの印：宣言にオプトインが必要なら `opt-in`（宣言そのもの、それを囲むクラス、getter ならそのプロパティに
-  `@InternalCreateScriptApi` か `@InternalCreateScriptProjectApi` がある）。Kotlin が `@NotNull` か `@Nullable` を付けた結果には
+- `//` の後ろの印：宣言にオプトインが必要なら `opt-in`（宣言そのもの、それを囲むクラス、getter か定数のフィールドならそのプロパティに
+  `@InternalCreateScriptApi` か `@InternalCreateScriptProjectApi` がある。Kotlin はプロパティの印を合成のメソッドに付けます。一覧のどの宣言にも
+  結び付かない印があれば、テストが失敗します）。Kotlin が `@NotNull` か `@Nullable` を付けた結果には
   `returns !` か `returns ?`。引数には `params` の後に 1 つずつ印（`!`・`?`、どちらでもなければ `-`）。そのため、JVM の記述子には現れない
   null 可否の変化も、一覧の変化になります。
 

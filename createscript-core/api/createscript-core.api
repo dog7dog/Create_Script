@@ -60,7 +60,7 @@ public final class com.creatrbypc.createanalytical.script.ast.Assignment impleme
   public java.lang.String toString();  // opt-in; returns !
 
 public final class com.creatrbypc.createanalytical.script.ast.AstKt
-  public static final java.lang.String FUNCTION_TYPE_NAME; = String ->  // returns !
+  public static final java.lang.String FUNCTION_TYPE_NAME; = String ->  // opt-in; returns !
 
 public final class com.creatrbypc.createanalytical.script.ast.BinaryExpression implements com.creatrbypc.createanalytical.script.ast.Expression  // opt-in
   public boolean equals(java.lang.Object);  // opt-in; params ?

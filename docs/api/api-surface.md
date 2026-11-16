@@ -171,10 +171,11 @@ What a listing contains:
 - Public classes whose outer classes are public too (not synthetic), with their public and protected fields,
   constructors and methods that are not synthetic, as `javap` prints them, sorted. A constant field shows its value,
   because code that uses it copies the value.
-- After `//`: `opt-in` when the declaration needs opt-in (it, a class around it, or for a getter its property, has
-  `@InternalCreateScriptApi` or `@InternalCreateScriptProjectApi`); `returns !` or `returns ?` for a result marked
-  `@NotNull` or `@Nullable` by Kotlin; `params` with one mark per parameter (`!`, `?`, or `-` for neither). So a change
-  of nullability, which the JVM descriptors do not show, also changes the listing.
+- After `//`: `opt-in` when the declaration needs opt-in (it, a class around it, or for a getter or a constant field
+  its property, has `@InternalCreateScriptApi` or `@InternalCreateScriptProjectApi`; Kotlin keeps the marker of a
+  property on a synthetic method, and a marker that no listed declaration picks up fails the test); `returns !` or
+  `returns ?` for a result marked `@NotNull` or `@Nullable` by Kotlin; `params` with one mark per parameter (`!`, `?`,
+  or `-` for neither). So a change of nullability, which the JVM descriptors do not show, also changes the listing.
 
 Kotlin `internal` and the JVM: an `internal` function or property accessor is public on the JVM with a name that ends
 in `$createscript_core` or `$createscript_project`; these are left out. An `internal` class, constructor or constant is
