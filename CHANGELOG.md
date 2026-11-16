@@ -296,6 +296,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   it). New in `docs/api/`: `embedding.md` (embedding the Core, from the README), `project-files.md` and
   `compatibility.md` (from `api-surface.md`). `README.md` and `README.ja.md` describe the unreleased changes and the
   CI results of 2026-11-15. Records (`docs/audits/`, earlier CHANGELOG entries) keep their old paths.
+- Documentation (stage A5b): Japanese versions of the user and API documents in `docs/ja/` (index `docs/ja/README.md`,
+  `language.md`, `cli.md`, `samples.md`, `packages.md`, `registry.md` and the four documents of `docs/api/`), each with the
+  path and commit of its English source; `README.ja.md` links to them. `DocsTranslationTest` (createscript-cli, code in
+  `test-support/docs-check/`, no new dependency) checks that each Japanese document keeps the headings, code, tables,
+  links, `CS_...` ids and numbers of its source, and that every relative link and anchor in the Markdown files exists.
 
 ### Fixed
 

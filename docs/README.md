@@ -1,7 +1,7 @@
 # CreateScript documentation
 
-The documents are grouped by reader. Documents for users and for embedding are in English; Japanese versions will be
-in `docs/ja/` (stage A5b, not written yet). Design and operations documents are in Japanese and are not translated.
+The documents are grouped by reader. Documents for users and for embedding are in English, with Japanese versions in
+[`ja/`](ja/README.md). Design and operations documents are in Japanese and are not translated.
 
 ## For users
 
@@ -60,24 +60,28 @@ Stage A5a (2026-11-15) moved these documents. Older records, commit messages and
 | The "Using the Core library" details in `README.md` | [`docs/api/embedding.md`](api/embedding.md) (the README keeps a short example) |
 | "Compatibility rules" in `docs/api/api-surface.md` | [`docs/api/compatibility.md`](api/compatibility.md) |
 
-## Japanese versions and how they are kept in step (plan for A5b)
+## Japanese versions and how they are kept in step
 
-Stage A5b will add Japanese versions of the user and API documents under `docs/ja/`, with the same file names
-(`docs/ja/language.md`, …, `docs/ja/api/api-surface.md`) and an index `docs/ja/README.md`. The English document is
-the reference; each Japanese document starts with the path and the commit of the English document it follows.
+Stage A5b added Japanese versions of the user and API documents under `docs/ja/`, with the same file names
+(`docs/ja/language.md`, …, `docs/ja/api/api-surface.md`) and an index, [`docs/ja/README.md`](ja/README.md). The English
+document is the reference; each Japanese document starts with the path and the commit of the English document it
+follows. A Japanese document may explain more than its source with notes, lists, `<details>` and tables of its own;
+it does not leave anything out.
 
-A check without new dependencies will be kept in the repository: shared test code in
-`test-support/docs-check/` (like `test-support/api-listing/`), run by a JUnit test of `createscript-cli`, so that it
-runs in `./gradlew build` and in CI. For each pair of an English document and its Japanese version it will check:
+The check is in the repository and needs no new dependency: `test-support/docs-check/` (like
+`test-support/api-listing/`) is run by `DocsTranslationTest` of `createscript-cli`, so it runs in `./gradlew build` and
+in CI. For each pair of an English document and its Japanese version (and for `README.md` and `README.ja.md`) it checks:
 
-- the same number and levels of headings;
-- the same code blocks, character for character;
-- the same number of tables and rows;
-- the same number of links, with the same targets (a link to an English document from a Japanese one points to
-  its Japanese version when there is one);
-- the same `CS_...` ids and the same numbers;
-- the source path and commit at the top of the Japanese document exist.
+- the same sequence of heading levels;
+- the same code blocks, in the same order, character for character, apart from comments, which can be translated
+  (`#` comments in `bash` blocks, `//` comments in `kotlin` blocks);
+- the same tables with the same number of rows (a table that only the Japanese document has is marked with a line
+  `<!-- ja-only -->` before it and is not compared);
+- the same set of link targets: a link to a document that has a Japanese version points to that version, and an
+  anchor points to the heading at the same position;
+- the same `CS_...` ids, and every number of the English text also in the Japanese text;
+- the source line at the top of the Japanese document.
 
-It will also check that every relative link and anchor in the repository's Markdown files leads to a file and
-heading that exist (records in `docs/audits/` and `CHANGELOG.md` are reported, not failed, because they keep old
-paths). Whether the translation says the same thing is reviewed by a person; the check cannot tell.
+It also checks that every relative link and anchor in the repository's Markdown files leads to a file and heading
+that exist (records in `docs/audits/` and `CHANGELOG.md` are reported, not failed, because they keep old paths).
+Whether the translation says the same thing is reviewed by a person; the check cannot tell.

@@ -71,6 +71,18 @@ tasks.named('test', Test) {
     systemProperty 'createscript.scripts', layout.buildDirectory.dir('scripts').get().asFile.absolutePath
 }
 
+// A5b: 日本語の文書（docs/ja/）と英語の原文の照合、Markdown の相対リンクとアンカーの検査（DocsTranslationTest。docs/README.md）。
+// 照合の処理は test-support/docs-check にあり、JDK と Kotlin の標準ライブラリだけを使う。文書が変わればテストをやり直す
+kotlin.sourceSets.test.kotlin.srcDir(rootProject.file('test-support/docs-check'))
+tasks.named('test', Test) {
+    def markdown = fileTree(rootProject.projectDir) {
+        include '**/*.md'
+        exclude '**/build/**', '.git/**', '.gradle/**', '**/.gradle/**'
+    }
+    inputs.files(markdown).withPropertyName('markdownDocuments').withPathSensitivity(PathSensitivity.RELATIVE)
+    systemProperty 'createscript.repo.root', rootProject.projectDir.absolutePath
+}
+
 // テスト専用のクライアント（S8.3 Phase 10A、W7。GitHub の実環境のテスト用）。`./gradlew :createscript-cli:testRegistryCli` と明示した
 // ときだけ build/test-registry-cli/ に作る（build・installDist・パッケージには含まれない）。テスト用のレジストリとテスト用の鍵を引数で受け取る
 def testRegistryCliJar = tasks.register('testRegistryCliJar', Jar) {
