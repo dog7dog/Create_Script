@@ -23,14 +23,14 @@ registry is published (see [Project files](#project-files)). The detailed Japane
 `createscript run` reads one `.cscr` file, compiles it and, if there are no errors, runs it.
 
 - Only file names ending in `.cscr` (lower case) are accepted. The file must be valid UTF-8 and at most
-  3,000,000 bytes (the command allows 1,000,000 characters per file; in development, v0.1.0-alpha allows 4096
+  3,000,000 bytes (the command allows 1,000,000 characters per file since 0.2.0-alpha; v0.1.0-alpha allows 4096
   characters and 12288 bytes).
 - Standard output receives every `println` line in order. Standard error receives the diagnostics, in the
   form `file:line:column: error|warning CODE (arguments)`. Lines and columns count UTF-16 units from 1.
 - `waitTicks(n)` counts logical ticks; the CLI does not sleep.
 - The command compiles with the standalone limits: 1,000,000 characters, 250,000 tokens and 250,000 syntax
   tree nodes per file, up to 1024 modules, 8,000,000 characters and 1,000,000 tokens in all files, and no
-  fixed limit on the number of instructions (in development; v0.1.0-alpha uses 4096 characters and 4096
+  fixed limit on the number of instructions (since 0.2.0-alpha; v0.1.0-alpha uses 4096 characters and 4096
   instructions). The runtime limits stay; see [Limits and safety](language.md#limits-and-safety).
 - Large programs need memory (about 600 MiB for a program near the limits). Set the Java heap with
   `JAVA_OPTS`, for example `JAVA_OPTS=-Xmx2g`.
@@ -55,7 +55,7 @@ registry is published (see [Project files](#project-files)). The detailed Japane
 
 ### Running a project
 
-`createscript run [directory]` (in development, S8.2 Phase 4) runs the `entry` of the project's
+`createscript run [directory]` (new in 0.2.0-alpha) runs the `entry` of the project's
 `createscript.json`; the directory defaults to the current directory. Use it to import installed packages.
 
 ```text
@@ -93,7 +93,7 @@ $ createscript run
 
 ### Files with `import`
 
-A file can import other `.cscr` files of the same project (in development, not in v0.1.0-alpha; see
+A file can import other `.cscr` files of the same project (new in 0.2.0-alpha, not in v0.1.0-alpha; see
 [Modules in the language guide](language.md#modules-local-import)):
 
 ```text
@@ -122,12 +122,12 @@ $ createscript run my-project/apps/tool.cscr --project-root my-project
   `--max-ticks` and the language limits apply to the whole program.
 - A file without `import` is compiled exactly as before.
 
-`createscript install` (in development) downloads and installs packages into `.createscript/packages/`;
+`createscript install` (new in 0.2.0-alpha) downloads and installs packages into `.createscript/packages/`;
 `createscript run [directory]` uses them (see [Running a project](#running-a-project)).
 
 ## Project files
 
-In development (not in v0.1.0-alpha). See [Project files](packages.md) for the formats.
+New in 0.2.0-alpha (not in v0.1.0-alpha). See [Project files](packages.md) for the formats.
 
 - `createscript init [directory] [--name <name>]` creates `createscript.json` and `src/main.cscr`, and a
   `.gitignore` with the line `/.createscript/` when there is no `.gitignore` (an existing one is never changed). It
@@ -159,7 +159,7 @@ In development (not in v0.1.0-alpha). See [Project files](packages.md) for the f
 
 ```text
 $ createscript
-CreateScript 0.1.0-alpha
+CreateScript 0.2.0-alpha
 Type "help" for help, "exit" to quit.
 >>> 1 + 1
 2

@@ -24,12 +24,13 @@ that run untrusted scripts. This repository contains:
 > settings, the production key and at least three maintainers are still needed before any launch.
 > Install packages with `createscript install github:owner/repo@v1.2.0`. See [docs/registry.md](docs/registry.md).
 
-> **Status: 0.1.0-alpha.** The language and the APIs can still change.
-> [v0.1.0-alpha](https://github.com/dog7dog/Create_Script/releases/tag/v0.1.0-alpha) is published as a
-> pre-release on GitHub Releases (2026-11-04), with packages for Linux x86_64 and aarch64 (`.tar.gz`), an
-> unsigned macOS arm64 `.pkg` and `SHA256SUMS`. Modules, project files, packages and the language features of
-> stage 9 have been added since and are **not released yet** ([CHANGELOG.md](CHANGELOG.md), "Unreleased").
-> See [Platform status](#platform-status).
+> **Status: the source in this repository is version 0.2.0-alpha, which is not released yet.** The language and
+> the APIs can still change. The latest published pre-release is
+> [v0.1.0-alpha](https://github.com/dog7dog/Create_Script/releases/tag/v0.1.0-alpha) (2026-11-04) on
+> [GitHub Releases](https://github.com/dog7dog/Create_Script/releases), with packages for Linux x86_64 and aarch64
+> (`.tar.gz`), an unsigned macOS arm64 `.pkg` and `SHA256SUMS`. 0.2.0-alpha adds modules, project files, packages,
+> the language features of stage 9 and a classified, documented public API; see [CHANGELOG.md](CHANGELOG.md) and
+> [Platform status](#platform-status).
 
 ```kotlin
 class Counter {
@@ -56,13 +57,13 @@ println(fib(10))   // 55
 - `val` / `var`, `if` / `else`, `while`, `for` over integer ranges, `break` / `continue`, functions with
   recursion, classes with properties and methods, nested lists.
 - Math functions as in `kotlin.math`, deterministic random numbers, small vectors and matrices.
-- Not released yet: list functions with lambdas (`where`, `map`, `group`, `each`, `average`), the pipeline
+- New in 0.2.0-alpha: list functions with lambdas (`where`, `map`, `group`, `each`, `average`), the pipeline
   operator `x |> f(a)`, the error fallback `a ?! b`, function references and lambda values
   (see [docs/language.md](docs/language.md)).
-- Not released yet: local modules. `import geometry` uses the functions of `geometry.cscr` in the same project, as
+- New in 0.2.0-alpha: local modules. `import geometry` uses the functions of `geometry.cscr` in the same project, as
   `geometry.square(5)`, with type checks across files. Modules are only read from your project directory; modules of
   installed packages are used by `createscript run [directory]` (see [Modules](docs/language.md#modules-local-import)).
-- Not released yet: project files and packages. `createscript init` creates a project with a `createscript.json`
+- New in 0.2.0-alpha: project files and packages. `createscript init` creates a project with a `createscript.json`
   manifest; `createscript manifest check` and `createscript lock check` check the manifest and the lock file;
   `createscript pack` makes a package archive (`createscript-package.zip`, the same bytes for the same files) from a
   library project; `createscript install github:owner/repo@v1.2.0` installs a package and its dependencies from
@@ -123,24 +124,23 @@ other public classes are internal and marked `@InternalCreateScriptApi`.
 
 ## Platform status
 
-The table below is for the released v0.1.0-alpha (CI on its tag).
+The table below is for the source version 0.2.0-alpha (not released yet), from the CI of pull request #2 on
+2026-11-16 (all six jobs passed) and local checks.
 
-| Platform | Status (v0.1.0-alpha) |
+| Platform | Status (0.2.0-alpha) |
 |---|---|
-| Ubuntu x86_64 (`ubuntu-24.04`) | Verified in CI: build, all tests, samples, REPL, and the `.tar.gz` installed, run and uninstalled |
-| Ubuntu aarch64 (`ubuntu-24.04-arm`) | Verified in CI: the `.tar.gz` built, installed, run and uninstalled (the unit tests run on x86_64 and macOS only) |
-| macOS arm64 (Apple Silicon) | Verified in CI (`macos-15`): build, all tests, samples, REPL, and the `.pkg` installed, run and uninstalled. Locally, the build, the tests and the `.pkg` contents were also checked (the `.pkg` was not installed locally) |
+| Ubuntu x86_64 (`ubuntu-24.04`) | Verified in CI: build, all tests, samples, REPL, and the `.tar.gz` installed, installed again, run and uninstalled |
+| Ubuntu aarch64 (`ubuntu-24.04-arm`) | Verified in CI: the `.tar.gz` built, installed, installed again, run and uninstalled (the unit tests run on x86_64 and macOS only). Locally (Docker, aarch64), the build and the tests passed and the `.tar.gz` was also installed and run without the network |
+| macOS arm64 (Apple Silicon) | Verified in CI (`macos-15`): build, all tests, samples, REPL, and the `.pkg` installed, installed again, run and uninstalled. Locally, the build, the tests and the `.pkg` contents were also checked (the `.pkg` was not installed locally) |
 | macOS x86_64 (Intel) | Not verified (the packaging script supports it, but it has never been run) |
 | Windows | Not verified (`installDist` makes a `createscript.bat`, but it has never been run) |
 | macOS signing and notarization | Not done. The `.pkg` is unsigned, so it is not suitable for public distribution |
 
-The unreleased changes (modules, project files, packages, stage 9) passed CI on 2026-11-15, for pull request #1
-(`9e3c2b3`) and for its merge into `main` (`b80f73d`): the build, all tests and the samples on `ubuntu-24.04` and
-`macos-15`, and the Linux x86_64 and aarch64 `.tar.gz` and the macOS arm64 `.pkg` built, installed, installed again,
-run and uninstalled. Not verified yet:
+Not verified yet:
 
 - `createscript install` downloading from a real GitHub release (it was tested with archives in the cache and a test
   server).
+- The opt-in race test for L-5 (`L5RaceTest`); it does not run in CI.
 - Windows. The protection of installation against a directory on the path being swapped for a link (L-5) is
   implemented for macOS and Linux only.
 - The signed CreateScript-Registry: not published (see above).

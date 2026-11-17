@@ -18,11 +18,12 @@ CreateScript は、Kotlin に似た書き方の、静的型付けの小さなス
 > パッケージは `createscript install github:owner/repo@v1.2.0` でインストールしてください（[docs/ja/registry.md](docs/ja/registry.md)）。
 > 公開前のセキュリティ監査（`docs/audits/`）の指摘はコードで対処しましたが、公開には GitHub の設定、本番の署名鍵、3 人以上のメンテナーがまだ必要です。
 
-> **状態：0.1.0-alpha。** 言語と API は、まだ変わることがあります。
-> [v0.1.0-alpha](https://github.com/dog7dog/Create_Script/releases/tag/v0.1.0-alpha) を、GitHub Releases にプレリリースとして公開しています（2026-11-04）。
+> **状態：このリポジトリのソースは 0.2.0-alpha で、まだリリースしていません。** 言語と API は、まだ変わることがあります。
+> 公開済みの最新のプレリリースは、[GitHub Releases](https://github.com/dog7dog/Create_Script/releases) の
+> [v0.1.0-alpha](https://github.com/dog7dog/Create_Script/releases/tag/v0.1.0-alpha)（2026-11-04）です。
 > Linux x86_64・aarch64 用の `.tar.gz`、署名なしの macOS arm64 用の `.pkg`、`SHA256SUMS` があります。
-> その後に加えたモジュール・プロジェクトのファイル・パッケージ・第 9 段階の言語機能は、**まだリリースしていません**（[CHANGELOG.md](CHANGELOG.md) の「Unreleased」）。
-> [対応環境](#対応環境)を参照してください。
+> 0.2.0-alpha は、モジュール・プロジェクトのファイル・パッケージ・第 9 段階の言語機能と、分類して文書にした公開 API を加えた版です。
+> [CHANGELOG.md](CHANGELOG.md) と[対応環境](#対応環境)を参照してください。
 
 ```kotlin
 class Counter {
@@ -47,12 +48,12 @@ println(fib(10))   // 55
 - 型：`Int`（32 ビット）・`Float`・`Double`・`Boolean`・`String`・リスト・`Vector`・`Matrix`・クラス。型はコンパイルのときに検査します。
 - `val` / `var`、`if` / `else`、`while`、整数の範囲の `for`、`break` / `continue`、関数（再帰を含む）、プロパティとメソッドを持つクラス、入れ子のリスト。
 - `kotlin.math` と同じ結果の数学関数、種を決めると同じ列になる乱数、小さなベクトルと行列。
-- まだリリースしていない機能：ラムダを使うリストの関数（`where`・`map`・`group`・`each`・`average`）、パイプライン演算子 `x |> f(a)`、
+- 0.2.0-alpha で加えた機能：ラムダを使うリストの関数（`where`・`map`・`group`・`each`・`average`）、パイプライン演算子 `x |> f(a)`、
   エラー時の代替値 `a ?! b`、関数参照とラムダの値（[docs/ja/language.md](docs/ja/language.md)）。
-- まだリリースしていない機能：ローカルのモジュール。`import geometry` と書くと、同じプロジェクトの `geometry.cscr` の関数を `geometry.square(5)` の形で使えます。
+- 0.2.0-alpha で加えた機能：ローカルのモジュール。`import geometry` と書くと、同じプロジェクトの `geometry.cscr` の関数を `geometry.square(5)` の形で使えます。
   ファイルをまたいで型を検査します。モジュールはプロジェクトのディレクトリからだけ読みます。インストールしたパッケージのモジュールは、
   `createscript run [ディレクトリ]` で使えます（[モジュール](docs/ja/language.md#モジュールローカルの-import)）。
-- まだリリースしていない機能：プロジェクトのファイルとパッケージ。`createscript init` で、マニフェスト `createscript.json` のあるプロジェクトを作れます。
+- 0.2.0-alpha で加えた機能：プロジェクトのファイルとパッケージ。`createscript init` で、マニフェスト `createscript.json` のあるプロジェクトを作れます。
   `createscript manifest check`・`createscript lock check` で、マニフェストとロックファイルを確かめます。`createscript pack` で、ライブラリのプロジェクトから
   パッケージのアーカイブ（`createscript-package.zip`。同じファイルからは同じバイト列）を作れます。`createscript install github:owner/repo@v1.2.0` で、
   GitHub Releases からパッケージと依存を SHA-256 を確かめてインストールでき、`createscript run` で、通信せずにそれらを使って実行できます。
@@ -109,22 +110,21 @@ while (!run.isFinished) run.tick()
 
 ## 対応環境
 
-次の表は、公開済みの v0.1.0-alpha（タグでの CI）の結果です。
+次の表は、ソースの版 0.2.0-alpha（まだリリースしていない）の結果です。2026-11-16 の Pull Request #2 の CI（6 つのジョブがすべて成功）と、ローカルでの確認によります。
 
-| 環境 | 状態（v0.1.0-alpha） |
+| 環境 | 状態（0.2.0-alpha） |
 |---|---|
-| Ubuntu x86_64（`ubuntu-24.04`） | CI で確認済み：ビルド・すべてのテスト・サンプル・REPL、`.tar.gz` のインストール・実行・アンインストール |
-| Ubuntu aarch64（`ubuntu-24.04-arm`） | CI で確認済み：`.tar.gz` の作成・インストール・実行・アンインストール（単体テストは x86_64 と macOS だけで実行） |
-| macOS arm64（Apple Silicon） | CI（`macos-15`）で確認済み：ビルド・すべてのテスト・サンプル・REPL、`.pkg` のインストール・実行・アンインストール。ローカルでも、ビルド・テストと `.pkg` の中身を確認済み（ローカルではインストールしていない） |
+| Ubuntu x86_64（`ubuntu-24.04`） | CI で確認済み：ビルド・すべてのテスト・サンプル・REPL、`.tar.gz` のインストール・再インストール・実行・アンインストール |
+| Ubuntu aarch64（`ubuntu-24.04-arm`） | CI で確認済み：`.tar.gz` の作成・インストール・再インストール・実行・アンインストール（単体テストは x86_64 と macOS だけで実行）。ローカル（Docker、aarch64）でも、ビルドとテストが通り、`.tar.gz` をネットワークなしでインストールして実行した |
+| macOS arm64（Apple Silicon） | CI（`macos-15`）で確認済み：ビルド・すべてのテスト・サンプル・REPL、`.pkg` のインストール・再インストール・実行・アンインストール。ローカルでも、ビルド・テストと `.pkg` の中身を確認済み（ローカルではインストールしていない） |
 | macOS x86_64（Intel） | 未確認（パッケージのスクリプトは対応しているが、実行したことはない） |
 | Windows | 未確認（`installDist` が `createscript.bat` を作るが、実行したことはない） |
 | macOS の署名・公証 | 未実施。`.pkg` は署名していないため、公開の配布には使えない |
 
-まだリリースしていない変更（モジュール・プロジェクトのファイル・パッケージ・第 9 段階）は、2026-11-15 に Pull Request #1（`9e3c2b3`）と、
-その `main` へのマージ（`b80f73d`）の CI を通りました。`ubuntu-24.04` と `macos-15` でのビルド・すべてのテスト・サンプル、
-Linux x86_64・aarch64 の `.tar.gz` と macOS arm64 の `.pkg` の作成・インストール・再インストール・実行・アンインストールです。まだ確認していないもの：
+まだ確認していないもの：
 
 - `createscript install` が実際の GitHub の Release から取得すること（キャッシュのアーカイブと、テスト用のサーバーで確認）。
+- L-5 の競合を試す opt-in のテスト（`L5RaceTest`）。CI では実行しません。
 - Windows。インストール中にパスの途中のディレクトリをリンクに差し替えられることへの対策（L-5）は、macOS と Linux だけに実装しています。
 - 署名付きの CreateScript-Registry：公開していません（上を参照）。
 

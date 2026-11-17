@@ -1,6 +1,6 @@
 # `createscript` コマンド
 
-> **原文（英語）**：[docs/cli.md](../cli.md)（コミット `a945a7b` の時点の英語版に、その後の段階 A5c の修正を反映）。内容が食い違うときは英語版が正です。
+> **原文（英語）**：[docs/cli.md](../cli.md)（コミット `a945a7b` の時点の英語版に、その後の段階 A5c と R4-A の修正を反映）。内容が食い違うときは英語版が正です。
 
 ```
 createscript                         interactive mode (REPL)
@@ -24,14 +24,14 @@ createscript --version
 `createscript run` は、`.cscr` のファイルを 1 つ読み、コンパイルし、エラーが無ければ実行します。
 
 - 受け付けるのは、名前が `.cscr`（小文字）で終わるファイルだけです。ファイルは正しい UTF-8 で、大きさは
-  3,000,000 バイトまでです（コマンドは 1 ファイル 1,000,000 文字まで受け付けます。これは開発中の機能で、v0.1.0-alpha では
+  3,000,000 バイトまでです（コマンドは 1 ファイル 1,000,000 文字まで受け付けます。これは 0.2.0-alpha で加えた機能で、v0.1.0-alpha では
   4096 文字・12288 バイトまでです）。
 - 標準出力には、`println` の行がすべて順に出ます。標準エラー出力には診断が `file:line:column: error|warning CODE (arguments)`
   の形で出ます。行と列は UTF-16 の単位で、1 から数えます。
 - `waitTicks(n)` は論理的な tick を数えます。CLI は実際には待ちません（スリープしません）。
 - コマンドは、独立版の上限でコンパイルします。1 ファイルあたり 1,000,000 文字・250,000 トークン・構文木のノード 250,000 個、
   モジュールは 1024 個まで、すべてのファイルを合わせて 8,000,000 文字・1,000,000 トークン、命令の数には固定の上限がありません
-  （開発中。v0.1.0-alpha は 4096 文字・4096 命令です）。実行時の上限は変わりません。[上限と安全性](language.md#上限と安全性) を参照してください。
+  （0.2.0-alpha から。v0.1.0-alpha は 4096 文字・4096 命令です）。実行時の上限は変わりません。[上限と安全性](language.md#上限と安全性) を参照してください。
 - 大きなプログラムには、メモリーが必要です（上限に近いプログラムで約 600 MiB）。Java のヒープは `JAVA_OPTS` で設定します。
   例：`JAVA_OPTS=-Xmx2g`。
 
@@ -55,7 +55,7 @@ createscript --version
 
 ### プロジェクトを実行する
 
-`createscript run [directory]`（開発中、S8.2 Phase 4）は、プロジェクトの `createscript.json` の `entry` を実行します。
+`createscript run [directory]`（0.2.0-alpha で追加）は、プロジェクトの `createscript.json` の `entry` を実行します。
 ディレクトリを省くと、今いるディレクトリを使います。インストールしたパッケージを import するときは、こちらを使います。
 
 ```text
@@ -96,7 +96,7 @@ $ createscript run
 
 ### `import` のあるファイル
 
-ファイルは、同じプロジェクトのほかの `.cscr` ファイルを import できます（開発中。v0.1.0-alpha には入っていません。
+ファイルは、同じプロジェクトのほかの `.cscr` ファイルを import できます（0.2.0-alpha で追加。v0.1.0-alpha には入っていません。
 [言語の説明のモジュール](language.md#モジュールローカルの-import) を参照）。
 
 ```text
@@ -123,12 +123,12 @@ $ createscript run my-project/apps/tool.cscr --project-root my-project
   言語の上限は、プログラム全体に適用されます。
 - `import` の無いファイルは、これまでとまったく同じにコンパイルします。
 
-`createscript install`（開発中）は、パッケージをダウンロードして `.createscript/packages/` にインストールします。
+`createscript install`（0.2.0-alpha で追加）は、パッケージをダウンロードして `.createscript/packages/` にインストールします。
 `createscript run [directory]` がそれを使います（[プロジェクトを実行する](#プロジェクトを実行する) を参照）。
 
 ## プロジェクトのファイル
 
-開発中です（v0.1.0-alpha には入っていません）。形式は [プロジェクトのファイル](packages.md) を参照してください。
+0.2.0-alpha で加えました（v0.1.0-alpha には入っていません）。形式は [プロジェクトのファイル](packages.md) を参照してください。
 
 - `createscript init [directory] [--name <name>]` は、`createscript.json` と `src/main.cscr` を作ります。`.gitignore` が無ければ、
   `/.createscript/` という行を持つ `.gitignore` も作ります（既存の `.gitignore` は決して変えません）。ファイルを上書きすることはなく、
@@ -159,7 +159,7 @@ $ createscript run my-project/apps/tool.cscr --project-root my-project
 
 ```text
 $ createscript
-CreateScript 0.1.0-alpha
+CreateScript 0.2.0-alpha
 Type "help" for help, "exit" to quit.
 >>> 1 + 1
 2

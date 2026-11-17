@@ -1,6 +1,6 @@
 # CreateScript 言語（基本）
 
-> **原文（英語）**：[docs/language.md](../language.md)（コミット `4a2192b` の時点）。内容が食い違うときは英語版が正です。
+> **原文（英語）**：[docs/language.md](../language.md)（コミット `4a2192b` の時点の英語版に、その後の段階 R4-A の修正を反映）。内容が食い違うときは英語版が正です。
 
 CreateScript は、Kotlin に似た書き方の、静的型付けの小さな言語です。プログラムはバイトコードにコンパイルされ、論理的な **tick** ずつ進む、
 安全に区切られた仮想機械（サンドボックス）の上で動きます。このリポジトリには、言語そのもの（`createscript-core`）と、
@@ -128,7 +128,7 @@ there
 
 ## モジュール（ローカルの `import`）
 
-プログラムは、同じプロジェクトのほかの `.cscr` ファイルの関数を使えます。この機能は開発中で、v0.1.0-alpha には入っていません。
+プログラムは、同じプロジェクトのほかの `.cscr` ファイルの関数を使えます。この機能は 0.2.0-alpha で加えたもので、v0.1.0-alpha には入っていません。
 モジュールは、プロジェクトのファイルか、`createscript install` でインストールしたパッケージのモジュールです
 （[パッケージのモジュール](#パッケージのモジュール) を参照）。
 
@@ -209,7 +209,7 @@ $ createscript run my-project/main.cscr
 
 ### パッケージのモジュール
 
-開発中です（S8.2 Phase 4。v0.1.0-alpha には入っていません）。プロジェクトを `createscript run [directory]` で実行するとき
+0.2.0-alpha で加えました（S8.2 Phase 4。v0.1.0-alpha には入っていません）。プロジェクトを `createscript run [directory]` で実行するとき
 （[cli.md](cli.md#プロジェクトを実行する) を参照）、`import name` は、上と同じようにエントリーのファイルのディレクトリで `name` を探すか、
 `createscript.lock` に載っていて `.createscript/packages/` にインストールされたパッケージの中で探します
 （[パッケージのインストール](packages.md#パッケージのインストールs82-phase-3) を参照）。
@@ -494,7 +494,7 @@ println("tick 20")
 どのプログラムも決まった上限の中で動くので、スクリプトが際限なくメモリーや時間を使うことはありません。コンパイル時の上限には 2 つの組があり、
 ホストが `CompileOptions` で選びます。**埋め込み向け**（`CompileOptions.EMBEDDED`。`CreateScript.compile(source)` の既定で、
 Minecraft の MOD の Create: Analytical などのホストが使う）と、**独立版**（`CompileOptions.STANDALONE`。`createscript` コマンドが `run` と
-対話モードで使う）です。独立版の上限は開発中で、v0.1.0-alpha には入っていません。v0.1.0-alpha は埋め込み向けの上限を使います。
+対話モードで使う）です。独立版の上限は 0.2.0-alpha で加えたもので、v0.1.0-alpha は埋め込み向けの上限を使います。
 
 | 上限 | 埋め込み向け | 独立版 |
 |---|---|---|

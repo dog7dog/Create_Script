@@ -1,6 +1,6 @@
 # Project files: `createscript.json` and `createscript.lock`
 
-> **Status: in development, not in v0.1.0-alpha.** S8.1 added these files and the commands that create and check
+> **Status: new in 0.2.0-alpha (not in v0.1.0-alpha).** S8.1 added these files and the commands that create and check
 > them. S8.2 added package archives and `createscript pack` ([Package archives](#package-archives-createscript-packagezip)),
 > downloading and installing packages with `createscript install github:owner/repo@v1.2.0`
 > ([Installing packages](#installing-packages-s82-phase-3)), and running a project with its installed packages with
@@ -155,7 +155,7 @@ line ends, one final newline, dependencies sorted by name). Hand-written manifes
 
 ## `createscript.json` schema version 2: applications and libraries
 
-> **S8.2 Phase 1** (in development). Schema version 1 stays valid and unchanged; `createscript init` still
+> **S8.2 Phase 1** (new in 0.2.0-alpha). Schema version 1 stays valid and unchanged; `createscript init` still
 > writes version 1.
 
 ```json
@@ -195,8 +195,8 @@ a Kotlin hard keyword and not a built-in function that cannot be redefined (`pri
 
 ## Package archives: `createscript-package.zip`
 
-> **S8.2 Phase 1** (in development). The archive format and `createscript pack` exist; downloading and installing
-> come in the next phases.
+> **S8.2 Phase 1** (new in 0.2.0-alpha). The archive format and `createscript pack`; downloading and installing
+> are described in [Installing packages](#installing-packages-s82-phase-3).
 
 A library is distributed as one ZIP file named `createscript-package.zip`, attached to a GitHub Release whose tag
 is `v<version>`. GitHub's automatically generated "Source code" archives are not package archives.
@@ -267,7 +267,7 @@ program more access to the operating system, the network or the JVM than any oth
 
 ## Downloading package archives (S8.2 Phase 2)
 
-> **In development.** The download, the checks and the cache are in the library `createscript-install` and are
+> **New in 0.2.0-alpha.** The download, the checks and the cache are in the library `createscript-install` and are
 > used by `createscript install` (see [Installing packages](#installing-packages-s82-phase-3)).
 
 For a dependency `{ "version": "1.2.0", "source": "github:owner/repo" }` the archive is
@@ -445,7 +445,7 @@ know it; we did not run them for S8.1.
 
 ## Installing packages (S8.2 Phase 3)
 
-> **In development.** Installed packages are used by `createscript run [directory]` (S8.2 Phase 4; see
+> **New in 0.2.0-alpha.** Installed packages are used by `createscript run [directory]` (S8.2 Phase 4; see
 > [Running a project](cli.md#running-a-project) and [Modules from packages](language.md#modules-from-packages)).
 > `createscript install <name>@<version>` (installing by name from the signed registry index, S8.3 Phase 3) uses
 > the same installer; it is described in [registry.md](registry.md#the-client-createscript-install-nameversion-phase-3)

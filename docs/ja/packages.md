@@ -1,8 +1,8 @@
 # プロジェクトのファイル：`createscript.json` と `createscript.lock`
 
-> **原文（英語）**：[docs/packages.md](../packages.md)（コミット `a945a7b` の時点の英語版に、その後の段階 A5c の修正を反映）。内容が食い違うときは英語版が正です。
+> **原文（英語）**：[docs/packages.md](../packages.md)（コミット `a945a7b` の時点の英語版に、その後の段階 A5c と R4-A の修正を反映）。内容が食い違うときは英語版が正です。
 
-> **状態：開発中。v0.1.0-alpha には入っていません。** S8.1 で、これらのファイルと、それを作り・確かめるコマンドを加えました。
+> **状態：0.2.0-alpha で加えました（v0.1.0-alpha には入っていません）。** S8.1 で、これらのファイルと、それを作り・確かめるコマンドを加えました。
 > S8.2 で、パッケージのアーカイブと `createscript pack`（[パッケージのアーカイブ](#パッケージのアーカイブcreatescript-packagezip)）、
 > `createscript install github:owner/repo@v1.2.0` によるパッケージのダウンロードとインストール
 > （[パッケージのインストール](#パッケージのインストールs82-phase-3)）、インストールしたパッケージを使ってプロジェクトを実行する
@@ -148,7 +148,7 @@ Windows は、`CON`・`PRN`・`AUX`・`NUL`・`COM0`〜`COM9`・`LPT0`〜`LPT9` 
 
 ## `createscript.json` スキーマの版 2：アプリケーションとライブラリ
 
-> **S8.2 Phase 1**（開発中）。スキーマの版 1 は、今までどおり正しく、変わりません。`createscript init` は今も版 1 を書きます。
+> **S8.2 Phase 1**（0.2.0-alpha で追加）。スキーマの版 1 は、今までどおり正しく、変わりません。`createscript init` は今も版 1 を書きます。
 
 ```json
 {
@@ -186,7 +186,7 @@ Windows は、`CON`・`PRN`・`AUX`・`NUL`・`COM0`〜`COM9`・`LPT0`〜`LPT9` 
 
 ## パッケージのアーカイブ：`createscript-package.zip`
 
-> **S8.2 Phase 1**（開発中）。アーカイブの形式と `createscript pack` があります。ダウンロードとインストールは次の段階で加わります。
+> **S8.2 Phase 1**（0.2.0-alpha で追加）。アーカイブの形式と `createscript pack` です。ダウンロードとインストールは [パッケージのインストール](#パッケージのインストールs82-phase-3) で説明します。
 
 ライブラリは、`createscript-package.zip` という名前の 1 つの ZIP ファイルとして配布します。タグが `v<version>` の GitHub Release に添付します。
 GitHub が自動で作る「Source code」のアーカイブは、パッケージのアーカイブではありません。
@@ -247,7 +247,7 @@ JVM への権限を与えることはできません。
 
 ## パッケージのアーカイブのダウンロード（S8.2 Phase 2）
 
-> **開発中です。** ダウンロード、検査、キャッシュはライブラリ `createscript-install` にあり、`createscript install` が使います
+> **0.2.0-alpha で加えました。** ダウンロード、検査、キャッシュはライブラリ `createscript-install` にあり、`createscript install` が使います
 > （[パッケージのインストール](#パッケージのインストールs82-phase-3) を参照）。
 
 依存 `{ "version": "1.2.0", "source": "github:owner/repo" }` のアーカイブは、次の URL にあります。
@@ -407,7 +407,7 @@ S8.1 で実際に動かしてはいません。
 
 ## パッケージのインストール（S8.2 Phase 3）
 
-> **開発中です。** インストールしたパッケージは `createscript run [directory]` が使います（S8.2 Phase 4。
+> **0.2.0-alpha で加えました。** インストールしたパッケージは `createscript run [directory]` が使います（S8.2 Phase 4。
 > [プロジェクトを実行する](cli.md#プロジェクトを実行する) と [パッケージのモジュール](language.md#パッケージのモジュール) を参照）。
 > `createscript install <name>@<version>`（署名付きのレジストリの index から名前でインストールする。S8.3 Phase 3）も同じインストーラーを使います。
 > それは [registry.md](registry.md#クライアントcreatescript-install-nameversionphase-3) で説明しており、公式のレジストリを公開するまでは動きません。
