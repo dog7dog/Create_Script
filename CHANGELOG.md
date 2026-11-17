@@ -6,6 +6,43 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.2.0-alpha] - YYYY-MM-DD (pre-release, not published yet)
+
+The second pre-release. It is not published yet; the date is filled in when it is. The main changes since
+0.1.0-alpha:
+
+- Language (stage 9): list functions with lambdas (`where`, `map`, `group`, `each`, `average`), the pipeline operator
+  `x |> f(a)`, the error fallback `a ?! b`, lambda values and function references.
+- Local modules (`import name`) with type checks across files, and much larger input limits for the `createscript`
+  command (`CompileOptions.STANDALONE`).
+- Projects and packages: `createscript.json` and `createscript.lock`, `createscript init`, `manifest check`,
+  `lock check`, `pack`, `install github:owner/repo@v<version>` (SHA-256 checked and journaled; package code is never
+  run) and `run [directory]`.
+- The client for the signed CreateScript-Registry (`createscript install <name>@<version>`). The registry is not
+  published, so the command refuses without connecting.
+- The public API of `createscript-core` and `createscript-project` is classified into a Stable API and an Internal API
+  (opt-in markers), listed on the JVM and checked by tests, and documented with English KDoc. Stable declarations of
+  0.1.0-alpha keep their JVM signatures.
+- Documentation grouped by reader, with Japanese versions in `docs/ja/`.
+
+Upgrading from 0.1.0-alpha (details in the entries below):
+
+- Using Internal API declarations now gives an opt-in warning (not an error); opt in with `@OptIn(...)` or
+  `-opt-in=...`. 57 members that were not in 0.1.0-alpha became `internal`.
+- `DiagnosticPhase` has the new value `MODULE`: a `when` over it that lists every value and has no `else` needs a
+  branch for it.
+
+Known limitations of this release:
+
+- Windows has not been tried, and the protection against a directory on the path being swapped for a link during an
+  installation (L-5) exists only on macOS and Linux. macOS on Intel has not been tried either.
+- `createscript install github:...` has not been tried against a real GitHub release (only with a local test server
+  and with archives in the cache). The opt-in race test for L-5 (`L5RaceTest`) does not run in CI.
+- The signed CreateScript-Registry is not published, and the macOS `.pkg` is not signed or notarized.
+
+The entries below are grouped as Added, Changed and Fixed. Within a group they are mostly in the order the work was
+done, so a later entry can refine an earlier one; such places are marked.
+
 ### Added
 
 - Install (S8.3 L-5 fix): on macOS and Linux every change to files in the project goes through a helper process
@@ -125,7 +162,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   Before each package is moved, the directories on the way must be real directories inside the project; after the
   move and again before the manifest is written, each package must be where it was moved (same `fileKey`), or the
   installation is not completed and is undone without touching anything behind a symbolic link. A move redirected
-  by a symbolic link that replaces a directory at that moment cannot be prevented and is documented.
+  by a symbolic link that replaces a directory at that moment cannot be prevented and is documented. (Later
+  refined: on macOS and Linux the L-5 entry at the top of this list prevents it.)
 - `createscript install` warns about package directories in `.createscript/packages` that cannot be used (files
   that do not match the marker or no longer make its archive, symbolic links, unknown names), for example one
   edited after an interrupted installation was undone; it does not remove, repair or follow them. Usable old
@@ -164,7 +202,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   hidden members), so code compiled against v0.1.0-alpha still runs; a regression test runs such code.
 - `createscript run`: `--project-root <directory>` (default: the directory of the file). The interactive
   mode reports `CS_MODULE_IMPORT_UNAVAILABLE` for `import`.
-- `createscript-project` (S8.3 Phase 1, no command uses it yet): the formats of the planned CreateScript-Registry
+- `createscript-project` (S8.3 Phase 1; used by `createscript install <name>@<version>` since Phase 3): the formats of the planned CreateScript-Registry
   (`registry.json`, `reserved-names.json`, one file per package, `index.json`, `index.json.sig`) with strict checks
   (names, versions, sources, GitHub IDs, SHA-256, dependencies, yanked and removed, safe text, limits, reserved
   and similar names), `CanonicalJson` (RFC 8785 for integers) for the index, Ed25519 signature verification with
@@ -224,7 +262,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - S8.3 Phase 8 (`docs/audits/S8.3-Phase8-Security-Hardening.md`): `L5RaceTest`, the race test for L-5 (directories
   replaced by symbolic links during an installation, now also the project directory itself), is kept as an opt-in
   test (`CREATESCRIPT_L5_RACE=1`) that fails if an installation is wrongly reported as successful or an existing
-  file outside the project changes. L-5 itself is still unresolved; no installer code changed. A dedicated
+  file outside the project changes. L-5 itself was still unresolved then; no installer code changed. (Later refined:
+  see the L-5 entry at the top of this list.) A dedicated
   publishing GitHub App that alone may create `index-*` tags is proposed in the registry template's documents (not
   adopted).
 - S8.3 Phase 9 (documents only, `docs/audits/S8.3-Phase9-Integration-Preparation.md`): the design with two GitHub
@@ -265,6 +304,55 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Signed library integration test (local, `SignedLibraryIntegrationTest`): pack, signed index, install through the
   test-only client, import and run, and refusal of tampered signatures, indexes and packages.
 
+
+### Changed
+
+- API (stage A2, `docs/api/api-surface.md`): `createscript-core` and `createscript-project` use Kotlin's explicit API
+  mode. Declarations that are public only because other modules of this repository use them, or because they were
+  public in v0.1.0-alpha, are marked `@InternalCreateScriptApi` (core) or `@InternalCreateScriptProjectApi`
+  (project). Using them from other code gives a warning (not an error) until it opts in with `@OptIn(...)` or
+  `-opt-in=...`; they can change in any release. This covers the AST, lexer, parser, semantic analysis, scheduler,
+  `Compiler`, `CsVm`, the bytecode types and limit objects of the Core, the members of `SnapshotVerifier` other
+  than `SlotType`, and the constructor and properties of `CompiledProgram` (the type itself stays supported), and
+  in the project module the JSON reader and writer, `PackageArchives` and the registry formats.
+- API: 57 members of those internal types that no other module used and that were not in v0.1.0-alpha are now
+  `internal` (their JVM names changed). Every public member of the v0.1.0-alpha Core keeps its JVM signature.
+- `createscript-project`: `ManifestResult.entryPosition`, `dependencyPositions`, `modulePositions` and
+  `LockfileResult.rootPosition`, `packagePositions` are `FilePosition(line, column)` instead of `Pair<Int, Int>`
+  (use `.line` and `.column` instead of `.first` and `.second`). This module was not in v0.1.0-alpha.
+- Tests: a host compiled against the v0.1.0-alpha Core saves runs, rebuilds the saved state field by field and
+  resumes them with the current Core (`BinaryCompatibilityTest`, `compat/v010alpha/OldSnapshotHost`).
+- Tests (stage A3): `api/createscript-core.api` and `api/createscript-project.api` list the public API on the JVM;
+  `ApiListingTest` fails when the compiled API differs from them. They are rewritten only with
+  `CREATESCRIPT_API_UPDATE=1` (see `docs/api/api-surface.md`).
+- API documentation (stage A4): English KDoc on the whole Stable API of `createscript-core` and `createscript-project`,
+  replacing the Japanese comments there. `CreateScript.resume` and `ScriptRun.snapshot` describe the limits of saved
+  states (an instruction that takes several ticks, such as `vector(...)`, starts again after resuming; a garbage
+  collection in progress is not saved). A test checks the first one. No code changed.
+- Documentation (stage A5a): `docs/` is grouped by reader with an index, `docs/README.md` (with a table of old and new
+  paths). The GitHub registry design moved to `docs/design/`, the registry operation documents to `docs/operations/`
+  (`docs/registry-settings-key.md` stays as a page that points to the new place, because registry-tool messages name
+  it). New in `docs/api/`: `embedding.md` (embedding the Core, from the README), `project-files.md` and
+  `compatibility.md` (from `api-surface.md`). `README.md` and `README.ja.md` describe the unreleased changes and the
+  CI results of 2026-11-15. Records (`docs/audits/`, earlier CHANGELOG entries) keep their old paths.
+- Documentation (stage A5b): Japanese versions of the user and API documents in `docs/ja/` (index `docs/ja/README.md`,
+  `language.md`, `cli.md`, `samples.md`, `packages.md`, `registry.md` and the four documents of `docs/api/`), each with the
+  path and commit of its English source; `README.ja.md` links to them. `DocsTranslationTest` (createscript-cli, code in
+  `test-support/docs-check/`, no new dependency) checks that each Japanese document keeps the headings, code, tables,
+  links, `CS_...` ids and numbers of its source, and that every relative link and anchor in the Markdown files exists.
+- Documentation (stage A5c): outdated English text corrected, with the Japanese versions in step. `docs/packages.md`
+  describes the current package features, the import hooks that S8.2 Phase 4 added to the Core, and L-5 by the
+  records of `docs/audits/S8.3-L5-Java21-Assessment.md` (the `AnchoredFs` protection on macOS and Linux, its test
+  results and limits; Windows unresolved). `docs/cli.md` lists the commands of `createscript --help`;
+  `docs/api/api-surface.md` describes the A2 and A4 work as done.
+- Version (stage R2.5): `createscript_version` is `0.2.0-alpha`, used by `createscript --version`, the banner of the
+  interactive mode and the package names.
+- API documentation (stage R2.5): the KDoc of `CompileOptions` no longer gives a measurement that could not be
+  reproduced (about 2.4 seconds and 180 MiB for 65,535 instructions). It explains how `maxVerificationSteps` chooses
+  the bytecode check (a state for every instruction when it is `null`, the default; states only at the start of basic
+  blocks and `CS_COMP_PROGRAM_TOO_COMPLEX` with a limit, as in `STANDALONE`) and advises hosts that remove the
+  instruction limit or raise the input limits to set it. No code changed.
+
 ### Fixed
 
 - Build: `gradle/verification-metadata.xml` lists `junit-bom-5.10.2.pom` (SHA-256 checked against Maven Central and
@@ -278,6 +366,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   replaced with the same contents or a recreated empty directory could be removed. `init` now keeps what it created
   open until the rollback has checked and removed it, so a replacement always has another inode number. Windows
   (no file keys) is unchanged.
+- Tests (stage R2.5): the API listing missed the opt-in marker of a top-level constant (`FUNCTION_TYPE_NAME`), because
+  Kotlin keeps the marker of a constant or `@JvmField` property on a synthetic `get<Name>$annotations` method. The
+  listing now reads it there (the only change in `api/createscript-core.api`), a marker that no listed declaration
+  picks up fails the listing, and `ApiListingTest.markersOnConstantsAndPropertiesAreListed` checks this. The failure
+  messages of `ApiListingTest` name the Gradle tasks `:createscript-core:test` and `:createscript-project:test`
+  correctly. `docs/api/api-surface.md` (English and Japanese) describes the rule.
 
 ## [0.1.0-alpha] - 2026-11-04 (pre-release)
 

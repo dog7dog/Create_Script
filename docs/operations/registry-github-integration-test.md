@@ -4,10 +4,10 @@
 >
 > - 実施には、運営責任者の明示の許可が必要です。テスト用のリポジトリ・App・鍵の作成も含め、GitHub への変更を伴います。
 > - 本番の CreateScript-Registry では行わず、本番の鍵も使いません。
-> - 構成は `docs/registry-github-architecture.md`（Phase 9 で採用した、Checks App と Publisher App の 2 つの App の設計）に従います。
+> - 構成は `docs/design/registry-github-architecture.md`（Phase 9 で採用した、Checks App と Publisher App の 2 つの App の設計）に従います。
 > - Publisher App・ruleset A・B・テスト専用のビルドは、Phase 10A で雛形とツールに **ローカルで** 実装しました（`docs/audits/S8.3-Phase10A-Local-Implementation.md`）。GitHub 上では未検証です。
 > - 前提の ID（P-1〜P-19）は、architecture の 7 章のものです。
-> - 構築の手順と、IT の前に行う優先試験 PT-1〜PT-8 は `docs/registry-github-test-environment-setup.md` にあります（Phase 10B-1）。
+> - 構築の手順と、IT の前に行う優先試験 PT-1〜PT-8 は `docs/operations/registry-github-test-environment-setup.md` にあります（Phase 10B-1）。
 > - **Phase 10B-2A（2026-11-13）：** 1 人体制で、テスト用のリポジトリ `dog7dog/CreateScript-Registry-Test` で、PT-1〜PT-6 の一部と P-18〜P-21 を実測しました（`docs/audits/S8.3-Phase10B2A-Solo-Integration.md`）。IT-01〜IT-28 そのものは実施していないので、下の判定欄は NOT VERIFIED のままです。
 > - 試験の ID は IT-01〜IT-28 です。Phase 8 までの番号との対応は、付録 G にあります。
 > - **秘密情報（App の鍵・トークン・署名の鍵）は、その一部であっても、ログ・issue・画面の写し・報告書に残しません。**

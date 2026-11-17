@@ -1,39 +1,42 @@
 package com.creatrbypc.createanalytical.script.vm
 
+import com.creatrbypc.createanalytical.script.InternalCreateScriptApi
 import com.creatrbypc.createanalytical.script.diagnostic.SourcePosition
 
 // 命令数・定数・変数・スタックの上限（定数 256 は A10 で確定、それ以外は暫定値）
-object VmLimits {
+@InternalCreateScriptApi
+public object VmLimits {
     // コンパイルしたプログラムの命令の数の上限の既定値（CompileOptions.DEFAULT・EMBEDDED。第8.0.1段階からは CompileOptions で指定し、
     // 独立版の createscript コマンドでは使わない）。コンパイル時の上限で、VM は実行中に確かめない
-    const val MAX_INSTRUCTIONS = 4096
-    const val MAX_CONSTANTS = 256
-    const val MAX_VARIABLES = 64
-    const val MAX_STACK_DEPTH = 64
+    public const val MAX_INSTRUCTIONS: Int = 4096
+    public const val MAX_CONSTANTS: Int = 256
+    public const val MAX_VARIABLES: Int = 64
+    public const val MAX_STACK_DEPTH: Int = 64
 
     // ユーザー定義関数の呼び出しの深さ（同時に積める呼び出しフレームの数。第3.8c段階の暫定値）
-    const val MAX_CALL_DEPTH = 16
+    public const val MAX_CALL_DEPTH: Int = 16
 
     // ユーザー定義関数の引数の数（第3.8d段階の暫定値。引数はローカル変数の先頭に入るため MAX_VARIABLES 以下）
-    const val MAX_PARAMETERS = 16
+    public const val MAX_PARAMETERS: Int = 16
 
     // 1 台の CS_VM で同時に存在できるオブジェクトの数（第3.9a段階の暫定値）
-    const val MAX_OBJECTS = 256
+    public const val MAX_OBJECTS: Int = 256
 
     // 1 つのクラスのプロパティの数（第3.9b段階の暫定値。回収でたどる参照の数を抑える）
-    const val MAX_PROPERTIES = 16
+    public const val MAX_PROPERTIES: Int = 16
 
     // 1 つのリストの要素数と、1 台の CS_VM のリストの要素数の合計（回収前のリストを含む。第3.10a段階の暫定値）。
     // 合計 4096 は、プロパティの値の最大（MAX_OBJECTS × MAX_PROPERTIES）と同じ
-    const val MAX_LIST_SIZE = 256
-    const val MAX_LIST_ELEMENTS = 4096
+    public const val MAX_LIST_SIZE: Int = 256
+    public const val MAX_LIST_ELEMENTS: Int = 4096
 
     // Vector の次元・Matrix の行数と列数の上限（第3.11e段階）
-    const val MAX_VECTOR_SIZE = 16
-    const val MAX_MATRIX_SIZE = 8
+    public const val MAX_VECTOR_SIZE: Int = 16
+    public const val MAX_MATRIX_SIZE: Int = 8
 }
 
-enum class Opcode {
+@InternalCreateScriptApi
+public enum class Opcode {
     // operand = 定数プールの番号。定数をスタックに積む
     PUSH_CONST,
 
@@ -139,19 +142,21 @@ enum class Opcode {
 
 // 数値の演算・比較・変換の operand が表す数値の型（第3.11a段階。バイトコードに書き込まれるため変更しない）。
 // Int は 0 で、第3.10b段階までのバイトコード（operand はすべて 0）と同じ
-object NumericKind {
-    const val INT = 0
-    const val FLOAT = 1
-    const val DOUBLE = 2
-    const val COUNT = 3
+@InternalCreateScriptApi
+public object NumericKind {
+    public const val INT: Int = 0
+    public const val FLOAT: Int = 1
+    public const val DOUBLE: Int = 2
+    public const val COUNT: Int = 3
 
-    fun conversion(from: Int, to: Int) = from * COUNT + to
+    public fun conversion(from: Int, to: Int): Int = from * COUNT + to
 }
 
 // MATH 命令の数学関数（第3.11b段階）。id はバイトコードに書き込まれるため、一度決めたら変更・再利用しない。
 // arity は取り出す値の数、firstKind は使える最初の数値の型（firstKind 以降の NumericKind が使える）、result は結果の型。
 // pow は Double だけで、Float・Int の pow は Compiler が CONVERT で Double にして計算し、Float に戻す（Kotlin の実装と同じ）
-enum class MathFunction(val id: Int, val arity: Int, val firstKind: Int, val result: MathResult = MathResult.SAME) {
+@InternalCreateScriptApi
+public enum class MathFunction(public val id: Int, public val arity: Int, public val firstKind: Int, public val result: MathResult = MathResult.SAME) {
     ABS(0, 1, NumericKind.INT),
     MIN(1, 2, NumericKind.INT),
     MAX(2, 2, NumericKind.INT),
@@ -188,11 +193,11 @@ enum class MathFunction(val id: Int, val arity: Int, val firstKind: Int, val res
     IS_CLOSE(27, 3, NumericKind.FLOAT, MathResult.BOOLEAN),
     ;
 
-    fun operand(kind: Int) = id * NumericKind.COUNT + kind
+    public fun operand(kind: Int): Int = id * NumericKind.COUNT + kind
 
-    companion object {
+    public companion object {
         // operand の関数。負数・未知の番号・その関数に使えない数値の型は null（数値の型は operand % NumericKind.COUNT）
-        fun byOperand(operand: Int): MathFunction? {
+        public fun byOperand(operand: Int): MathFunction? {
             if (operand < 0) return null
             val function = entries.firstOrNull { it.id == operand / NumericKind.COUNT } ?: return null
             return if (operand % NumericKind.COUNT >= function.firstKind) function else null
@@ -202,7 +207,8 @@ enum class MathFunction(val id: Int, val arity: Int, val firstKind: Int, val res
 
 // LINALG 命令の関数（第3.11e段階）。id はバイトコードに書き込まれるため、一度決めたら変更・再利用しない。arity は取り出す値の数
 // （VECTOR_OF・MATRIX_OF は operand の個数）。operand = id × 32 + 個数（個数を使うのは VECTOR_OF・MATRIX_OF だけで、それ以外は 0）
-enum class LinalgFunction(val id: Int, val arity: Int) {
+@InternalCreateScriptApi
+public enum class LinalgFunction(public val id: Int, public val arity: Int) {
     // vector(x1, …, xn): Double n 個（1〜16）から Vector
     VECTOR_OF(0, -1),
 
@@ -238,13 +244,13 @@ enum class LinalgFunction(val id: Int, val arity: Int) {
     COLUMN_COUNT(19, 1),
     ;
 
-    fun operand(count: Int = 0) = id * COUNT_RANGE + count
+    public fun operand(count: Int = 0): Int = id * COUNT_RANGE + count
 
-    companion object {
-        const val COUNT_RANGE = 32
+    public companion object {
+        public const val COUNT_RANGE: Int = 32
 
         // operand の関数と個数。負数・未知の番号・その関数に使えない個数は null
-        fun byOperand(operand: Int): Pair<LinalgFunction, Int>? {
+        public fun byOperand(operand: Int): Pair<LinalgFunction, Int>? {
             if (operand < 0) return null
             val function = entries.firstOrNull { it.id == operand / COUNT_RANGE } ?: return null
             val count = operand % COUNT_RANGE
@@ -258,26 +264,30 @@ enum class LinalgFunction(val id: Int, val arity: Int) {
     }
 
     // 取り出す値の数
-    fun arityOf(count: Int) = if (arity < 0) count else arity
+    public fun arityOf(count: Int): Int = if (arity < 0) count else arity
 }
 
 // MATH 命令の結果の型（第3.11d段階）。SAME は引数と同じ数値の型、INT は Int（roundToInt）、BOOLEAN は Boolean（isNaN・isInfinite）。
 // バイトコードには書き込まない
-enum class MathResult { SAME, INT, BOOLEAN }
+@InternalCreateScriptApi
+public enum class MathResult { SAME, INT, BOOLEAN }
 
 // position は実行時エラーの報告に使うソース上の位置
-data class Instruction(val opcode: Opcode, val operand: Int, val position: SourcePosition)
+@InternalCreateScriptApi
+public data class Instruction(val opcode: Opcode, val operand: Int, val position: SourcePosition)
 
 // 定数プールの要素（同じ型・同じ値は1つにまとめる: A10）。Float・Double（第3.11a段階）はビット列で持ち、ビットが同じものだけをまとめる
-sealed interface Constant {
-    data class IntConstant(val value: Int) : Constant
-    data class StringConstant(val value: String) : Constant
-    data class FloatConstant(val bits: Int) : Constant
-    data class DoubleConstant(val bits: Long) : Constant
+@InternalCreateScriptApi
+public sealed interface Constant {
+    public data class IntConstant(val value: Int) : Constant
+    public data class StringConstant(val value: String) : Constant
+    public data class FloatConstant(val bits: Int) : Constant
+    public data class DoubleConstant(val bits: Long) : Constant
 }
 
 // 組み込み関数。id はバイトコードに書き込まれるため、一度決めたら変更・再利用しない
-enum class HostFunction(val id: Int) {
+@InternalCreateScriptApi
+public enum class HostFunction(public val id: Int) {
     // println(Int) / println(String)。引数を1つ取り出して表示する
     PRINTLN(0),
     WAIT_TICKS(1),
@@ -293,46 +303,58 @@ enum class HostFunction(val id: Int) {
     RANDOM_SEED(6),
     ;
 
-    companion object {
-        fun byId(id: Int): HostFunction? = entries.firstOrNull { it.id == id }
+    public companion object {
+        public fun byId(id: Int): HostFunction? = entries.firstOrNull { it.id == id }
     }
 }
 
 // NEW_LIST で作るリストの形（第3.10a段階）。element は要素の型、mutable は変更できるリスト（mutableListOf）か、size は最初の要素の数
-data class ListShape(val element: SnapshotVerifier.SlotType, val mutable: Boolean, val size: Int)
+@InternalCreateScriptApi
+public data class ListShape(val element: SnapshotVerifier.SlotType, val mutable: Boolean, val size: Int)
 
 // ユーザー定義関数（第3.8c段階）。entry は先頭の命令位置、localCount は呼び出しフレームのローカル変数の数（引数を含む）、
 // parameterCount は引数の数（第3.8d段階。ローカル変数の先頭 parameterCount 個が引数）
-data class FunctionInfo(val entry: Int, val localCount: Int, val parameterCount: Int = 0)
+@InternalCreateScriptApi
+public data class FunctionInfo(val entry: Int, val localCount: Int, val parameterCount: Int = 0)
 
 // クラス（第3.9a段階）。番号（CompiledProgram.classes の位置）は宣言の順。name はオブジェクトの表示（Robot@1）に使う。
 // fields はプロパティ（第3.9b段階。宣言の順）、constructor はプロパティを初期化する関数（CompiledProgram.functions の番号。
 // プロパティの無いクラスは -1）。コンストラクタは NEW で作ったオブジェクトをローカル変数 0 に受け取り、それを返す
-data class ClassInfo(val name: String, val fields: List<FieldInfo> = emptyList(), val constructor: Int = -1)
+@InternalCreateScriptApi
+public data class ClassInfo(val name: String, val fields: List<FieldInfo> = emptyList(), val constructor: Int = -1)
 
 // プロパティ（第3.9b段階）。type は値の型（Unit は使えない）。name はプログラムのハッシュに含める
-data class FieldInfo(val name: String, val type: SnapshotVerifier.SlotType)
+@InternalCreateScriptApi
+public data class FieldInfo(val name: String, val type: SnapshotVerifier.SlotType)
 
-// コンパイル結果。Minecraft に依存しない。命令はトップレベルの文（HALT で終わる）の後に、関数を定義の順に並べる
-data class CompiledProgram(
-    val instructions: List<Instruction>,
-    val constants: List<Constant>,
+/**
+ * A compiled program, from `CreateScript.compile`, to pass to `CreateScript.start` and `CreateScript.resume`.
+ *
+ * Hosts use it as a handle: the type is supported, but its constructor, properties and `copy` are Internal API
+ * (`@InternalCreateScriptApi`, see `docs/api/api-surface.md`) and change with the language. Running a program
+ * does not change it, so one program can be run by several [com.creatrbypc.createanalytical.script.api.ScriptRun]s.
+ * [ProgramFingerprint.ofProgram] identifies it for saved runs.
+ */
+public data class CompiledProgram @InternalCreateScriptApi constructor(
+    @property:InternalCreateScriptApi val instructions: List<Instruction>,
+    @property:InternalCreateScriptApi val constants: List<Constant>,
     // トップレベルの変数（大域変数）の数
-    val variableCount: Int,
+    @property:InternalCreateScriptApi val variableCount: Int,
     // コンパイル時に計算したスタックの最大の深さ（呼び出しフレームごとの深さ。VM のスタックは呼び出しの連鎖に沿って積み重なり、
     // その合計が MAX_STACK_DEPTH を超えないことも Compiler が確かめる）
-    val maxStackDepth: Int,
-    val functions: List<FunctionInfo> = emptyList(),
-    val classes: List<ClassInfo> = emptyList(),
+    @property:InternalCreateScriptApi val maxStackDepth: Int,
+    @property:InternalCreateScriptApi val functions: List<FunctionInfo> = emptyList(),
+    @property:InternalCreateScriptApi val classes: List<ClassInfo> = emptyList(),
     // NEW_LIST で作るリストの形（第3.10a段階。同じ形は1つにまとめる）
-    val lists: List<ListShape> = emptyList(),
+    @property:InternalCreateScriptApi val lists: List<ListShape> = emptyList(),
     // エラーフォールバック ?! の範囲（第9.2段階。内側の範囲が先）。?! を使わないプログラムは空で、命令・ハッシュはこれまでと同じ
-    val handlers: List<ErrorHandler> = emptyList(),
+    @property:InternalCreateScriptApi val handlers: List<ErrorHandler> = emptyList(),
 ) {
     // 第9.2段階より前（handlers の無い 7 つの項目）のバイナリとの互換。それに対してコンパイルしたコードが呼ぶコンストラクター（既定値付きの合成コンストラクターを含む）・
     // copy・copy$default を JVM に残す（Program の v0.1.0-alpha 互換と同じ方法。ソースからは見えない）。互換用の copy は handlers を引き継ぐ
     @Deprecated("Binary compatibility with programs compiled before stage 9.2", level = DeprecationLevel.HIDDEN)
-    constructor(
+    @InternalCreateScriptApi
+    public constructor(
         instructions: List<Instruction>,
         constants: List<Constant>,
         variableCount: Int,
@@ -343,7 +365,8 @@ data class CompiledProgram(
     ) : this(instructions, constants, variableCount, maxStackDepth, functions, classes, lists, emptyList())
 
     @Deprecated("Binary compatibility with programs compiled before stage 9.2", level = DeprecationLevel.HIDDEN)
-    fun copy(
+    @InternalCreateScriptApi
+    public fun copy(
         instructions: List<Instruction> = this.instructions,
         constants: List<Constant> = this.constants,
         variableCount: Int = this.variableCount,
@@ -357,4 +380,5 @@ data class CompiledProgram(
 // エラーフォールバック（第9.2段階）の範囲。start 以上 end 未満の命令（とそこから呼んだ関数）で回復できる実行時エラーが起きたら、呼び出しフレームを
 // この範囲のある手続きのフレームまで戻し、そのフレームのスタックを先頭の stackDepth 個に切り詰めて handler へ移る。handler は範囲と同じ手続きの中で、範囲の外。
 // 状態は命令の表だけで、保存する実行状態（VmSnapshot）には何も加えない
-data class ErrorHandler(val start: Int, val end: Int, val handler: Int, val stackDepth: Int)
+@InternalCreateScriptApi
+public data class ErrorHandler(val start: Int, val end: Int, val handler: Int, val stackDepth: Int)

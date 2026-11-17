@@ -1,5 +1,6 @@
 package com.creatrbypc.createanalytical.project.registry
 
+import com.creatrbypc.createanalytical.project.InternalCreateScriptProjectApi
 import com.creatrbypc.createanalytical.project.CanonicalJson
 import com.creatrbypc.createanalytical.project.FieldReader
 import com.creatrbypc.createanalytical.project.JsonObject
@@ -50,8 +51,9 @@ internal object Ed25519 {
 
 // 信頼する公開鍵。keyId は鍵ごとに決めた名前で、鍵を替えるとき（新しい鍵の ID を加え、古い鍵の ID を外す）に使う。
 // 本番の公開鍵は Phase 2 で決めて CLI に埋め込む（このクラスには、まだ本番の鍵は無い）
-class TrustedKey(val keyId: String, publicKey: ByteArray) {
-    val publicKey: ByteArray = publicKey.copyOf()
+@InternalCreateScriptProjectApi
+public class TrustedKey(public val keyId: String, publicKey: ByteArray) {
+    public val publicKey: ByteArray = publicKey.copyOf()
     internal val key: PublicKey
 
     init {
@@ -60,43 +62,46 @@ class TrustedKey(val keyId: String, publicKey: ByteArray) {
     }
 }
 
-class RegistryKeys(keys: List<TrustedKey>) {
-    val keys: List<TrustedKey> = keys.toList()
+@InternalCreateScriptProjectApi
+public class RegistryKeys(keys: List<TrustedKey>) {
+    public val keys: List<TrustedKey> = keys.toList()
 
     init {
         require(this.keys.map { it.keyId }.distinct().size == this.keys.size) { "duplicate key IDs" }
         require(this.keys.map { it.publicKey.toList() }.distinct().size == this.keys.size) { "the same key under two key IDs" }
     }
 
-    fun find(keyId: String): TrustedKey? = keys.firstOrNull { it.keyId == keyId }
+    public fun find(keyId: String): TrustedKey? = keys.firstOrNull { it.keyId == keyId }
 }
 
-data class IndexSignature(val keyId: String, val signature: ByteArray) {
-    override fun equals(other: Any?) = other is IndexSignature && other.keyId == keyId && other.signature.contentEquals(signature)
+@InternalCreateScriptProjectApi
+public data class IndexSignature(val keyId: String, val signature: ByteArray) {
+    override fun equals(other: Any?): Boolean = other is IndexSignature && other.keyId == keyId && other.signature.contentEquals(signature)
 
-    override fun hashCode() = keyId.hashCode() * 31 + signature.contentHashCode()
+    override fun hashCode(): Int = keyId.hashCode() * 31 + signature.contentHashCode()
 }
 
 // index.json.sig（signatureVersion 1）: {"signatureVersion":1,"signatures":[{"keyId":"…","signature":"<Base64>"}]}。CanonicalJson の正規形。
 // 署名の対象は、ドメインを分ける前置き・鍵の ID・index.json のバイト列そのもの（message）。鍵を替える間は、新旧の鍵の署名を並べられる（最大 MAX_SIGNATURES）
-object IndexSignatures {
-    const val FILE_NAME = "index.json.sig"
-    const val SIGNATURE_VERSION = 1L
-    const val MAX_SIGNATURES = 4
+@InternalCreateScriptProjectApi
+public object IndexSignatures {
+    public const val FILE_NAME: String = "index.json.sig"
+    internal const val SIGNATURE_VERSION = 1L
+    public const val MAX_SIGNATURES: Int = 4
 
     // ドメインを分ける前置き。同じ鍵で別の用途のデータに署名しても、index の署名として通らない
-    const val DOMAIN = "CreateScript-Registry index signature v1"
+    public const val DOMAIN: String = "CreateScript-Registry index signature v1"
 
     private val FIELDS = setOf("signatureVersion", "signatures")
     private val ENTRY_FIELDS = setOf("keyId", "signature")
 
     // 署名するバイト列: DOMAIN（ASCII）・0x00・鍵の ID（ASCII）・0x00・index.json のバイト列
-    fun message(keyId: String, indexBytes: ByteArray): ByteArray {
+    public fun message(keyId: String, indexBytes: ByteArray): ByteArray {
         require(RegistryRules.isValidKeyId(keyId)) { "invalid key ID: $keyId" }
         return DOMAIN.toByteArray(Charsets.US_ASCII) + byteArrayOf(0) + keyId.toByteArray(Charsets.US_ASCII) + byteArrayOf(0) + indexBytes
     }
 
-    fun write(signatures: List<IndexSignature>): ByteArray = CanonicalJson.write(
+    public fun write(signatures: List<IndexSignature>): ByteArray = CanonicalJson.write(
         JsonWriter.obj(
             "signatureVersion" to JsonWriter.integer(SIGNATURE_VERSION),
             "signatures" to JsonWriter.array(
@@ -105,7 +110,7 @@ object IndexSignatures {
         ),
     )
 
-    fun parse(bytes: ByteArray): RegistryResult<List<IndexSignature>> {
+    public fun parse(bytes: ByteArray): RegistryResult<List<IndexSignature>> {
         val diagnostics = ProjectDiagnostics()
         val reader = RegistryReader(diagnostics)
         val (root, fields) = reader.document(bytes, RegistryLimits.MAX_SIGNATURE_BYTES, FILE_NAME, "signatureVersion", SIGNATURE_VERSION, ProjectDiagnosticCode.UNSUPPORTED_SIGNATURE_VERSION)
@@ -157,7 +162,7 @@ object IndexSignatures {
     // - 信頼する鍵の署名が 1 つも無い（知らない鍵の署名だけ）→ 拒否
     // - 信頼する鍵の署名が 1 つでも合わない → 拒否（合う署名がほかにあっても）
     // 知らない鍵の署名は、信頼する鍵の署名が合っていれば無視する（鍵を替える間に、新しい鍵を知らないクライアントがあるため）
-    fun verify(indexBytes: ByteArray, signatureBytes: ByteArray?, keys: RegistryKeys): RegistryResult<List<String>> {
+    public fun verify(indexBytes: ByteArray, signatureBytes: ByteArray?, keys: RegistryKeys): RegistryResult<List<String>> {
         if (signatureBytes == null || signatureBytes.isEmpty()) return failure(ProjectDiagnosticCode.SIGNATURE_MISSING)
         val parsed = parse(signatureBytes)
         val signatures = parsed.value ?: return RegistryResult(null, listOf(ProjectDiagnostic(ProjectDiagnosticCode.SIGNATURE_MALFORMED, 1, 1, listOf("index.json.sig could not be read"))) + parsed.diagnostics)

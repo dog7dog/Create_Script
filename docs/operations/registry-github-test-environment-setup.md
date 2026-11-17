@@ -5,7 +5,7 @@
 > - リポジトリ・App・ruleset・environment・secret・鍵は、まだ何も作っていません。
 > - 構築（Phase 10B-2）には、運営責任者の明示の許可が必要です。
 > - GitHub の仕様の記述は、2026-11-12 に読んだ公式の文書に基づきます（参照先は末尾の H 章）。文書で確かめられなかったものは「未確認」と書きます。
-> - 試験の内容は `docs/registry-github-integration-test.md`（IT-01〜IT-28）、構成は `docs/registry-github-architecture.md` にあります。
+> - 試験の内容は `docs/operations/registry-github-integration-test.md`（IT-01〜IT-28）、構成は `docs/design/registry-github-architecture.md` にあります。
 
 ## A. 必要なリソース
 
@@ -51,7 +51,7 @@
 
 1. **リポジトリ：** 空の public リポジトリ `CreateScript-Registry-Test` を作る。
 2. **雛形：** CreateScript の `registry-template/` の中身を、ルートに置く。
-   - ワークフローの変更は、テスト用のツールのビルドを指すようにするところだけにする（`docs/registry-github-integration-test.md` の A 章）。
+   - ワークフローの変更は、テスト用のツールのビルドを指すようにするところだけにする（`docs/operations/registry-github-integration-test.md` の A 章）。
    - `TOOL_COMMIT` は審査済みのコミットにする。`WRAPPER_JAR_SHA256` は、公式の checksum と照合した値にする。
 3. **立ち上げのコミット：** `maintainers.json`（T-lead・T-m2・T-m3 のログイン名と数値 ID）、`.github/CODEOWNERS`（`* @T-lead @T-m2 @T-m3`）。`check-repo` が `OK` になること。
 4. **App の登録**（Settings → Developer settings → GitHub Apps → New GitHub App）：
@@ -82,7 +82,7 @@
 28 の試験（IT-01〜IT-28）の前に、設計の前提を確かめる。どれも、テスト用のリポジトリだけで行う。
 
 共通の事項：
-- **全体の停止条件：** `docs/registry-github-integration-test.md` の B 章（本番に及ぶ操作、秘密情報の露出、拒否されるはずの操作の成功、テスト用の設定の本番への混入）。
+- **全体の停止条件：** `docs/operations/registry-github-integration-test.md` の B 章（本番に及ぶ操作、秘密情報の露出、拒否されるはずの操作の成功、テスト用の設定の本番への混入）。
 - **証拠の保存：** テスト用のリポジトリの issue「PT run <日付>」に、試験ごとのコメントとして、操作・API の応答（JSON。トークンや鍵を含まないもの）・ワークフローの実行の URL・ruleset の評価（Rule insights）の画面の写しを残す。秘密情報は、その一部も残さない。
 
 | ID | 確かめること | 操作 | 期待結果 | 停止条件 | 対応する IT・前提 |

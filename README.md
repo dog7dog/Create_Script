@@ -8,13 +8,14 @@ that run untrusted scripts. This repository contains:
 
 - **`createscript-core`**: the lexer, parser, semantic analyzer, bytecode compiler and VM, as a Kotlin/JVM
   library with no dependency other than the Kotlin standard library.
-- **`createscript-cli`**: the `createscript` command, which runs `.cscr` files and has an interactive mode
-  (REPL) with line editing.
-- **`createscript-project`** (in development, not in v0.1.0-alpha): the project files `createscript.json` and
-  `createscript.lock` (strict JSON, validation, canonical form), and the formats and signature check of the
-  planned package registry ([docs/registry.md](docs/registry.md)), without file or network access.
-- **`createscript-registry-tool`** and **`registry-template/`** (in development, not in service): the tool and
-  the template for operating the planned registry. Not part of the `createscript` packages.
+- **`createscript-cli`**: the `createscript` command, which runs `.cscr` files and projects, and has an
+  interactive mode (REPL) with line editing.
+- **`createscript-project`**: the project files `createscript.json` and `createscript.lock` (strict JSON,
+  validation, canonical form), package archives, and the formats and signature check of the planned package
+  registry ([docs/registry.md](docs/registry.md)), without file or network access.
+- **`createscript-install`**: downloading, checking and installing packages for `createscript install`.
+- **`createscript-registry-tool`** and **`registry-template/`** (not in service): the tool and the template for
+  operating the planned registry. Not part of the `createscript` packages.
 
 > **CreateScript-Registry is not published yet, and it is looking for maintainers.** The client side exists
 > (`createscript install <name>@<version>` checks an Ed25519-signed index), but there is no registry repository,
@@ -23,10 +24,13 @@ that run untrusted scripts. This repository contains:
 > settings, the production key and at least three maintainers are still needed before any launch.
 > Install packages with `createscript install github:owner/repo@v1.2.0`. See [docs/registry.md](docs/registry.md).
 
-> **Status: 0.1.0-alpha.** The language and the APIs can still change.
-> [v0.1.0-alpha](https://github.com/dog7dog/Create_Script/releases/tag/v0.1.0-alpha) is published as a
-> pre-release on GitHub Releases (2026-11-04), with packages for Linux x86_64 and aarch64 (`.tar.gz`), an
-> unsigned macOS arm64 `.pkg` and `SHA256SUMS`. See [Platform status](#platform-status).
+> **Status: the source in this repository is version 0.2.0-alpha, which is not released yet.** The language and
+> the APIs can still change. The latest published pre-release is
+> [v0.1.0-alpha](https://github.com/dog7dog/Create_Script/releases/tag/v0.1.0-alpha) (2026-11-04) on
+> [GitHub Releases](https://github.com/dog7dog/Create_Script/releases), with packages for Linux x86_64 and aarch64
+> (`.tar.gz`), an unsigned macOS arm64 `.pkg` and `SHA256SUMS`. 0.2.0-alpha adds modules, project files, packages,
+> the language features of stage 9 and a classified, documented public API; see [CHANGELOG.md](CHANGELOG.md) and
+> [Platform status](#platform-status).
 
 ```kotlin
 class Counter {
@@ -53,13 +57,16 @@ println(fib(10))   // 55
 - `val` / `var`, `if` / `else`, `while`, `for` over integer ranges, `break` / `continue`, functions with
   recursion, classes with properties and methods, nested lists.
 - Math functions as in `kotlin.math`, deterministic random numbers, small vectors and matrices.
-- Local modules (in development, not in v0.1.0-alpha): `import geometry` uses the functions of
-  `geometry.cscr` in the same project, as `geometry.square(5)`, with type checks across files. Modules are only read from your project directory;
-  modules of installed packages are used by `createscript run [directory]` (see [Modules](docs/language.md#modules-local-import)).
-- Project files (in development, not in v0.1.0-alpha): `createscript init` creates a project with a
-  `createscript.json` manifest; `createscript manifest check` and `createscript lock check` check the manifest
-  and the lock file; `createscript pack` makes a package archive (`createscript-package.zip`, the same bytes for
-  the same files) from a library project; `createscript install github:owner/repo@v1.2.0` installs a package and its dependencies from
+- New in 0.2.0-alpha: list functions with lambdas (`where`, `map`, `group`, `each`, `average`), the pipeline
+  operator `x |> f(a)`, the error fallback `a ?! b`, function references and lambda values
+  (see [docs/language.md](docs/language.md)).
+- New in 0.2.0-alpha: local modules. `import geometry` uses the functions of `geometry.cscr` in the same project, as
+  `geometry.square(5)`, with type checks across files. Modules are only read from your project directory; modules of
+  installed packages are used by `createscript run [directory]` (see [Modules](docs/language.md#modules-local-import)).
+- New in 0.2.0-alpha: project files and packages. `createscript init` creates a project with a `createscript.json`
+  manifest; `createscript manifest check` and `createscript lock check` check the manifest and the lock file;
+  `createscript pack` makes a package archive (`createscript-package.zip`, the same bytes for the same files) from a
+  library project; `createscript install github:owner/repo@v1.2.0` installs a package and its dependencies from
   GitHub Releases with SHA-256 checks, and `createscript run` runs the project with them, without the network; only
   public modules of direct dependencies can be imported (see [Project files](docs/packages.md)).
   `createscript install <name>@<version>` will install reviewed packages by name from the signed CreateScript-Registry
@@ -67,15 +74,20 @@ println(fib(10))   // 55
 - A safe execution model: fixed limits on stack, call depth, objects and list elements; an instruction budget
   per tick; input and program size limits chosen by the host: small for embedding hosts (4096 characters and
   4096 instructions), large for the `createscript` command (1,000,000 characters per file, 1024 modules, no
-  fixed instruction limit; in development, see [Limits and safety](docs/language.md#limits-and-safety)); no access to files, the network, the operating system or the JVM.
+  fixed instruction limit; see [Limits and safety](docs/language.md#limits-and-safety)); no access to files, the
+  network, the operating system or the JVM.
 - Diagnostics with stable codes (`CS_SEM_TYPE_MISMATCH`, …) and line/column positions.
 
 ## Documentation
+
+All documents are listed in [docs/README.md](docs/README.md). The main ones:
 
 - [Language basics](docs/language.md)
 - [The `createscript` command, REPL and line editing](docs/cli.md)
 - [Samples](docs/samples.md)
 - [Project files: `createscript.json` and `createscript.lock`](docs/packages.md)
+- [Embedding the Core](docs/api/embedding.md), [the project files API](docs/api/project-files.md), the
+  [API surface](docs/api/api-surface.md) and the [compatibility policy](docs/api/compatibility.md)
 - Detailed CLI manual in Japanese: [createscript-cli/README.md](createscript-cli/README.md)
 
 ## Building
@@ -106,48 +118,32 @@ val run = CreateScript.start(program, RunOptions(instructionsPerTick = 128, rand
 while (!run.isFinished) run.tick()
 ```
 
-For programs with `import` (in development, not in v0.1.0-alpha), the host gives the module sources to the compiler; the Core never reads files
-itself. `ModuleResolver` receives a module name (one identifier) and returns its source, or the reason it
-cannot be used:
-
-```kotlin
-val modules = mapOf("geometry" to "fun square(x: Int): Int {\n  return x * x\n}\n")
-val result = CreateScript.compile("import geometry\nprintln(geometry.square(5))", { name ->
-    modules[name]?.let { ModuleLookup.Found(it) } ?: ModuleLookup.NotFound
-})
-result.diagnostics.forEach { println("${it.module ?: "main"}: ${it.diagnostic.code.id}") }
-val program = result.program ?: error("compile failed")
-```
-
-`CreateScript.compile(source, CompileOptions.STANDALONE)` compiles with the large standalone limits (in
-development, not in v0.1.0-alpha); `CreateScript.compile(source)` keeps the small limits, as does
-`CompileOptions.EMBEDDED`. The runtime limits do not change.
-
-`CreateScript.compile(source)` works as before; it reports `CS_MODULE_IMPORT_UNAVAILABLE` for a program with
-`import`. `result.locate(run.error!!)` tells in which file a runtime error happened.
-
-`CreateScript.resume` checks only the shape of a saved state, not which program it came from. A host that
-saves and restores runs must compare two fingerprints before resuming: `result.sourceFingerprint` (all
-source files; for a program without `import` it equals `ProgramFingerprint.ofSource(source)`) and
-`ProgramFingerprint.ofProgram(program)`. Then a state is not restored after only an imported file changed.
+[docs/api/embedding.md](docs/api/embedding.md) explains modules, limits, saving and resuming runs (and what a saved
+state does not keep) and threads. The supported API is listed in [docs/api/api-surface.md](docs/api/api-surface.md);
+other public classes are internal and marked `@InternalCreateScriptApi`.
 
 ## Platform status
 
-The table below is for the released v0.1.0-alpha (CI on its tag). The features in development (local modules,
-project files, `pack`, `install` and running projects with packages) have so far been tested on macOS arm64 only,
-locally (all unit tests, and the command run by hand); they have not run in CI or on Linux or Windows, and
-`install` has not yet downloaded from a real GitHub release (it was tried with archives in the cache and a test
-server). Their file locks, file identities (`fileKey`), atomic renames and Windows name rules are therefore not
-verified on Linux and Windows.
+The table below is for the source version 0.2.0-alpha (not released yet), from the CI of pull request #2 on
+2026-11-16 (all six jobs passed) and local checks.
 
-| Platform | Status (v0.1.0-alpha) |
+| Platform | Status (0.2.0-alpha) |
 |---|---|
-| Ubuntu x86_64 (`ubuntu-24.04`) | Verified in CI: build, all tests, samples, REPL, and the `.tar.gz` installed, run and uninstalled |
-| Ubuntu aarch64 (`ubuntu-24.04-arm`) | Verified in CI: the `.tar.gz` built, installed, run and uninstalled (the unit tests run on x86_64 and macOS only) |
-| macOS arm64 (Apple Silicon) | Verified in CI (`macos-15`): build, all tests, samples, REPL, and the `.pkg` installed, run and uninstalled. Locally, the build, the tests and the `.pkg` contents were also checked (the `.pkg` was not installed locally) |
+| Ubuntu x86_64 (`ubuntu-24.04`) | Verified in CI: build, all tests, samples, REPL, and the `.tar.gz` installed, installed again, run and uninstalled |
+| Ubuntu aarch64 (`ubuntu-24.04-arm`) | Verified in CI: the `.tar.gz` built, installed, installed again, run and uninstalled (the unit tests run on x86_64 and macOS only). Locally (Docker, aarch64), the build and the tests passed and the `.tar.gz` was also installed and run without the network |
+| macOS arm64 (Apple Silicon) | Verified in CI (`macos-15`): build, all tests, samples, REPL, and the `.pkg` installed, installed again, run and uninstalled. Locally, the build, the tests and the `.pkg` contents were also checked (the `.pkg` was not installed locally) |
 | macOS x86_64 (Intel) | Not verified (the packaging script supports it, but it has never been run) |
 | Windows | Not verified (`installDist` makes a `createscript.bat`, but it has never been run) |
 | macOS signing and notarization | Not done. The `.pkg` is unsigned, so it is not suitable for public distribution |
+
+Not verified yet:
+
+- `createscript install` downloading from a real GitHub release (it was tested with archives in the cache and a test
+  server).
+- The opt-in race test for L-5 (`L5RaceTest`); it does not run in CI.
+- Windows. The protection of installation against a directory on the path being swapped for a link (L-5) is
+  implemented for macOS and Linux only.
+- The signed CreateScript-Registry: not published (see above).
 
 All CI jobs use Temurin 21.
 

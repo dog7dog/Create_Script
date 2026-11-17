@@ -70,7 +70,7 @@ G1 → G3 → G2 → G4 →（任意）G7 → G6。G5 は本番のリポジト�
   1. 雛形の `validate.yml`・`publish.yml` をテスト用のリポジトリに追加する（commit・push。`TOOL_COMMIT` の扱いは G5）。
   2. environment `publish`（必須の承認者）と Secret（Checks・Publisher の秘密鍵、設定の証明用の **テスト用** の鍵）を作る。
   3. テスト用の鍵で署名したスナップショット（`github-settings/verified-rulesets.json` と `.sig`）を、PR で追加する。
-  4. `docs/registry-github-integration-test.md` の IT-01〜IT-28 を順に行う（最小 3 人の体制が要る試験がある）。
+  4. `docs/operations/registry-github-integration-test.md` の IT-01〜IT-28 を順に行う（最小 3 人の体制が要る試験がある）。
 - **影響:** タグ・Release が作られる。**`index-*` のタグは ruleset B で削除できない**（後片付けには B を一時的に変える必要があり、それ自体が別の承認の要る操作）。
 - **復旧:** ワークフローのファイルを消す commit、Secret・environment の削除、作った Release の削除。タグは B を `disabled` にしてから削除し、すぐ `active` に戻す（A・B の `updated_at` が変わるので、スナップショットを記録し直す）。
 

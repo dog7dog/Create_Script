@@ -1,43 +1,77 @@
 package com.creatrbypc.createanalytical.script.vm
 
-// CS_VM の実行途中の状態（D14）。命令と命令の間の状態だけを表す。Minecraft に依存しないデータで、保存形式への変換は Integration 側が行う。
-// state は RUNNING / WAITING だけ（HALTED / ERROR の VM は Scheduler から外れるため保存しない）
-data class VmSnapshot(
+/**
+ * The saved state of a run between two instructions, from `ScriptRun.snapshot`, to continue with
+ * `CreateScript.resume`. Plain data without references to the game or files: the host decides how to store it
+ * (field by field, as a game host does). States saved by earlier releases still resume (see
+ * `docs/api/api-surface.md`). New fields are added at the end with default values.
+ *
+ * Not included: the progress of an instruction that takes several ticks and of a garbage collection (see
+ * `CreateScript.resume`).
+ *
+ * @property pc the next instruction (in the innermost function when [callStack] is not empty).
+ * @property state [VmState.RUNNING] or [VmState.WAITING]; finished runs are not saved.
+ * @property waitRemaining the ticks left in `waitTicks`.
+ * @property resumeWithUnit `true` when the run is coming back from `waitTicks` and the `Unit` result is not yet on the stack.
+ * @property stack the operand stack, bottom first.
+ * @property variables the top-level variables; `null` is not yet initialized.
+ * @property consoleLines the console history (at most 32 lines).
+ * @property callStack the functions being called, outermost first; empty at the top level.
+ * @property objects the objects on the heap, by ascending id.
+ * @property nextObjectId the id of the next object.
+ * @property randomState the 64-bit state of the random number generator (every value is valid).
+ */
+public data class VmSnapshot(
     val pc: Int,
     val state: VmState,
     val waitRemaining: Int,
-    // waitTicks から再開するとき、結果の Unit をまだ積んでいない（A23）
     val resumeWithUnit: Boolean,
     val stack: List<Value>,
-    // 変数の値（null は未初期化）。個数はプログラムの変数の数と同じ
     val variables: List<Value?>,
     val consoleLines: List<String>,
-    // 呼び出し中の関数（外側から順。トップレベルの実行中は空。第3.8c段階）。pc は最も内側の関数の命令位置
     val callStack: List<CallFrameSnapshot> = emptyList(),
-    // オブジェクトのヒープ（id の昇順）と、次に発行するオブジェクトの id（第3.9a段階）
     val objects: List<ObjectSnapshot> = emptyList(),
     val nextObjectId: Int = 1,
-    // 乱数の状態（第3.11e段階。SplitMix64 の 64 ビット。どの値も有効）
     val randomState: Long = 0L,
 )
 
-// オブジェクト1つ分の実体。classId は CompiledProgram.classes の番号。fields はプロパティの値（第3.9b段階。宣言の順で、
-// null は未初期化。初期化中のオブジェクトだけが持つ）。list はリスト（第3.10a段階。リストは classId が LIST_CLASS でプロパティが無い。
-// Vector は VECTOR_CLASS、Matrix は MATRIX_CLASS: 第3.11e段階）
-data class ObjectSnapshot(val id: Int, val classId: Int, val fields: List<Value?> = emptyList(), val list: ListSnapshot? = null) {
-    companion object {
-        const val LIST_CLASS = -1
+/**
+ * One object on the heap of a [VmSnapshot].
+ *
+ * @property id the id that [Value.ObjectRef] uses.
+ * @property classId a class of the program (an index into its classes, 0 or more), or [LIST_CLASS], [VECTOR_CLASS]
+ *   or [MATRIX_CLASS].
+ * @property fields the property values of an instance, in declaration order; `null` only while it is being
+ *   initialized. Empty for lists, vectors and matrices.
+ * @property list the elements of a list, vector or matrix; `null` for an instance.
+ */
+public data class ObjectSnapshot(val id: Int, val classId: Int, val fields: List<Value?> = emptyList(), val list: ListSnapshot? = null) {
+    public companion object {
+        /** [classId] of a list. */
+        public const val LIST_CLASS: Int = -1
 
-        // Vector（第3.11e段階）。変更できない Double のリスト（要素は 1〜16 個）
-        const val VECTOR_CLASS = -2
+        /** [classId] of a `Vector`: an immutable list of 1 to 16 `Double`s. */
+        public const val VECTOR_CLASS: Int = -2
 
-        // Matrix（第3.11e段階）。変更できない、行の Vector（1〜8 個。長さが同じで 1〜8）のリスト
-        const val MATRIX_CLASS = -3
+        /** [classId] of a `Matrix`: an immutable list of 1 to 8 vectors (rows) of the same length, 1 to 8. */
+        public const val MATRIX_CLASS: Int = -3
     }
 }
 
-// リストの中身（第3.10a段階）。element は要素の型、mutable は変更できるリスト（mutableListOf）か、elements は要素（先頭から）
-data class ListSnapshot(val element: SnapshotVerifier.SlotType, val mutable: Boolean, val elements: List<Value>)
+/**
+ * The elements of a list, vector or matrix in a [VmSnapshot].
+ *
+ * @property element the type of the elements.
+ * @property mutable `true` for a list made with `mutableListOf`.
+ * @property elements the elements, first to last.
+ */
+public data class ListSnapshot(val element: SnapshotVerifier.SlotType, val mutable: Boolean, val elements: List<Value>)
 
-// 呼び出しフレーム1つ分。function は CompiledProgram.functions の番号、returnPc は戻り先（CALL の次の命令）、locals はローカル変数（null は未初期化）
-data class CallFrameSnapshot(val function: Int, val returnPc: Int, val locals: List<Value?>)
+/**
+ * One function call in progress in a [VmSnapshot].
+ *
+ * @property function the function of the program (an index into its functions).
+ * @property returnPc the instruction to return to.
+ * @property locals the local variables (parameters first); `null` is not yet initialized.
+ */
+public data class CallFrameSnapshot(val function: Int, val returnPc: Int, val locals: List<Value?>)

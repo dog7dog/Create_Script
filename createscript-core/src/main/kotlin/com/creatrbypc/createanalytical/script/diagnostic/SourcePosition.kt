@@ -1,4 +1,10 @@
 package com.creatrbypc.createanalytical.script.diagnostic
 
-// ソース上の位置。offset は 0 始まり、line・column は 1 始まりで、いずれも UTF-16 コード単位で数える
-data class SourcePosition(val offset: Int, val line: Int, val column: Int)
+/**
+ * A position in source text, counted in UTF-16 code units.
+ *
+ * @property offset from the start of the text, starting at 0.
+ * @property line starting at 1.
+ * @property column starting at 1.
+ */
+public data class SourcePosition(val offset: Int, val line: Int, val column: Int)

@@ -1,5 +1,6 @@
 package com.creatrbypc.createanalytical.project.registry
 
+import com.creatrbypc.createanalytical.project.InternalCreateScriptProjectApi
 import com.creatrbypc.createanalytical.project.CanonicalJson
 import com.creatrbypc.createanalytical.project.FieldReader
 import com.creatrbypc.createanalytical.project.JsonObject
@@ -16,18 +17,19 @@ import java.time.Instant
 // index.json（indexVersion 1）の読み取り・検査・正規形の書き出しと、リポジトリのファイルからの生成（S8.3 Phase 1。docs/registry.md）。
 // index.json のバイト列は CanonicalJson の正規形（1 行・キーの順・UTF-8）で、署名はこのバイト列そのものに対して行う。
 // 正規形でない index は、内容が正しくても拒否する（同じ内容が必ず同じバイト列・同じ SHA-256 になるように）
-object RegistryIndexes {
-    const val INDEX_VERSION = 1L
-    const val FILE_NAME = "index.json"
+@InternalCreateScriptProjectApi
+public object RegistryIndexes {
+    internal const val INDEX_VERSION = 1L
+    public const val FILE_NAME: String = "index.json"
 
     private val FIELDS = setOf("indexVersion", "serial", "generated", "expires", "packages")
     private val PACKAGE_FIELDS = setOf("source", "repositoryId", "description", "license", "removed", "versions")
     private val VERSION_FIELDS = setOf("sha256", "dependencies", "pullRequest", "yanked")
 
-    fun sha256(bytes: ByteArray): String = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
+    public fun sha256(bytes: ByteArray): String = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
 
     // 正規形のバイト列
-    fun write(index: RegistryIndex): ByteArray = CanonicalJson.write(
+    public fun write(index: RegistryIndex): ByteArray = CanonicalJson.write(
         JsonWriter.obj(
             "indexVersion" to JsonWriter.integer(INDEX_VERSION),
             "serial" to JsonWriter.integer(index.serial),
@@ -60,7 +62,7 @@ object RegistryIndexes {
     )
 
     // 読み取りと、index の中だけで決まる検査（正規形・値の形・件数・日時の関係・パッケージの間の規則）。署名と、以前の index との比較は IndexVerifier が行う
-    fun parse(bytes: ByteArray): RegistryResult<RegistryIndex> {
+    public fun parse(bytes: ByteArray): RegistryResult<RegistryIndex> {
         val diagnostics = ProjectDiagnostics()
         val json = JsonParser.parse(bytes, RegistryLimits.MAX_INDEX_BYTES)
         val root = json.value ?: return RegistryResult(null, json.diagnostics)
@@ -278,7 +280,7 @@ object RegistryIndexes {
 
     // entries（読み取りと検査を通ったもの）から index を作る。予約名・同じ名前の重複と、パッケージの間の規則を確かめる。
     // expires は generated の config.indexValidityDays 日後。generated は秒の単位
-    fun build(config: RegistryConfig, reserved: ReservedNames, entries: List<PackageEntry>, serial: Long, generated: Instant): RegistryResult<RegistryIndex> {
+    public fun build(config: RegistryConfig, reserved: ReservedNames, entries: List<PackageEntry>, serial: Long, generated: Instant): RegistryResult<RegistryIndex> {
         val diagnostics = ProjectDiagnostics()
         if (!RegistryRules.isValidId(serial)) diagnostics.add(ProjectDiagnosticCode.INVALID_ID, null as JsonValue?, "serial", serial.toString())
         if (generated.nano != 0) diagnostics.add(ProjectDiagnosticCode.INVALID_DATE, null as JsonValue?, "generated", generated.toString())

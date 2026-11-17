@@ -1,5 +1,6 @@
 package com.creatrbypc.createanalytical.cli
 
+import com.creatrbypc.createanalytical.project.FilePosition
 import com.creatrbypc.createanalytical.project.Lockfile
 import com.creatrbypc.createanalytical.project.Lockfiles
 import com.creatrbypc.createanalytical.project.Manifest
@@ -472,15 +473,15 @@ internal class ProjectCommands(
         }
         manifest.entry?.let { entry ->
             entryProblem(root, entry)?.let { code ->
-                report(shownManifest, listOf(ProjectDiagnostic(code, result.entryPosition.first, result.entryPosition.second, listOf(entry))))
+                report(shownManifest, listOf(ProjectDiagnostic(code, result.entryPosition.line, result.entryPosition.column, listOf(entry))))
                 return null
             }
         }
         // library の modules（S8.2 Phase 1）: modules/名前.cscr が、ルートの中の通常のファイルであること（エントリーと同じ規則）
         val missing = manifest.modules.mapNotNull { module ->
             entryProblem(root, "$MODULES_DIRECTORY/$module.cscr")?.let { _ ->
-                val position = result.modulePositions[module] ?: (1 to 1)
-                ProjectDiagnostic(ProjectDiagnosticCode.MODULE_FILE_NOT_FOUND, position.first, position.second, listOf(module))
+                val position = result.modulePositions[module] ?: FilePosition(1, 1)
+                ProjectDiagnostic(ProjectDiagnosticCode.MODULE_FILE_NOT_FOUND, position.line, position.column, listOf(module))
             }
         }
         if (missing.isNotEmpty()) {

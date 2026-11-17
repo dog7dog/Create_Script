@@ -91,7 +91,7 @@ createscript --version
 
 ```text
 $ createscript
-CreateScript 0.1.0-alpha
+CreateScript 0.2.0-alpha
 Type "help" for help, "exit" to quit.
 >>> 1 + 1
 2
@@ -246,7 +246,7 @@ createscript-cli/samples/infinite_loop.cscr: stopped after 1000 ticks (--max-tic
 
 64〜66・69・73・75 は `sysexits.h` の EX_USAGE・EX_DATAERR・EX_NOINPUT・EX_UNAVAILABLE・EX_CANTCREAT・EX_TEMPFAIL と同じ番号です。
 
-### 7.1 プロジェクトのファイル（S8.1。開発中）
+### 7.1 プロジェクトのファイル（S8.1。0.2.0-alpha で追加）
 
 `createscript.json`（マニフェスト）と `createscript.lock`（ロックファイル）を扱うコマンドです。形式は [docs/packages.md](../docs/packages.md)（英語）にあります。
 `run <ファイル>.cscr` は、これらのファイルを読みません。`run [ディレクトリ]` は、マニフェストの entry を、インストール済みのパッケージとともに実行します（S8.2 Phase 4）。

@@ -13,3 +13,19 @@ SHA-256 of the files used:
 To make it again: build the v0.1.0-alpha Core jar from `git archive 5c7d68c`, compile `OldCaller.kt.txt`
 (renamed to `.kt`) with the Kotlin 2.0.0 Gradle plugin and `compileOnly files('<that jar>')`, and copy
 `compat/v010alpha/OldCaller.class` here. The class file contains no paths of the machine that built it.
+
+## `OldSnapshotHost.class` (A2, saved states)
+
+`OldSnapshotHost.class` is `OldSnapshotHost.kt.txt` compiled the same way (Kotlin 2.0.0 Gradle plugin, JVM 21,
+`compileOnly files('<v0.1.0-alpha createscript-core.jar>')`). It saves a run every few ticks, rebuilds the saved
+state field by field with the v0.1.0-alpha constructors of `VmSnapshot`, `CallFrameSnapshot`, `ObjectSnapshot`,
+`ListSnapshot`, `Value` and `SnapshotVerifier.SlotType`, resumes from the copy, and compares the output with a run
+without interruptions. `BinaryCompatibilityTest.snapshotHostCompiledAgainstV010AlphaStillSavesAndRestores` runs it with
+the current Core, so the test fails if the saved-state API that hosts use (Stable, see `docs/api/api-surface.md`)
+loses a v0.1.0-alpha member or restores differently.
+
+The v0.1.0-alpha jar was built again from the same sources (a worktree of the tag `v0.1.0-alpha`) for this. That
+build is not byte-identical to the jar above: its SHA-256 was
+`d29b0427c714b15d9630e368023ed53519ccd7dc8e4257e044b479dc7db38dcf`.
+
+- `OldSnapshotHost.class`: `cf6d113e22a1db3cbe3e125afa971e61fea13cc20b2dfc6b66161ee32c013072`

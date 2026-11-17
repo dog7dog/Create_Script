@@ -1,8 +1,11 @@
 package com.creatrbypc.createanalytical.script.lexer
 
+import com.creatrbypc.createanalytical.script.InternalCreateScriptApi
+
 // トークンの種類。symbol を持つものは演算子・記号で、Kotlin と同じ綴り。
 // Stage 3.5 で使えるかどうかは Lexer では判断せず、Parser 以降で判定する
-enum class TokenType(val symbol: String? = null) {
+@InternalCreateScriptApi
+public enum class TokenType(public val symbol: String? = null) {
     IDENTIFIER,
     KEYWORD,
     INT_LITERAL,

@@ -156,9 +156,9 @@ What protects the index releases, and what GitHub settings cannot do:
 
 ### The publishing GitHub App (adopted in S8.3 Phase 9, in the template since Phase 10A, **not tried on GitHub**)
 
-The design (`docs/registry-github-architecture.md`) is in the template since S8.3 Phase 10A: the `release` job
+The design (`docs/design/registry-github-architecture.md`) is in the template since S8.3 Phase 10A: the `release` job
 publishes with the publishing App's token and its own `GITHUB_TOKEN` is read-only, and the tag rulesets are A and
-B. None of it has been tried on GitHub (tests IT-09 and IT-21 to IT-27 of `docs/registry-github-integration-test.md`);
+B. None of it has been tried on GitHub (tests IT-09 and IT-21 to IT-27 of `docs/operations/registry-github-integration-test.md`);
 in particular, how a bypass actor of a ruleset acts on the creation of tags is not verified.
 
 - **A second App, "CreateScript Registry Publisher"**: repository permission "Contents: read and write" only,

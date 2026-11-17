@@ -1,5 +1,6 @@
 package com.creatrbypc.createanalytical.script.compiler
 
+import com.creatrbypc.createanalytical.script.InternalCreateScriptApi
 import com.creatrbypc.createanalytical.script.ast.Assignment
 import com.creatrbypc.createanalytical.script.ast.BinaryExpression
 import com.creatrbypc.createanalytical.script.ast.BinaryOperator
@@ -79,40 +80,67 @@ import com.creatrbypc.createanalytical.script.vm.SnapshotVerifier
 import com.creatrbypc.createanalytical.script.vm.VmLimits
 import java.util.IdentityHashMap
 
-// program はエラーが無いときだけ返す。診断は前の段階の分を含めて最大16件
-data class CompileResult(
+/**
+ * The result of [com.creatrbypc.createanalytical.script.api.CreateScript.compile] for a program without `import`.
+ *
+ * @property program the compiled program, or `null` when there is an error.
+ * @property diagnostics errors and warnings from all phases, at most 16.
+ * @property diagnosticsTruncated `true` when there were more than 16 diagnostics and the rest were dropped.
+ * @property hasErrors `true` when there was an error, also one that was dropped.
+ */
+public data class CompileResult(
     val program: CompiledProgram?,
     val diagnostics: List<Diagnostic>,
     val diagnosticsTruncated: Boolean,
     val hasErrors: Boolean,
 )
 
-// コンパイルの設定（第8.0.1段階）。maxInstructions はコンパイルしたプログラムの大きさ（バイトコードの命令の数）の上限で、null なら上限なし。
-// これはコンパイル時の上限で、VM は実行中に確かめない。実行時の予算（1 tick の命令数: RunOptions.instructionsPerTick）・スタック・呼び出しの深さ・
-// オブジェクト・リストなどの上限とは別で、どの設定でもそれらは変わらない。定数・変数・引数・プロパティの数の上限も、VM と検証の前提のため変わらない。
-// 設定はプログラムを受け付けるかどうかだけを決め、受け付けたプログラムの命令・ハッシュ（ProgramFingerprint）は設定によらず同じ。
-//
-// null（上限なし）でも、コンパイルが際限なく資源を使ってよいという意味ではない。プログラムの大きさは、入力の上限（1 つのソースの文字数・トークン数・
-// AST のノード数: LexerLimits・ParserLimits、モジュールの数: ModuleLimits）で抑えられている。コンパイルのたびに行う検証（SnapshotVerifier.framesOf）の
-// 時間とメモリーは命令数にほぼ比例する（開発機の計測で、検証に不利な形の 65,535 命令で約 2.4 秒・約 180 MiB）。
-// 入力の上限を広げるときは、コンパイルの時間とメモリーの上限を設計し直すこと
-//
-// 入力の上限（第8.0.1段階）: maxSourceLength・maxTokens・maxNodes は 1 つのファイルごと、maxModules はエントリーを除くモジュールの数、
-// maxTotalSourceLength はエントリーとすべてのモジュールの長さの合計。既定（DEFAULT・EMBEDDED）はこれまでの値（合計はファイルごとの上限 × ファイルの数で、
-// これまでと同じく実質的な制限にならない）
-data class CompileOptions(
+/**
+ * Compile-time limits: which programs the compiler accepts. They do not change the instructions or the
+ * [com.creatrbypc.createanalytical.script.vm.ProgramFingerprint] of an accepted program, and they do not change
+ * the runtime limits (instructions per tick, stack, call depth, objects, lists), which are the same for every
+ * option. The limits on constants, variables, parameters and properties are fixed too.
+ *
+ * Without an instruction limit the size of a program is still bounded by the input limits. Every compilation ends
+ * with a check of the bytecode, and [maxVerificationSteps] decides how:
+ * - `null` (the default, also in [DEFAULT] and [EMBEDDED]): the check keeps a state for every instruction, so its time
+ *   and memory grow with the number of instructions. Its only bound on steps is the one derived from the program,
+ *   which a correct program never reaches.
+ * - a limit (100,000,000 in [STANDALONE]): the check keeps states only at the start of basic blocks, with the same
+ *   rules, and a program that needs more steps gets `CS_COMP_PROGRAM_TOO_COMPLEX`.
+ *
+ * A host that removes the instruction limit or raises the input limits should also set [maxVerificationSteps], as
+ * [STANDALONE] does. Time and memory measured with the standalone limits are in the language documentation
+ * (docs/language.md, "Program size").
+ *
+ * @property maxInstructions the most bytecode instructions of the whole program, or `null` for no limit
+ *   (default 4096).
+ * @property maxSourceLength the most UTF-16 code units of one source file (default 4096).
+ * @property maxTokens the most tokens of one source file (default 2048).
+ * @property maxNodes the most syntax tree nodes of one source file (default 2048).
+ * @property maxModules the most modules besides the entry file (default 16).
+ * @property maxTotalSourceLength the most UTF-16 code units of the entry file and all modules together (default
+ *   4096 × 17, which does not limit beyond the per-file limit).
+ * @property maxPropertyTypeChain the longest chain of property types inferred from other properties (a property
+ *   without a type annotation whose initializer uses a property of another class, and so on), or `null` for no
+ *   limit (default).
+ * @property maxTotalTokens the most tokens of all files together (default 2048 × 17). Memory during compilation
+ *   grows about in proportion to tokens (measured: at most about 330 bytes per token).
+ * @property maxVerificationSteps the most steps of the final bytecode check, or `null` (default) for the bound
+ *   derived from the program, which a correct program never reaches. With a limit, a program that needs more steps
+ *   gets `CS_COMP_PROGRAM_TOO_COMPLEX`.
+ * @throws IllegalArgumentException if a limit is not positive, [maxTotalTokens] is less than [maxTokens], or
+ *   [maxTotalSourceLength] together with the module count does not fit in an `Int`.
+ */
+public data class CompileOptions(
     val maxInstructions: Int? = VmLimits.MAX_INSTRUCTIONS,
     val maxSourceLength: Int = LexerLimits.MAX_SOURCE_LENGTH,
     val maxTokens: Int = LexerLimits.MAX_TOKENS,
     val maxNodes: Int = ParserLimits.MAX_NODES,
     val maxModules: Int = ModuleLimits.MAX_MODULES,
     val maxTotalSourceLength: Int = LexerLimits.MAX_SOURCE_LENGTH * (ModuleLimits.MAX_MODULES + 1),
-    // 型の注釈の無いプロパティの型の連鎖（C1 の初期化式が C2 のプロパティの型を使い、C2 が C3 の…）の上限。null なら上限なし（既定。ノード数 2048 で連鎖は短い）
     val maxPropertyTypeChain: Int? = null,
-    // エントリーとすべてのモジュールのトークン数の合計の上限。コンパイル中に保持する AST などのメモリーはトークン数にほぼ比例する（開発機の計測で 1 トークンあたり最大約 330 バイト）
     val maxTotalTokens: Int = LexerLimits.MAX_TOKENS * (ModuleLimits.MAX_MODULES + 1),
-    // コンパイルの最後に行うバイトコードの検証（SnapshotVerifier）の処理回数の上限。null なら理論上の上限（SnapshotVerifier.maxSteps。既定）。
-    // 正しいプログラムの処理回数は、ふつう命令数の数倍で済むが、変数の初期化の状態が少しずつ伝わる形では命令数 ×（変数の数 + 1）まで増える
     val maxVerificationSteps: Long? = null,
 ) {
     init {
@@ -125,15 +153,19 @@ data class CompileOptions(
         require(maxTotalSourceLength.toLong() + maxModules + 1 <= Int.MAX_VALUE) { "maxTotalSourceLength is too large: $maxTotalSourceLength" }
     }
 
-    companion object {
-        // CreateScript.compile(source)・Compiler.compileSource(source) の既定（これまでと同じ 4096 命令）
-        val DEFAULT = CompileOptions()
+    public companion object {
+        /** The default of `CreateScript.compile(source)`: all limits at their defaults (4096 instructions). */
+        public val DEFAULT: CompileOptions = CompileOptions()
 
-        // 埋め込み先（Create: Analytical などのホスト）向け。4096 命令を明示して指定する
-        val EMBEDDED = CompileOptions(VmLimits.MAX_INSTRUCTIONS)
+        /** For hosts that embed the Core (such as the game): the defaults, with the 4096-instruction limit stated. */
+        public val EMBEDDED: CompileOptions = CompileOptions(VmLimits.MAX_INSTRUCTIONS)
 
-        // 独立版の createscript コマンド向け。命令数の上限なし（入力の上限・実行時の上限はそのまま）
-        val STANDALONE = CompileOptions(
+        /**
+         * For the standalone `createscript` command: no instruction limit; 1,000,000 UTF-16 code units, 250,000 tokens
+         * and 250,000 nodes per file; 1024 modules; 8,000,000 code units and 1,000,000 tokens in all files; property
+         * type chains up to 128; bytecode checks up to 100,000,000 steps. The runtime limits are unchanged.
+         */
+        public val STANDALONE: CompileOptions = CompileOptions(
             maxInstructions = null,
             maxSourceLength = 1_000_000,
             maxTokens = 250_000,
@@ -148,7 +180,8 @@ data class CompileOptions(
 }
 
 // 意味解析済みの AST をスタック型 VM のバイトコードへ変換する。Minecraft に依存しない純粋な Kotlin
-class Compiler private constructor(
+@InternalCreateScriptApi
+public class Compiler private constructor(
     private val analyzed: AnalyzedProgram,
     private val diagnostics: DiagnosticCollector,
     private val options: CompileOptions,
@@ -211,11 +244,11 @@ class Compiler private constructor(
     // 上限超過。報告済みのため、これ以上変換しない
     private class CompileAbort : RuntimeException(null, null, false, false)
 
-    companion object {
+    public companion object {
         // 引数 1 つのものは CompileOptions.DEFAULT（4096 命令）。これまでの呼び出し（コンパイル済みのものを含む）のため、既定値付きの引数ではなく別の関数にする
-        fun compile(semanticResult: SemanticResult): CompileResult = compile(semanticResult, CompileOptions.DEFAULT)
+        public fun compile(semanticResult: SemanticResult): CompileResult = compile(semanticResult, CompileOptions.DEFAULT)
 
-        fun compile(semanticResult: SemanticResult, options: CompileOptions): CompileResult {
+        public fun compile(semanticResult: SemanticResult, options: CompileOptions): CompileResult {
             val diagnostics = DiagnosticCollector()
             diagnostics.merge(semanticResult.diagnostics, semanticResult.diagnosticsTruncated, semanticResult.hasErrors)
             // 前の段階でエラーがあれば変換しない（A8）
@@ -224,9 +257,9 @@ class Compiler private constructor(
         }
 
         // ソースから Lexer → Parser → Semantic → Compiler を順に実行する
-        fun compileSource(source: String): CompileResult = compileSource(source, CompileOptions.DEFAULT)
+        public fun compileSource(source: String): CompileResult = compileSource(source, CompileOptions.DEFAULT)
 
-        fun compileSource(source: String, options: CompileOptions): CompileResult =
+        public fun compileSource(source: String, options: CompileOptions): CompileResult =
             compile(SemanticAnalyzer.analyze(Parser.parse(Lexer.tokenize(source, options.maxSourceLength, options.maxTokens), options.maxNodes), options.maxPropertyTypeChain), options)
 
         // 出力したバイトコードを SnapshotVerifier で検証する（第3.7b段階）。分岐先・合流点のスタックの深さと型・変数の初期化を確かめ、
@@ -259,12 +292,12 @@ class Compiler private constructor(
         private val END = SourcePosition(0, 1, 1)
 
         // ラムダの展開の上限（第9.3段階）。関数の値を入れ子に呼ぶと展開が指数的に増えうるため、回数と入れ子の深さを抑える
-        const val MAX_INLINE_EXPANSIONS = 4096
-        const val MAX_INLINE_DEPTH = 32
+        internal const val MAX_INLINE_EXPANSIONS = 4096
+        internal const val MAX_INLINE_DEPTH = 32
 
         // ラムダの展開の中で出す命令の合計の上限（第9.3段階）。命令数の上限の無い独立版でも、大きな本体の関数の値を何度も呼んで
         // コンパイルのメモリーと検証の時間が入力の大きさに比べて際限なく増えないようにする
-        const val MAX_INLINED_INSTRUCTIONS = 1_000_000
+        internal const val MAX_INLINED_INSTRUCTIONS = 1_000_000
     }
 
     // トップレベルの文（HALT で終わる）の後に、手続きを AnalyzedProgram.routines の順に並べる。関数の無いプログラムの命令は第3.8b段階と、

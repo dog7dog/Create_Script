@@ -1,5 +1,6 @@
 package com.creatrbypc.createanalytical.script.lexer
 
+import com.creatrbypc.createanalytical.script.InternalCreateScriptApi
 import com.creatrbypc.createanalytical.script.diagnostic.Diagnostic
 import com.creatrbypc.createanalytical.script.diagnostic.DiagnosticArgument
 import com.creatrbypc.createanalytical.script.diagnostic.DiagnosticCode
@@ -10,19 +11,21 @@ import com.creatrbypc.createanalytical.script.diagnostic.SourcePosition
 
 // MAX_SOURCE_LENGTH・MAX_TOKENS は既定（埋め込み先）の値。独立版（CompileOptions.STANDALONE: 第8.0.1段階）は tokenize の引数で広げる。
 // それ以外（識別子・整数・浮動小数点数・文字列の長さ）は言語の仕様で、どの設定でも同じ
-object LexerLimits {
-    const val MAX_SOURCE_LENGTH = 4096
-    const val MAX_TOKENS = 2048
-    const val MAX_IDENTIFIER_LENGTH = 32
-    const val MAX_INTEGER_DIGITS = 10
+@InternalCreateScriptApi
+public object LexerLimits {
+    public const val MAX_SOURCE_LENGTH: Int = 4096
+    public const val MAX_TOKENS: Int = 2048
+    public const val MAX_IDENTIFIER_LENGTH: Int = 32
+    public const val MAX_INTEGER_DIGITS: Int = 10
 
     // 浮動小数点数のリテラルの綴りの長さ（第3.11a段階。値を求める処理の量を抑える）
-    const val MAX_FLOAT_LITERAL_LENGTH = 64
-    const val MAX_STRING_LITERAL_LENGTH = 256
+    public const val MAX_FLOAT_LITERAL_LENGTH: Int = 64
+    public const val MAX_STRING_LITERAL_LENGTH: Int = 256
 }
 
 // CreateScript の字句解析器。Minecraft に依存しない純粋な Kotlin で、1回の tokenize ごとに新しいインスタンスを使う
-class Lexer private constructor(private val source: String, private val maxSourceLength: Int, private val maxTokens: Int) {
+@InternalCreateScriptApi
+public class Lexer private constructor(private val source: String, private val maxSourceLength: Int, private val maxTokens: Int) {
     private val diagnostics = DiagnosticCollector()
     private val tokens = ArrayList<Token>()
     private var index = 0
@@ -32,14 +35,14 @@ class Lexer private constructor(private val source: String, private val maxSourc
     // 安全に読み進められないエラー（未対応のブロックコメントなど）やトークン数超過で true になり、以降は解析しない
     private var stopped = false
 
-    companion object {
+    public companion object {
         // 最長一致のため、綴りの長い演算子から順に試す
         private val OPERATORS = TokenType.entries.filter { it.symbol != null }.sortedByDescending { it.symbol!!.length }
 
-        fun tokenize(source: String): LexResult = Lexer(source, LexerLimits.MAX_SOURCE_LENGTH, LexerLimits.MAX_TOKENS).run()
+        public fun tokenize(source: String): LexResult = Lexer(source, LexerLimits.MAX_SOURCE_LENGTH, LexerLimits.MAX_TOKENS).run()
 
         // ソースの長さとトークン数の上限を指定する（第8.0.1段階。CompileOptions から使う）
-        fun tokenize(source: String, maxSourceLength: Int, maxTokens: Int): LexResult {
+        public fun tokenize(source: String, maxSourceLength: Int, maxTokens: Int): LexResult {
             require(maxSourceLength > 0 && maxTokens > 0) { "limits must be positive: $maxSourceLength, $maxTokens" }
             return Lexer(source, maxSourceLength, maxTokens).run()
         }

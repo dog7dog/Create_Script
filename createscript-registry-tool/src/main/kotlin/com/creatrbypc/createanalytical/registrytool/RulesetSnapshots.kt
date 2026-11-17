@@ -26,7 +26,7 @@ import java.time.temporal.ChronoUnit
 // 本番の鍵はまだ無い（鍵の作成の儀式は未承認）ので空。空のあいだ、本番の経路はスナップショットを信頼できず、公開は止まる（fail-closed）。
 // 指紋を変えるのは CreateScript のソースの変更（レビューとリリース）で、レジストリのリポジトリの管理者だけでは変えられない。
 // ただし、レジストリのワークフローの TOOL_COMMIT を別のコミットに替えれば、別の固定値のツールを使わせることはできる
-// （docs/registry-settings-key.md の「信頼の起点の限界」）
+// （docs/operations/registry-settings-key.md の「信頼の起点の限界」）
 object SettingsKeyPins {
     val OFFICIAL: Map<String, String> = emptyMap()
 }

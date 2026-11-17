@@ -116,8 +116,8 @@ Parameters and return values can use the other types too, for example `Double`, 
 
 ## Modules (local `import`)
 
-A program can use functions from other `.cscr` files of the same project. This feature is in development
-and is not in v0.1.0-alpha. Modules are files of your project, or modules of packages installed with
+A program can use functions from other `.cscr` files of the same project. This feature is new in
+0.2.0-alpha (it is not in v0.1.0-alpha). Modules are files of your project, or modules of packages installed with
 `createscript install` (see [Modules from packages](#modules-from-packages)).
 
 ```text
@@ -201,7 +201,7 @@ Type errors in calls use the usual codes, for example `geometry.square("5")` giv
 
 ### Modules from packages
 
-In development (S8.2 Phase 4, not in v0.1.0-alpha). When a project is run with `createscript run [directory]`
+New in 0.2.0-alpha (S8.2 Phase 4, not in v0.1.0-alpha). When a project is run with `createscript run [directory]`
 (see [cli.md](cli.md#running-a-project)), `import name` finds `name` in the directory of the entry file, as above,
 or in the packages listed in `createscript.lock` and installed in `.createscript/packages/`
 (see [Installing packages](packages.md#installing-packages-s82-phase-3)).
@@ -489,7 +489,7 @@ Every program runs inside fixed limits, so a script can never take unbounded mem
 sets of compile-time limits, chosen by the host with `CompileOptions`: **embedded** (`CompileOptions.EMBEDDED`,
 the default of `CreateScript.compile(source)`, used by hosts such as the Minecraft mod Create: Analytical) and
 **standalone** (`CompileOptions.STANDALONE`, used by the `createscript` command for `run` and the interactive
-mode). The standalone limits are in development and not in v0.1.0-alpha, which uses the embedded limits.
+mode). The standalone limits are new in 0.2.0-alpha; v0.1.0-alpha uses the embedded limits.
 
 | Limit | Embedded | Standalone |
 |---|---|---|

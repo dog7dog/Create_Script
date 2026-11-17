@@ -1,5 +1,6 @@
 package com.creatrbypc.createanalytical.script.vm
 
+import com.creatrbypc.createanalytical.script.InternalCreateScriptApi
 import com.creatrbypc.createanalytical.script.diagnostic.Diagnostic
 import com.creatrbypc.createanalytical.script.diagnostic.DiagnosticArgument
 import com.creatrbypc.createanalytical.script.diagnostic.DiagnosticCode
@@ -33,61 +34,102 @@ import kotlin.math.sqrt
 import kotlin.math.tan
 import kotlin.math.tanh
 
-// VM の値（型タグ付き: D14）。String は定数プールの番号で持つ（Stage 3.5 の String はリテラルだけのため）
-sealed interface Value {
-    data class IntValue(val value: Int) : Value
-    data class BoolValue(val value: Boolean) : Value
-    data class StringValue(val constantIndex: Int) : Value
-    data object UnitValue : Value
+/**
+ * A value in a saved state ([VmSnapshot]): on the stack, in a variable, in an object field or in a list. Hosts that
+ * save runs store and rebuild these. New kinds of values can be added in later releases.
+ */
+public sealed interface Value {
+    /**
+     * An `Int`.
+     *
+     * @property value the number.
+     */
+    public data class IntValue(val value: Int) : Value
 
-    // 浮動小数点数（第3.11a段階）。値はビット列（Float.toRawBits / Double.toRawBits）のまま持つ。equals はビットの一致（NaN のビットの違いも区別し、
-    // 0.0 と -0.0 は別）で、保存・復元が値を正確に戻したかの確認だけに使う。スクリプトの == は CsVm の IEEE 754 の比較（ieeeEquals）で行い、equals は使わない
-    data class FloatValue(val bits: Int) : Value {
+    /**
+     * A `Boolean`.
+     *
+     * @property value the value.
+     */
+    public data class BoolValue(val value: Boolean) : Value
+
+    /**
+     * A `String` of the program.
+     *
+     * @property constantIndex the index of the string among the constants of the program.
+     */
+    public data class StringValue(val constantIndex: Int) : Value
+
+    /** `Unit`. */
+    public data object UnitValue : Value
+
+    /**
+     * A `Float`, kept as its bits ([Float.toRawBits]) so that saving and restoring gives exactly the same value.
+     * [equals] compares bits (NaNs with different bits differ, `0.0f` and `-0.0f` differ); the script's `==` uses
+     * IEEE 754 comparison instead.
+     *
+     * @property bits the bits of the value.
+     */
+    public data class FloatValue(val bits: Int) : Value {
+        /** The value of [bits]. */
         val value: Float get() = Float.fromBits(bits)
 
-        companion object {
-            fun of(value: Float) = FloatValue(value.toRawBits())
+        public companion object {
+            /** The value with the bits of [value]. */
+            public fun of(value: Float): FloatValue = FloatValue(value.toRawBits())
         }
     }
 
-    data class DoubleValue(val bits: Long) : Value {
+    /**
+     * A `Double`, kept as its bits ([Double.toRawBits]); compared like [FloatValue].
+     *
+     * @property bits the bits of the value.
+     */
+    public data class DoubleValue(val bits: Long) : Value {
+        /** The value of [bits]. */
         val value: Double get() = Double.fromBits(bits)
 
-        companion object {
-            fun of(value: Double) = DoubleValue(value.toRawBits())
+        public companion object {
+            /** The value with the bits of [value]. */
+            public fun of(value: Double): DoubleValue = DoubleValue(value.toRawBits())
         }
     }
 
-    // オブジェクトの参照（第3.9a段階）。id はその CS_VM のヒープの中でだけ意味を持つ（別の VM の id とは関係が無い）
-    data class ObjectRef(val id: Int) : Value
+    /**
+     * A reference to an object (an instance, list, vector or matrix).
+     *
+     * @property id the [ObjectSnapshot.id] of the object in the same saved state; it means nothing in another state.
+     */
+    public data class ObjectRef(val id: Int) : Value
 }
 
-// プログラムの実行状態（動力による一時停止は Scheduler 側で別に管理する）
-enum class VmState {
-    // 実行できる
+/** The state of a run. */
+public enum class VmState {
+    /** Can run instructions. */
     RUNNING,
 
-    // waitTicks の待機中
+    /** Waiting in `waitTicks`. */
     WAITING,
 
-    // 最後まで実行して終了した（自動では再実行しない）
+    /** Ran to the end. A finished program is not started again by itself. */
     HALTED,
 
-    // 実行時エラーで停止した
+    /** Stopped by a runtime error. */
     ERROR,
 }
 
 // println の出力。最大 32 行、1行は最大 64 UTF-16 単位（D5）
-class Console {
+@InternalCreateScriptApi
+public class Console {
     private val lines = ArrayDeque<String>()
 
-    val history: List<String> get() = lines.toList()
+    public val history: List<String> get() = lines.toList()
 
     // 外部へ通知する行（第3.12段階 S4）。ScriptRun が通知先を持つときだけ記録し、tick の終わりに取り出す。
     // 履歴（最大 32 行）から押し出された行も含めて、print した順にすべて残す（1行の長さは履歴と同じ 64 単位）
     private var captured: ArrayList<String>? = null
 
-    fun print(text: String) {
+    public fun print(text: String) {
         if (lines.size == MAX_LINES) lines.removeFirst()
         val line = fit(text)
         lines.addLast(line)
@@ -112,31 +154,32 @@ class Console {
         lines.addAll(history)
     }
 
-    companion object {
-        const val MAX_LINES = 32
-        const val MAX_LINE_LENGTH = 64
+    public companion object {
+        public const val MAX_LINES: Int = 32
+        public const val MAX_LINE_LENGTH: Int = 64
         private const val ELLIPSIS = "…"
 
         // 超えた場合は「…」を含めて 64 単位に収める。サロゲートペアは分断しない（元の値は変えない）
-        fun fit(text: String): String =
+        public fun fit(text: String): String =
             if (text.length <= MAX_LINE_LENGTH) text else truncateUtf16(text, MAX_LINE_LENGTH - ELLIPSIS.length) + ELLIPSIS
     }
 }
 
 // CS_VM（CreateScript Virtual Machine）。CreateScript のスタック型 VM で、Minecraft に依存しない純粋な Kotlin。
 // randomSeed は乱数（第3.11e段階）の最初の状態で、ホスト（Minecraft では Integration 側）が渡す
-class CsVm(private val program: CompiledProgram, randomSeed: Long = 0L) {
-    var state = VmState.RUNNING
+@InternalCreateScriptApi
+public class CsVm(private val program: CompiledProgram, randomSeed: Long = 0L) {
+    public var state: VmState = VmState.RUNNING
         private set
 
     // ERROR になった原因（CS_RUN_*）
-    var error: Diagnostic? = null
+    public var error: Diagnostic? = null
         private set
 
-    val console = Console()
+    public val console: Console = Console()
 
     // waitTicks の残り tick 数（WAITING のときだけ意味を持つ）
-    var waitRemaining = 0
+    public var waitRemaining: Int = 0
         private set
 
     private var pc = 0
@@ -200,7 +243,7 @@ class CsVm(private val program: CompiledProgram, randomSeed: Long = 0L) {
     private var collected = false
 
     // 回収中（命令を実行しない）
-    val isCollecting: Boolean get() = collector != null
+    public val isCollecting: Boolean get() = collector != null
 
     // SUSPEND から再開するとき、呼び出しの結果として Unit を1回だけ積む（A23）
     private var resumeWithUnit = false
@@ -250,7 +293,7 @@ class CsVm(private val program: CompiledProgram, randomSeed: Long = 0L) {
 
     // 最大 instructionBudget 命令を実行し、実際に実行した命令数を返す（1命令 = 1単位、再開時の Unit 積み込みは数えない: A26）。
     // WAITING・HALTED・ERROR になったら、その時点で止まる
-    fun run(instructionBudget: Int): Int {
+    public fun run(instructionBudget: Int): Int {
         if (state != VmState.RUNNING || collector != null) return 0
         var executed = 0
         try {
@@ -277,7 +320,7 @@ class CsVm(private val program: CompiledProgram, randomSeed: Long = 0L) {
     }
 
     // 実行途中の状態を写し取る（D14）。VM の状態は変更しない。RUNNING / WAITING 以外（終了・エラー）は保存しないため null
-    fun snapshot(): VmSnapshot? {
+    public fun snapshot(): VmSnapshot? {
         if (state != VmState.RUNNING && state != VmState.WAITING) return null
         val callStack = callFrames.map { CallFrameSnapshot(it.function, it.returnPc, it.locals.toList()) }
         // 回収の SWEEP の途中では、まだ消していないゴミが、消したゴミを参照していることがある。保存する状態には根からたどれるオブジェクトだけを含め、
@@ -311,7 +354,7 @@ class CsVm(private val program: CompiledProgram, randomSeed: Long = 0L) {
 
     // Scheduler の Phase 2 から、動力がありチャンクが読み込まれている tick に1回呼ぶ（D6）。
     // 残りが 0 なら実行可能に戻し、そうでなければ1減らして 0 になったら実行可能に戻す
-    fun countWaitTick() {
+    public fun countWaitTick() {
         if (state != VmState.WAITING) return
         if (waitRemaining > 0) waitRemaining--
         if (waitRemaining == 0) state = VmState.RUNNING
@@ -886,7 +929,7 @@ class CsVm(private val program: CompiledProgram, randomSeed: Long = 0L) {
         if (index in list.elements.indices) index else fail(DiagnosticCode.RUN_INDEX_OUT_OF_BOUNDS, position, index, list.elements.size)
 
     // 回収を最大 workBudget 単位進め、使った単位数を返す（回収中でなければ 0）。終わったら、次の run で NEW をやり直す
-    fun collectGarbage(workBudget: Int): Int {
+    public fun collectGarbage(workBudget: Int): Int {
         val current = collector ?: return 0
         val used = current.advance(workBudget)
         if (current.done) {
@@ -1289,12 +1332,12 @@ class CsVm(private val program: CompiledProgram, randomSeed: Long = 0L) {
         error = Diagnostic(code, DiagnosticSeverity.ERROR, DiagnosticPhase.RUNTIME, position, arguments.map { DiagnosticArgument.IntArgument(it) })
     }
 
-    companion object {
+    public companion object {
         private val ORIGIN = SourcePosition(0, 1, 1)
 
         // ?! で回復できる実行時エラー（第9.2段階）。プログラムの値による失敗だけで、資源の上限（スタック・呼び出しの深さ・オブジェクト・リストの大きさ）・
         // 不正なバイトコード・初期化前のプロパティ（初期化中のインスタンスを残さない）は回復しない
-        val RECOVERABLE: Set<DiagnosticCode> = setOf(
+        internal val RECOVERABLE: Set<DiagnosticCode> = setOf(
             DiagnosticCode.RUN_INTEGER_OVERFLOW,
             DiagnosticCode.RUN_DIVISION_BY_ZERO,
             DiagnosticCode.RUN_NEGATIVE_WAIT,
@@ -1317,7 +1360,7 @@ class CsVm(private val program: CompiledProgram, randomSeed: Long = 0L) {
 
         // スナップショットから実行途中の VM を作る（D14）。SnapshotVerifier の検証に通らなければ null。
         // 各呼び出しフレームのスタックの始まりは保存せず、検証がバイトコードから求めた値を使う
-        fun restore(program: CompiledProgram, snapshot: VmSnapshot): CsVm? {
+        public fun restore(program: CompiledProgram, snapshot: VmSnapshot): CsVm? {
             val verdict = SnapshotVerifier.check(program, snapshot) as? SnapshotVerifier.Verdict.Valid ?: return null
             val machine = CsVm(program)
             machine.pc = snapshot.pc

@@ -1,5 +1,6 @@
 package com.creatrbypc.createanalytical.script.module
 
+import com.creatrbypc.createanalytical.script.InternalCreateScriptApi
 import com.creatrbypc.createanalytical.script.ast.ImportDeclaration
 import com.creatrbypc.createanalytical.script.ast.Program
 import com.creatrbypc.createanalytical.script.compiler.CompileOptions
@@ -22,104 +23,158 @@ import com.creatrbypc.createanalytical.script.vm.CompiledProgram
 import com.creatrbypc.createanalytical.script.vm.ProgramFingerprint
 
 // ローカル import（第8.0段階）。Core はファイル・ネットワークを読まない。モジュールのソースは、ホスト（CLI など）が ModuleResolver で渡す
-object ModuleLimits {
+@InternalCreateScriptApi
+public object ModuleLimits {
     // エントリーのファイルを除くモジュールの数の既定（埋め込み先）。独立版は CompileOptions.STANDALONE で広げる（第8.0.1段階）。
     // 1 つのソースの上限（LexerLimits）はファイルごとに、命令数などの上限（VmLimits）はプログラム全体に適用する
-    const val MAX_MODULES = 16
+    public const val MAX_MODULES: Int = 16
 }
 
-// ホストがモジュールを探した結果。Found の source は、ホストが確かめた（プロジェクトのルートの中の、読める）ファイルの内容
-sealed interface ModuleLookup {
-    data class Found(val source: String) : ModuleLookup
+/** What a host found for a module name; returned by [ModuleResolver] (and wrapped by [ScopedModuleLookup.Failed]). */
+public sealed interface ModuleLookup {
+    /**
+     * The module exists.
+     *
+     * @property source the text of the module, read by the host from a file it checked.
+     */
+    public data class Found(val source: String) : ModuleLookup
 
-    data object NotFound : ModuleLookup
+    /** No such module (`CS_MODULE_NOT_FOUND`). */
+    public data object NotFound : ModuleLookup
 
-    // 同じ名前として扱うファイルが複数ある（大文字・小文字だけが違うものなど）
-    data object Ambiguous : ModuleLookup
+    /** More than one file could be meant, for example names that differ only in case (`CS_MODULE_AMBIGUOUS`). */
+    public data object Ambiguous : ModuleLookup
 
-    // プロジェクトのルートの外を指す（シンボリックリンクなど）
-    data object OutsideProject : ModuleLookup
+    /** The file is outside the project, for example through a symbolic link (`CS_MODULE_OUTSIDE_PROJECT`). */
+    public data object OutsideProject : ModuleLookup
 
-    // 読めない。reason は診断に載せる短い説明（64 単位まで）
-    data class Unreadable(val reason: String) : ModuleLookup
+    /**
+     * The file cannot be read.
+     *
+     * @property reason a short explanation shown in the diagnostic (cut to 64 UTF-16 code units).
+     */
+    public data class Unreadable(val reason: String) : ModuleLookup
 }
 
-// モジュール名（識別子 1 つ。Parser が確かめたもの）からソースを探す。同じ名前については 1 回だけ呼ぶ
-fun interface ModuleResolver {
-    fun resolve(name: String): ModuleLookup
+/**
+ * Gives the source of a module to the compiler; the Core never reads files itself. Called at most once per module
+ * name in one compilation, on the thread that compiles. [resolve] gets a name that is one identifier (already
+ * checked by the parser). An exception it throws is passed on to the caller of `compile`.
+ */
+public fun interface ModuleResolver {
+    /** Looks up the module [name]. */
+    public fun resolve(name: String): ModuleLookup
 }
 
-// import できる範囲（S8.2 Phase 4）。importer は import を書いたモジュール（エントリーのファイルは null）、module は import するモジュール名。
-// Core は、各 import の宣言について、resolver を呼ぶ前に確かめる（同じモジュールを別のファイルから import するときも、宣言ごとに確かめる）。
-// 許されなければ CS_MODULE_NOT_VISIBLE。ModuleResolver とは別のインターフェースにして、ModuleResolver の形を変えない
-fun interface ModuleAccess {
-    fun allows(importer: String?, module: String): Boolean
+/**
+ * Decides which file may import which module. Asked for every `import` declaration before the resolver, also when
+ * the module was already resolved for another file; `false` gives `CS_MODULE_NOT_VISIBLE`.
+ */
+public fun interface ModuleAccess {
+    /** Whether the module [importer] (`null` for the entry file) may import [module]. */
+    public fun allows(importer: String?, module: String): Boolean
 
-    companion object {
-        // すべてを許す（ModuleAccess を渡さない compile と同じ）
-        val ALL: ModuleAccess = ModuleAccess { _, _ -> true }
+    public companion object {
+        /** Allows every import, as `compile` without a [ModuleAccess] does. */
+        public val ALL: ModuleAccess = ModuleAccess { _, _ -> true }
     }
 }
 
-// import 元ごとにモジュールを探す resolver（S8.2 の H-1）。importer は import を書いたファイルのモジュールの ID（エントリーのファイルは null）、
-// name は import に書いた名前。Found の id はモジュールを区別する ID で、同じ ID は同じモジュール（1 回だけ読み込む）。
-// 別のパッケージの同じ名前のモジュールに別の ID を付ければ、両方を 1 つのプログラムに入れられる（関数の名前は "ID.関数名"）。
-// 同じ import 元と名前については 1 回だけ呼ぶ。import できない（公開されていない・推移的な依存）なら NotVisible（CS_MODULE_NOT_VISIBLE）。
-// 循環は ID で確かめる（resolver に問い合わせた後）。エントリーのファイル自身を指す名前には、ID が entryModule の Found を返すと CS_MODULE_CYCLE になる
-fun interface ScopedModuleResolver {
-    fun resolve(importer: String?, name: String): ScopedModuleLookup
+/**
+ * Gives modules to `CreateScript.compileScoped`, per importing file. Called at most once per importing module and
+ * name. The [ScopedModuleLookup.Found.id] it returns identifies the module: the same id is the same module (read
+ * once), so modules with the same name get different ids to be used together. Cycles are found by id: returning the
+ * entry file's id for its own name gives `CS_MODULE_CYCLE`. An exception it throws is passed on to the caller.
+ */
+public fun interface ScopedModuleResolver {
+    /** Looks up [name] as written in an `import` of the module with the id [importer] (`null` for the entry file). */
+    public fun resolve(importer: String?, name: String): ScopedModuleLookup
 }
 
-sealed interface ScopedModuleLookup {
-    // id は 1〜128 文字の英数字と _ / : @ + -（"." と空白は使えない。"." は関数の名前の区切りのため）。先頭は英数字か _
-    data class Found(val id: String, val source: String) : ScopedModuleLookup {
+/** What a [ScopedModuleResolver] found. */
+public sealed interface ScopedModuleLookup {
+    /**
+     * The module and its id. The id has 1 to 128 characters: letters, digits and `_ / : @ + -`, starting with a
+     * letter, digit or `_` (no `.`, which separates module and function names).
+     *
+     * @property id the id of the module.
+     * @property source the text of the module.
+     * @throws IllegalArgumentException if [id] is not valid ([isValidId]).
+     */
+    public data class Found(val id: String, val source: String) : ScopedModuleLookup {
         init {
             require(isValidId(id)) { "invalid module id: $id" }
         }
     }
 
-    // 見つからない・曖昧・読めないなど（ModuleLookup.Found 以外）
-    data class Failed(val lookup: ModuleLookup) : ScopedModuleLookup {
+    /**
+     * The module cannot be used.
+     *
+     * @property lookup the reason, as a [ModuleLookup] other than [ModuleLookup.Found].
+     * @throws IllegalArgumentException if [lookup] is [ModuleLookup.Found].
+     */
+    public data class Failed(val lookup: ModuleLookup) : ScopedModuleLookup {
         init {
             require(lookup !is ModuleLookup.Found) { "Failed needs a failure, not Found" }
         }
     }
 
-    data object NotVisible : ScopedModuleLookup
+    /** The module exists but this file may not import it (`CS_MODULE_NOT_VISIBLE`), for example a private module. */
+    public data object NotVisible : ScopedModuleLookup
 
-    companion object {
+    public companion object {
         private val ID = Regex("[A-Za-z0-9_][A-Za-z0-9_/:@+-]{0,127}")
 
-        fun isValidId(id: String): Boolean = ID.matches(id)
+        /** Whether [id] can be used as [Found.id]. */
+        public fun isValidId(id: String): Boolean = ID.matches(id)
     }
 }
 
-// module はファイルのモジュール名（エントリーのファイルは null。compileScoped ではモジュールの ID）。diagnostic の位置は、そのファイルの中の位置
-data class ModuleDiagnostic(val module: String?, val diagnostic: Diagnostic)
+/**
+ * A diagnostic and the file it belongs to.
+ *
+ * @property module the module name of the file (its id with `compileScoped`), or `null` for the entry file.
+ * @property diagnostic the diagnostic; its position is within that file.
+ */
+public data class ModuleDiagnostic(val module: String?, val diagnostic: Diagnostic)
 
-// program はエラーが無いときだけ返す。modules は解決したモジュール（プログラムに入れた順: import されるものが先）
-class ModuleCompileResult internal constructor(
-    val program: CompiledProgram?,
-    val diagnostics: List<ModuleDiagnostic>,
-    val diagnosticsTruncated: Boolean,
-    val hasErrors: Boolean,
-    val modules: List<String>,
+/**
+ * The result of compiling a program with `import`.
+ *
+ * @property program the compiled program, or `null` when there is an error.
+ * @property diagnostics errors and warnings with their files, at most 16.
+ * @property diagnosticsTruncated `true` when more diagnostics were dropped.
+ * @property hasErrors `true` when there was an error, also one that was dropped.
+ * @property modules the modules that were resolved, imported modules before the modules that import them.
+ */
+public class ModuleCompileResult internal constructor(
+    public val program: CompiledProgram?,
+    public val diagnostics: List<ModuleDiagnostic>,
+    public val diagnosticsTruncated: Boolean,
+    public val hasErrors: Boolean,
+    public val modules: List<String>,
     private val files: List<SourceFile>,
     private val sources: SourceSet,
 ) {
     // コンパイルに使ったソース（エントリーと、読めたモジュール）
     internal class SourceSet(val entry: String, val modules: Map<String, String>)
 
-    // エントリーと読めたすべてのモジュールのソースのハッシュ（ProgramFingerprint.ofModules。第8.0.1段階）。保存した実行状態を復元するホストは、
-    // エントリーのソースのハッシュの代わりにこれを比べる（import の無いプログラムでは ProgramFingerprint.ofSource(source) と同じ値）。
-    // プログラムのハッシュ（ProgramFingerprint.ofProgram）と合わせて比べれば、モジュールだけを変えたプログラムの状態も復元しない
-    val sourceFingerprint: ByteArray get() = ProgramFingerprint.ofModules(sources.entry, sources.modules)
+    /**
+     * The SHA-256 of the entry source and all modules that were read ([ProgramFingerprint.ofModules]); for a
+     * program without `import` it equals [ProgramFingerprint.ofSource] of the entry source. Hosts that save runs
+     * compare this and [ProgramFingerprint.ofProgram], so a state is not resumed after only a module changed.
+     * A new array on each call.
+     */
+    public val sourceFingerprint: ByteArray get() = ProgramFingerprint.ofModules(sources.entry, sources.modules)
 
     // ファイルの名前と、プログラム全体での位置（offset）の始まり
     internal class SourceFile(val module: String?, val base: Int)
 
-    // プログラムの位置（実行時エラー ScriptRun.error など）を、どのファイルのどの位置かに直す。行・列はもともとファイルの中の値
-    fun locate(diagnostic: Diagnostic): ModuleDiagnostic = locate(files, diagnostic)
+    /**
+     * The file of a diagnostic that has a position in the whole program, such as a runtime error from
+     * `ScriptRun.error`, with the offset made relative to that file (line and column are already per file).
+     */
+    public fun locate(diagnostic: Diagnostic): ModuleDiagnostic = locate(files, diagnostic)
 
     internal companion object {
         // files は base の昇順。base が offset 以下の最後のファイル（二分探索。ファイルが多くても診断 1 つあたりの手間は小さい）

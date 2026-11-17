@@ -1,0 +1,75 @@
+package compat.v010alpha
+
+import com.creatrbypc.createanalytical.script.api.CreateScript
+import com.creatrbypc.createanalytical.script.api.RunOptions
+import com.creatrbypc.createanalytical.script.api.ScriptRun
+import com.creatrbypc.createanalytical.script.vm.CallFrameSnapshot
+import com.creatrbypc.createanalytical.script.vm.ListSnapshot
+import com.creatrbypc.createanalytical.script.vm.ObjectSnapshot
+import com.creatrbypc.createanalytical.script.vm.SnapshotVerifier.SlotType
+import com.creatrbypc.createanalytical.script.vm.Value
+import com.creatrbypc.createanalytical.script.vm.VmSnapshot
+
+// A2 (Q2): a host compiled against the createscript-core.jar of CreateScript v0.1.0-alpha (commit 5c7d68c) that saves
+// and restores runs the way a game host does. Every `every` ticks it takes the saved state, rebuilds it field by field
+// with the constructors of v0.1.0-alpha (VmSnapshot, CallFrameSnapshot, ObjectSnapshot, ListSnapshot, Value, SlotType),
+// resumes from the copy and compares the output with a run without interruptions. The result is the list of the
+// checks that passed. (An instruction that spans ticks, such as vector(...), starts again after a restore, so a host
+// that restores after every single instruction would not make progress; the caller passes an interval longer than such instructions.)
+object OldSnapshotHost {
+    @JvmStatic
+    fun run(source: String, every: Int): List<String> {
+        val results = ArrayList<String>()
+        val program = CreateScript.compile(source).program ?: return listOf("compile failed")
+        results.add("compile")
+
+        val expected = ArrayList<String>()
+        val plain = CreateScript.start(program, RunOptions(1, 42L)) { expected.add(it) }
+        var ticks = 0
+        while (!plain.isFinished && ticks < 100_000) { plain.tick(); ticks++ }
+        if (plain.isFinished && plain.error == null) results.add("run without saving")
+
+        val output = ArrayList<String>()
+        var run: ScriptRun = CreateScript.start(program, RunOptions(1, 42L)) { output.add(it) }
+        var restored = 0
+        ticks = 0
+        while (!run.isFinished && ticks < 100_000) {
+            run.tick()
+            ticks++
+            if (ticks % every != 0) continue
+            val saved = run.snapshot() ?: continue
+            val copy = rebuild(saved)
+            if (copy != saved) return results + "rebuilt snapshot differs at tick $ticks"
+            run = CreateScript.resume(program, copy, RunOptions(1, 42L)) { output.add(it) } ?: return results + "resume refused at tick $ticks"
+            restored++
+        }
+        if (restored > 0) results.add("save and resume")
+        if (run.isFinished && run.error == null && output == expected) results.add("same output")
+        if (run.console == plain.console) results.add("same console")
+        return results
+    }
+
+    private fun rebuild(s: VmSnapshot): VmSnapshot = VmSnapshot(
+        s.pc, s.state, s.waitRemaining, s.resumeWithUnit,
+        s.stack.map(::value), s.variables.map { it?.let(::value) }, s.consoleLines.toList(),
+        s.callStack.map { CallFrameSnapshot(it.function, it.returnPc, it.locals.map { local -> local?.let(::value) }) },
+        s.objects.map { o -> ObjectSnapshot(o.id, o.classId, o.fields.map { it?.let(::value) }, o.list?.let { ListSnapshot(slot(it.element), it.mutable, it.elements.map(::value)) }) },
+        s.nextObjectId, s.randomState,
+    )
+
+    private fun value(v: Value): Value = when (v) {
+        is Value.IntValue -> Value.IntValue(v.value)
+        is Value.BoolValue -> Value.BoolValue(v.value)
+        is Value.StringValue -> Value.StringValue(v.constantIndex)
+        is Value.ObjectRef -> Value.ObjectRef(v.id)
+        is Value.FloatValue -> Value.FloatValue(v.bits)
+        is Value.DoubleValue -> Value.DoubleValue(v.bits)
+        Value.UnitValue -> Value.UnitValue
+    }
+
+    private fun slot(t: SlotType): SlotType = when (t) {
+        is SlotType.LIST -> SlotType.LIST(slot(t.element))
+        is SlotType.OBJECT -> SlotType.OBJECT(t.classId)
+        SlotType.INT, SlotType.BOOLEAN, SlotType.STRING, SlotType.UNIT, SlotType.FLOAT, SlotType.DOUBLE, SlotType.VECTOR, SlotType.MATRIX -> t
+    }
+}

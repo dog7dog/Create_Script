@@ -15,6 +15,11 @@ java.toolchain.languageVersion = JavaLanguageVersion.of(21)
 
 kotlin {
     jvmToolchain(21)
+
+    // CreateScript の同じリポジトリのモジュールとして、Core・project の内部 API（docs/api/api-surface.md）を使う（A2）
+    compilerOptions {
+        optIn.add('com.creatrbypc.createanalytical.project.InternalCreateScriptProjectApi')
+    }
 }
 
 dependencies {

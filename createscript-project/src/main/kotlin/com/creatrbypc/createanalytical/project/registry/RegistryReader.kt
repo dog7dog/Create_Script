@@ -1,5 +1,6 @@
 package com.creatrbypc.createanalytical.project.registry
 
+import com.creatrbypc.createanalytical.project.InternalCreateScriptProjectApi
 import com.creatrbypc.createanalytical.project.FieldReader
 import com.creatrbypc.createanalytical.project.JsonInteger
 import com.creatrbypc.createanalytical.project.JsonObject
@@ -139,24 +140,25 @@ internal class RegistryReader(val diagnostics: ProjectDiagnostics) {
 }
 
 // レジストリのファイルの大きさ・件数の上限（S8.3 Phase 1。docs/registry.md）
-object RegistryLimits {
-    const val MAX_CONFIG_BYTES = 16 * 1024
-    const val MAX_RESERVED_BYTES = 256 * 1024
-    const val MAX_RESERVED_NAMES = 4096
-    const val MAX_ENTRY_BYTES = 1024 * 1024
-    const val MAX_INDEX_BYTES = 16 * 1024 * 1024
-    const val MAX_SIGNATURE_BYTES = 4 * 1024
-    const val MAX_PACKAGES = 20_000
-    const val MAX_VERSIONS_PER_PACKAGE = 1000
-    const val MAX_TOTAL_VERSIONS = 200_000
-    const val MAX_DEPENDENCIES = 256
-    const val MAX_OWNERS = 16
-    const val MAX_REVIEWERS = 16
-    const val MAX_SIGNING_KEYS = 4
+@InternalCreateScriptProjectApi
+public object RegistryLimits {
+    internal const val MAX_CONFIG_BYTES = 16 * 1024
+    internal const val MAX_RESERVED_BYTES = 256 * 1024
+    internal const val MAX_RESERVED_NAMES = 4096
+    internal const val MAX_ENTRY_BYTES = 1024 * 1024
+    public const val MAX_INDEX_BYTES: Int = 16 * 1024 * 1024
+    public const val MAX_SIGNATURE_BYTES: Int = 4 * 1024
+    internal const val MAX_PACKAGES = 20_000
+    internal const val MAX_VERSIONS_PER_PACKAGE = 1000
+    internal const val MAX_TOTAL_VERSIONS = 200_000
+    internal const val MAX_DEPENDENCIES = 256
+    internal const val MAX_OWNERS = 16
+    internal const val MAX_REVIEWERS = 16
+    internal const val MAX_SIGNING_KEYS = 4
 
     // 1 つの版と、その依存をすべて合わせた数（S8.2 のロックファイルの上限と同じ）
-    const val MAX_CLOSURE = 4096
+    internal const val MAX_CLOSURE = 4096
 
     // index の有効期間（registry.json の indexValidityDays と、index の generated〜expires）
-    const val MAX_VALIDITY_DAYS = 90
+    public const val MAX_VALIDITY_DAYS: Int = 90
 }

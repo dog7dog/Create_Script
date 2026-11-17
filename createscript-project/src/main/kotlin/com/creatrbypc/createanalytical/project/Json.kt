@@ -6,27 +6,35 @@ import java.nio.charset.CodingErrorAction
 import java.nio.charset.StandardCharsets
 
 // JSON の値（S8.1）。line・column はその値の始まり（1 始まり。UTF-16 単位）
-sealed interface JsonValue {
-    val line: Int
-    val column: Int
+@InternalCreateScriptProjectApi
+public sealed interface JsonValue {
+    public val line: Int
+    public val column: Int
 }
 
 // メンバーは書かれた順。キーは重複しない（重複は構文解析の段階でエラーにする）。keyPositions はキーの位置
-class JsonObject(val members: Map<String, JsonValue>, val keyPositions: Map<String, Pair<Int, Int>>, override val line: Int, override val column: Int) : JsonValue
+@InternalCreateScriptProjectApi
+public class JsonObject(public val members: Map<String, JsonValue>, internal val keyPositions: Map<String, Pair<Int, Int>>, override val line: Int, override val column: Int) : JsonValue
 
-class JsonArray(val elements: List<JsonValue>, override val line: Int, override val column: Int) : JsonValue
+@InternalCreateScriptProjectApi
+public class JsonArray(public val elements: List<JsonValue>, override val line: Int, override val column: Int) : JsonValue
 
-data class JsonString(val value: String, override val line: Int, override val column: Int) : JsonValue
+@InternalCreateScriptProjectApi
+public data class JsonString(val value: String, override val line: Int, override val column: Int) : JsonValue
 
 // 数値は整数だけ（64 ビット）。小数点・指数のある数値はエラーにする（プロジェクトのファイルに小数を使う項目は無い）
-data class JsonInteger(val value: Long, override val line: Int, override val column: Int) : JsonValue
+@InternalCreateScriptProjectApi
+public data class JsonInteger(val value: Long, override val line: Int, override val column: Int) : JsonValue
 
-data class JsonBoolean(val value: Boolean, override val line: Int, override val column: Int) : JsonValue
+@InternalCreateScriptProjectApi
+public data class JsonBoolean(val value: Boolean, override val line: Int, override val column: Int) : JsonValue
 
-data class JsonNull(override val line: Int, override val column: Int) : JsonValue
+@InternalCreateScriptProjectApi
+public data class JsonNull(override val line: Int, override val column: Int) : JsonValue
 
 // value はエラーが無いときだけ
-class JsonResult(val value: JsonValue?, val diagnostics: List<ProjectDiagnostic>)
+@InternalCreateScriptProjectApi
+public class JsonResult(public val value: JsonValue?, public val diagnostics: List<ProjectDiagnostic>)
 
 // RFC 8259 の厳密な JSON の構文解析器（S8.1）。既存のライブラリを使わない理由は docs/packages.md に記す。
 // - 入力は UTF-8 のバイト列。maxBytes を超えるもの・UTF-8 として正しくないもの・BOM で始まるものは拒否する
@@ -34,7 +42,8 @@ class JsonResult(val value: JsonValue?, val diagnostics: List<ProjectDiagnostic>
 // - 同じオブジェクトの中の同じキーは、どの深さでもエラー（後の値で上書きしない）
 // - 入れ子は maxDepth まで。再帰せずに、読みかけのオブジェクト・配列を積んで読む（深い入れ子でも JVM のスタックを使わない）
 // - 最初の誤りで止める（誤った JSON の後ろの部分は、意味のある形で解釈できないため）
-class JsonParser private constructor(private val text: String, private val maxDepth: Int) {
+@InternalCreateScriptProjectApi
+public class JsonParser private constructor(private val text: String, private val maxDepth: Int) {
     private var index = 0
     private var line = 1
     private var column = 1
@@ -52,10 +61,10 @@ class JsonParser private constructor(private val text: String, private val maxDe
         val elements = ArrayList<JsonValue>()
     }
 
-    companion object {
-        const val DEFAULT_MAX_DEPTH = 16
+    public companion object {
+        internal const val DEFAULT_MAX_DEPTH = 16
 
-        fun parse(bytes: ByteArray, maxBytes: Int, maxDepth: Int = DEFAULT_MAX_DEPTH): JsonResult {
+        public fun parse(bytes: ByteArray, maxBytes: Int, maxDepth: Int = DEFAULT_MAX_DEPTH): JsonResult {
             fun failed(code: ProjectDiagnosticCode, vararg arguments: String) = JsonResult(null, listOf(ProjectDiagnostic(code, 1, 1, arguments.toList())))
             if (bytes.size > maxBytes) return failed(ProjectDiagnosticCode.FILE_TOO_LARGE, maxBytes.toString())
             if (bytes.size >= 3 && bytes[0] == 0xEF.toByte() && bytes[1] == 0xBB.toByte() && bytes[2] == 0xBF.toByte()) return failed(ProjectDiagnosticCode.BYTE_ORDER_MARK)
@@ -71,7 +80,7 @@ class JsonParser private constructor(private val text: String, private val maxDe
             return parse(text, maxDepth)
         }
 
-        fun parse(text: String, maxDepth: Int = DEFAULT_MAX_DEPTH): JsonResult {
+        public fun parse(text: String, maxDepth: Int = DEFAULT_MAX_DEPTH): JsonResult {
             require(maxDepth > 0) { "maxDepth must be positive: $maxDepth" }
             return try {
                 JsonResult(JsonParser(text, maxDepth).document(), emptyList())
@@ -327,8 +336,9 @@ class JsonParser private constructor(private val text: String, private val maxDe
 // 決まった形の JSON の書き出し（S8.1）。2 字下げ、キーと値の間は ": "、改行は LF、末尾に改行 1 つ。空のオブジェクト・配列は {}・[]。
 // 文字列は " と \ と制御文字（U+0000〜U+001F・U+007F）だけをエスケープし、それ以外は UTF-8 のまま書く。メンバーは渡された順に書く（順は呼び出し側が決める）。
 // 入れ子が深くても再帰しない
-object JsonWriter {
-    fun write(value: JsonValue): String {
+@InternalCreateScriptProjectApi
+public object JsonWriter {
+    public fun write(value: JsonValue): String {
         val out = StringBuilder()
         // 書く値（と字下げ）か、書き終えた後の閉じ括弧
         val pending = ArrayList<Any>()
@@ -395,11 +405,11 @@ object JsonWriter {
     }
 
     // 書き出し用の値を作る（位置は使わないので 0）
-    fun obj(vararg members: Pair<String, JsonValue>): JsonObject = JsonObject(linkedMapOf(*members), emptyMap(), 0, 0)
+    public fun obj(vararg members: Pair<String, JsonValue>): JsonObject = JsonObject(linkedMapOf(*members), emptyMap(), 0, 0)
 
-    fun array(elements: List<JsonValue>): JsonArray = JsonArray(elements, 0, 0)
+    public fun array(elements: List<JsonValue>): JsonArray = JsonArray(elements, 0, 0)
 
-    fun string(value: String): JsonString = JsonString(value, 0, 0)
+    public fun string(value: String): JsonString = JsonString(value, 0, 0)
 
-    fun integer(value: Long): JsonInteger = JsonInteger(value, 0, 0)
+    public fun integer(value: Long): JsonInteger = JsonInteger(value, 0, 0)
 }

@@ -1,7 +1,10 @@
 package com.creatrbypc.createanalytical.script.vm
 
+import com.creatrbypc.createanalytical.script.InternalCreateScriptApi
+
 // スナップショットを復元してよいかの検証で見つかった問題
-enum class SnapshotProblem {
+@InternalCreateScriptApi
+public enum class SnapshotProblem {
     // バイトコードから各命令位置の状態を求められない（深さ・型が合わない、未初期化の変数を読むなど）
     UNVERIFIABLE_PROGRAM,
     INVALID_STATE,
@@ -29,30 +32,54 @@ enum class SnapshotProblem {
 // CALL の次の命令の状態は、呼び出し前の状態から引数を除いて関数の結果の型を積み、関数のすべての RETURN の大域変数の状態を
 // 合わせたもの（afterCall）。VM のスタックは呼び出し元の計算途中の値の上に積み重なるため、スナップショットのスタックは
 // 呼び出しフレームごとの区間に分けて照合する（第3.8d段階）
-object SnapshotVerifier {
-    // スタック・変数の値の型。OBJECT はクラスごとに別の型（classId は CompiledProgram.classes の番号: 第3.9a段階）。
-    // LIST は要素の型ごとに別の型（第3.10a段階。読み取り専用かどうかは型に含めず、変更できないリストは VM が実行時に拒否する）
-    sealed interface SlotType {
-        data object INT : SlotType
-        data object BOOLEAN : SlotType
-        data object STRING : SlotType
-        data object UNIT : SlotType
+// The object and its members are Internal API (each member is marked), except SlotType, which the Stable
+// ListSnapshot uses (docs/api/api-surface.md, Q5). Marking the object would require opt-in for SlotType too.
+public object SnapshotVerifier {
+    /**
+     * The type of the elements of a list in a saved state ([ListSnapshot.element]). Part of the supported saved-state
+     * API although [SnapshotVerifier] itself is internal. New types can be added in later releases.
+     */
+    public sealed interface SlotType {
+        /** `Int`. */
+        public data object INT : SlotType
 
-        // 浮動小数点数（第3.11a段階）
-        data object FLOAT : SlotType
-        data object DOUBLE : SlotType
-        data class OBJECT(val classId: Int) : SlotType
+        /** `Boolean`. */
+        public data object BOOLEAN : SlotType
 
-        // Vector（第3.11e段階）。実体は変更できない Double のリスト（ヒープの classId は VECTOR_CLASS）。List<Double> とは別の型
-        data object VECTOR : SlotType
+        /** `String`. */
+        public data object STRING : SlotType
 
-        // Matrix（第3.11e段階）。実体は変更できない、行の Vector のリスト（ヒープの classId は MATRIX_CLASS。行の長さはそろっている）
-        data object MATRIX : SlotType
+        /** `Unit`. */
+        public data object UNIT : SlotType
+
+        /** `Float`. */
+        public data object FLOAT : SlotType
+
+        /** `Double`. */
+        public data object DOUBLE : SlotType
+
+        /**
+         * Instances of one class of the program.
+         *
+         * @property classId the class (an index into the classes of the program).
+         */
+        public data class OBJECT(val classId: Int) : SlotType
+
+        /** `Vector` (not the same type as a list of `Double`). */
+        public data object VECTOR : SlotType
+
+        /** `Matrix`: a list of vectors (rows) of the same length. */
+        public data object MATRIX : SlotType
         // 入れ子（第3.10b段階）が深くても再帰しないよう、等価は外側から順にたどって判定し、ハッシュは作るときに 1 回だけ（内側の値から）計算する
-        class LIST(val element: SlotType) : SlotType {
+        /**
+         * A list; mutable and read-only lists have the same type.
+         *
+         * @property element the type of the elements.
+         */
+        public class LIST(public val element: SlotType) : SlotType {
             private val hash = element.hashCode() * 31 + 5
 
-            override fun hashCode() = hash
+            override fun hashCode(): Int = hash
 
             override fun equals(other: Any?): Boolean {
                 var left: LIST = this
@@ -84,14 +111,16 @@ object SnapshotVerifier {
     private class Context(val program: CompiledProgram, val typeOf: Map<Int, SlotType>)
 
     // 変数の状態。合流点で「初期化済み」と「未初期化」が出会うと MaybeInitialized になる
-    sealed interface VariableState {
-        data object Uninitialized : VariableState
-        data class Initialized(val type: SlotType) : VariableState
-        data class MaybeInitialized(val type: SlotType) : VariableState
+    @InternalCreateScriptApi
+    public sealed interface VariableState {
+        public data object Uninitialized : VariableState
+        public data class Initialized(val type: SlotType) : VariableState
+        public data class MaybeInitialized(val type: SlotType) : VariableState
     }
 
     // 命令を実行する直前の状態。stack はその呼び出しフレームのスタック、variables は大域変数、locals はその関数のローカル変数（トップレベルでは空）
-    data class Frame(val stack: List<SlotType>, val variables: List<VariableState>, val locals: List<VariableState> = emptyList())
+    @InternalCreateScriptApi
+    public data class Frame(val stack: List<SlotType>, val variables: List<VariableState>, val locals: List<VariableState> = emptyList())
 
     // 命令位置の区間のうち、トップレベルを表す番号（関数は CompiledProgram.functions の番号）
     private const val TOP_LEVEL = -1
@@ -99,14 +128,17 @@ object SnapshotVerifier {
     private class Unverifiable : RuntimeException(null, null, false, false)
 
     // 検証の結果。Valid の stackBases は、各呼び出しフレーム（外側から順）のスタックの始まり（CsVm.restore が使う）
-    sealed interface Verdict {
-        class Valid(val stackBases: List<Int>) : Verdict
-        class Invalid(val problem: SnapshotProblem) : Verdict
+    @InternalCreateScriptApi
+    public sealed interface Verdict {
+        public class Valid(public val stackBases: List<Int>) : Verdict
+        public class Invalid(public val problem: SnapshotProblem) : Verdict
     }
 
-    fun verify(program: CompiledProgram, snapshot: VmSnapshot): SnapshotProblem? = (check(program, snapshot) as? Verdict.Invalid)?.problem
+    @InternalCreateScriptApi
+    public fun verify(program: CompiledProgram, snapshot: VmSnapshot): SnapshotProblem? = (check(program, snapshot) as? Verdict.Invalid)?.problem
 
-    fun check(program: CompiledProgram, snapshot: VmSnapshot): Verdict {
+    @InternalCreateScriptApi
+    public fun check(program: CompiledProgram, snapshot: VmSnapshot): Verdict {
         fun invalid(problem: SnapshotProblem) = Verdict.Invalid(problem)
         val frames = framesOf(program) ?: return invalid(SnapshotProblem.UNVERIFIABLE_PROGRAM)
         if (snapshot.state != VmState.RUNNING && snapshot.state != VmState.WAITING) return invalid(SnapshotProblem.INVALID_STATE)
@@ -267,7 +299,8 @@ object SnapshotVerifier {
     // 最初に決まった後に最大（大域変数 + ローカル変数の数）回しか変わらない。関数の RETURN の状態（exits）も同じく一方向に変わり、
     // 変わるたびにその関数を呼ぶ CALL を処理し直す。処理回数は maxSteps 以下で必ず終わる。
     // その上限（stepLimit。JUnit では打ち切りの確認のために小さくする）を超えたら、検証できないものとして打ち切る
-    fun framesOf(program: CompiledProgram, stepLimit: Long = maxSteps(program)): List<Frame?>? = (analyze(program, stepLimit) as? Analysis.Frames)?.frames
+    @InternalCreateScriptApi
+    public fun framesOf(program: CompiledProgram, stepLimit: Long = maxSteps(program)): List<Frame?>? = (analyze(program, stepLimit) as? Analysis.Frames)?.frames
 
     // framesOf の結果に、処理回数の上限（stepLimit）で打ち切ったことを区別して返すもの（第8.0.1段階。独立版のコンパイルの作業量の上限に使う）
     internal sealed interface Analysis {
@@ -536,7 +569,8 @@ object SnapshotVerifier {
     private data class Exit(val variables: List<VariableState>, val result: SlotType)
 
     // 処理回数の上限。各位置は（変数の数 + 1）回まで、CALL はさらに関数の RETURN の状態が変わるたび（大域変数の数 + 1 回まで）処理し直す
-    fun maxSteps(program: CompiledProgram): Long {
+    @InternalCreateScriptApi
+    public fun maxSteps(program: CompiledProgram): Long {
         val maxLocals = program.functions.maxOfOrNull { it.localCount } ?: 0
         val calls = program.instructions.count { it.opcode == Opcode.CALL }
         return program.instructions.size.toLong() * (program.variableCount + maxLocals + 1) + calls.toLong() * (program.variableCount + 1)
